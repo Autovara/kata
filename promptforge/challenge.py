@@ -8,13 +8,12 @@ from pathlib import Path
 from promptforge.benchmarks import resolve_eval_pack_path
 from promptforge.eval_runner import EvalRunSummary, run_prompt_variants
 from promptforge.frontier import (
+    DEFAULT_PROMOTION_MARGIN_POINTS,
     FrontierManifest,
     FrontierModeConfig,
     load_frontier_manifest,
 )
 from promptforge.provenance import EVALUATOR_VERSION, sha256_text, short_hash
-
-PRIMARY_PROMOTION_MARGIN_POINTS = 3.0
 
 
 @dataclass(frozen=True)
@@ -78,6 +77,7 @@ def run_frontier_challenge(
     baseline_hash = mode_config.baseline_prompt_hash or sha256_text(baseline_text)
     frontier_hash = mode_config.frontier_prompt_hash or sha256_text(frontier_text)
     candidate_hash = sha256_text(candidate_text)
+    promotion_margin_points = mode_config.promotion_margin_points
 
     primary_eval = run_prompt_variants(
         repo_ref=manifest.repo_ref,
@@ -135,7 +135,11 @@ def run_frontier_challenge(
             checks_timeout_seconds=checks_timeout_seconds,
         )
         holdout_summary = summarize_pool(holdout_eval, mode_config.holdout_tasks)
-    promotion_ready, reason = evaluate_promotion(primary_summary, holdout_summary)
+    promotion_ready, reason = evaluate_promotion(
+        primary_summary,
+        holdout_summary,
+        promotion_margin_points=promotion_margin_points,
+    )
     summary = ChallengeSummary(
         schema_version=2,
         run_id=challenge_run_id,
@@ -150,7 +154,7 @@ def run_frontier_challenge(
         candidate_prompt_hash=candidate_hash,
         primary_pool_fingerprint=mode_config.primary_pool_fingerprint,
         holdout_pool_fingerprint=mode_config.holdout_pool_fingerprint,
-        promotion_margin_points=PRIMARY_PROMOTION_MARGIN_POINTS,
+        promotion_margin_points=promotion_margin_points,
         created_at=datetime.now(UTC).isoformat(),
         primary=primary_summary,
         holdout=holdout_summary,
@@ -211,7 +215,7 @@ def load_challenge_summary(path: str) -> ChallengeSummary:
         primary_pool_fingerprint=payload.get("primary_pool_fingerprint"),
         holdout_pool_fingerprint=payload.get("holdout_pool_fingerprint"),
         promotion_margin_points=payload.get(
-            "promotion_margin_points", PRIMARY_PROMOTION_MARGIN_POINTS
+            "promotion_margin_points", DEFAULT_PROMOTION_MARGIN_POINTS
         ),
         created_at=payload["created_at"],
         primary=parse_challenge_pool(payload["primary"]),
@@ -301,13 +305,15 @@ def score_variants(summary: EvalRunSummary) -> dict[str, float]:
 def evaluate_promotion(
     primary: ChallengePoolSummary,
     holdout: ChallengePoolSummary | None,
+    *,
+    promotion_margin_points: float = DEFAULT_PROMOTION_MARGIN_POINTS,
 ) -> tuple[bool, str]:
     primary_delta = primary.candidate_score_delta
     if primary.variant_invalid_tasks.get("candidate", 0) > 0:
         return False, "candidate has invalid primary-pool task runs"
     if not primary.candidate_beats_frontier:
         return False, "candidate did not beat the current frontier on the primary score"
-    if primary_delta < PRIMARY_PROMOTION_MARGIN_POINTS:
+    if primary_delta < promotion_margin_points:
         return (
             False,
             "candidate improved the primary score but did not clear the promotion margin",

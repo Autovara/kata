@@ -19,6 +19,7 @@ from promptforge.provenance import (
 
 FRONTIER_SCHEMA_VERSION = 2
 FRONTIER_FILENAME = "frontier.json"
+DEFAULT_PROMOTION_MARGIN_POINTS = 3.0
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class FrontierModeConfig:
     frontier_prompt: str
     primary_tasks: list[str]
     holdout_tasks: list[str] = field(default_factory=list)
+    promotion_margin_points: float = DEFAULT_PROMOTION_MARGIN_POINTS
     evaluator_version: str | None = None
     baseline_prompt_hash: str | None = None
     frontier_prompt_hash: str | None = None
@@ -79,6 +81,7 @@ def init_frontier(
     registry_url: str | None = None,
     primary_tasks: list[str] | None = None,
     holdout_tasks: list[str] | None = None,
+    promotion_margin_points: float = DEFAULT_PROMOTION_MARGIN_POINTS,
 ) -> FrontierManifest:
     validations = discover_eval_pack_tasks(eval_pack_path)
     invalid = [result.root.name for result in validations if not result.is_valid]
@@ -120,6 +123,7 @@ def init_frontier(
         frontier_prompt=str(frontier_path.resolve()),
         primary_tasks=selected_primary,
         holdout_tasks=selected_holdout,
+        promotion_margin_points=promotion_margin_points,
         evaluator_version=EVALUATOR_VERSION,
         baseline_prompt_hash=sha256_file(baseline_path),
         frontier_prompt_hash=sha256_file(frontier_path),
@@ -160,6 +164,7 @@ def update_frontier_prompt(
         frontier_prompt=mode_config.frontier_prompt,
         primary_tasks=mode_config.primary_tasks,
         holdout_tasks=mode_config.holdout_tasks,
+        promotion_margin_points=mode_config.promotion_margin_points,
         evaluator_version=evaluator_version or mode_config.evaluator_version or EVALUATOR_VERSION,
         baseline_prompt_hash=mode_config.baseline_prompt_hash,
         frontier_prompt_hash=frontier_hash,
@@ -204,6 +209,7 @@ def render_frontier_manifest(manifest: FrontierManifest, mode: str | None = None
             lines.append(f"- Frontier source: {mode_config.frontier_source}")
         if mode_config.evaluator_version:
             lines.append(f"- Evaluator version: {mode_config.evaluator_version}")
+        lines.append(f"- Promotion margin: {mode_config.promotion_margin_points:.1f} points")
         if mode_config.baseline_prompt_hash:
             lines.append(
                 f"- Baseline prompt hash: {short_hash(mode_config.baseline_prompt_hash)}"
@@ -224,6 +230,10 @@ def render_frontier_manifest(manifest: FrontierManifest, mode: str | None = None
             )
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+def render_frontier_json(manifest: FrontierManifest) -> str:
+    return json.dumps(asdict(manifest), indent=2) + "\n"
 
 
 def existing_or_new_manifest(*, repo_ref: str, eval_pack_path: str) -> FrontierManifest:

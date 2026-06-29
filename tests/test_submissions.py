@@ -11,7 +11,14 @@ from promptforge.frontier import (
 )
 from promptforge.provenance import sha256_text
 from promptforge.submissions import (
+    PR_ACTION_CLOSE_INVALID,
+    PR_ACTION_CLOSE_LOSING,
+    PR_ACTION_EVALUATE,
+    PR_ACTION_MERGE,
+    PR_ACTION_RERUN_STALE,
+    decide_submission_action,
     init_submission,
+    inspect_pull_request,
     validate_submission,
     verify_submission_result,
 )
@@ -192,6 +199,36 @@ def test_validate_submission_rejects_scaffold_candidate(
     assert "Candidate prompt still contains scaffold placeholder text." in result.reasons
 
 
+def test_inspect_pull_request_rejects_non_submission_pr(tmp_path: Path) -> None:
+    repo_root = tmp_path / "PromptForge"
+    repo_root.mkdir()
+
+    result = inspect_pull_request(
+        repo_root=str(repo_root),
+        changed_paths=["README.md"],
+    )
+
+    assert result.action == PR_ACTION_CLOSE_INVALID
+    assert result.submission_path is None
+
+
+def test_inspect_pull_request_accepts_single_submission_scope(tmp_path: Path) -> None:
+    repo_root = tmp_path / "PromptForge"
+    repo_root.mkdir()
+    submission_root = repo_root / "submissions" / "example__repo" / "contributor" / "miner-9"
+
+    result = inspect_pull_request(
+        repo_root=str(repo_root),
+        changed_paths=[
+            "submissions/example__repo/contributor/miner-9/candidate.md",
+            "submissions/example__repo/contributor/miner-9/submission.json",
+        ],
+    )
+
+    assert result.action == PR_ACTION_EVALUATE
+    assert result.submission_path == str(submission_root.resolve())
+
+
 def test_verify_submission_result_accepts_current_promotion_ready_result(
     tmp_path: Path,
     monkeypatch,
@@ -269,3 +306,109 @@ def test_verify_submission_result_detects_stale_frontier(
     assert not result.frontier_is_current
     assert not result.auto_merge_ready
     assert "Challenge result is stale because the frontier prompt has changed." in result.reasons
+
+
+def test_decide_submission_action_returns_merge_for_verified_winner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "PromptForge"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-merge",
+        output_root=str(repo_root / "submissions"),
+    )
+    candidate_text = "# winner\n"
+    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    summary_path = tmp_path / "challenge_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            challenge_summary_payload(
+                pack_root=pack_root,
+                submission_root=submission_root,
+                frontier_prompt_hash=sha256_text("# frontier\n"),
+                candidate_prompt_hash=sha256_text(candidate_text),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = decide_submission_action(str(submission_root), str(summary_path))
+
+    assert result.action == PR_ACTION_MERGE
+    assert result.auto_merge_ready
+
+
+def test_decide_submission_action_returns_rerun_for_stale_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "PromptForge"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-rerun",
+        output_root=str(repo_root / "submissions"),
+    )
+    candidate_text = "# winner\n"
+    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    summary_path = tmp_path / "challenge_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            challenge_summary_payload(
+                pack_root=pack_root,
+                submission_root=submission_root,
+                frontier_prompt_hash=sha256_text("# stale-frontier\n"),
+                candidate_prompt_hash=sha256_text(candidate_text),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = decide_submission_action(str(submission_root), str(summary_path))
+
+    assert result.action == PR_ACTION_RERUN_STALE
+
+
+def test_decide_submission_action_returns_close_for_loser(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "PromptForge"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-lose",
+        output_root=str(repo_root / "submissions"),
+    )
+    candidate_text = "# loser\n"
+    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    summary_path = tmp_path / "challenge_summary.json"
+    payload = challenge_summary_payload(
+        pack_root=pack_root,
+        submission_root=submission_root,
+        frontier_prompt_hash=sha256_text("# frontier\n"),
+        candidate_prompt_hash=sha256_text(candidate_text),
+    )
+    payload["promotion_ready"] = False
+    payload["promotion_reason"] = "candidate did not beat the current frontier on the primary score"
+    summary_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    result = decide_submission_action(str(submission_root), str(summary_path))
+
+    assert result.action == PR_ACTION_CLOSE_LOSING

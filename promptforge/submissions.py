@@ -23,6 +23,11 @@ DEFAULT_CANDIDATE_PLACEHOLDER = (
     "Replace this file with the actual challenger prompt before opening a PR."
 )
 SUBMISSION_ID_CONVENTION = "<github-username>-YYYYMMDD-NN"
+PR_ACTION_CLOSE_INVALID = "close-invalid"
+PR_ACTION_EVALUATE = "evaluate"
+PR_ACTION_CLOSE_LOSING = "close-losing"
+PR_ACTION_RERUN_STALE = "rerun-stale"
+PR_ACTION_MERGE = "merge"
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,32 @@ class SubmissionVerificationResult:
     promotion_ready: bool
     auto_merge_ready: bool
     reasons: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PullRequestInspectionResult:
+    action: str
+    submission_path: str | None
+    repo_pack: str | None
+    mode: str | None
+    submission_id: str | None
+    changed_paths: list[str]
+    reasons: list[str]
+    candidate_submission_dirs: list[str]
+
+
+@dataclass(frozen=True)
+class SubmissionDecisionResult:
+    action: str
+    submission_path: str
+    challenge_summary_path: str
+    repo_pack: str
+    mode: str
+    submission_id: str
+    reason: str
+    reasons: list[str]
+    promotion_ready: bool
+    auto_merge_ready: bool
 
 
 def init_submission(
@@ -225,6 +256,97 @@ def evaluate_submission(
     )
 
 
+def inspect_pull_request(
+    *,
+    repo_root: str,
+    changed_paths: list[str],
+) -> PullRequestInspectionResult:
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+    normalized_changed = normalize_changed_paths(changed_paths)
+    candidate_dirs = infer_submission_dirs(normalized_changed)
+    reasons: list[str] = []
+
+    if not normalized_changed:
+        reasons.append("PR does not contain any changed files.")
+        return PullRequestInspectionResult(
+            action=PR_ACTION_CLOSE_INVALID,
+            submission_path=None,
+            repo_pack=None,
+            mode=None,
+            submission_id=None,
+            changed_paths=[],
+            reasons=reasons,
+            candidate_submission_dirs=[],
+        )
+
+    if not candidate_dirs:
+        reasons.append(
+            "PR does not contain a prompt submission under "
+            "`submissions/<repo-pack>/<mode>/<submission-id>`."
+        )
+        return PullRequestInspectionResult(
+            action=PR_ACTION_CLOSE_INVALID,
+            submission_path=None,
+            repo_pack=None,
+            mode=None,
+            submission_id=None,
+            changed_paths=normalized_changed,
+            reasons=reasons,
+            candidate_submission_dirs=[],
+        )
+
+    if len(candidate_dirs) > 1:
+        reasons.append("PR touches multiple submission directories. Submit exactly one challenger.")
+        return PullRequestInspectionResult(
+            action=PR_ACTION_CLOSE_INVALID,
+            submission_path=None,
+            repo_pack=None,
+            mode=None,
+            submission_id=None,
+            changed_paths=normalized_changed,
+            reasons=reasons,
+            candidate_submission_dirs=candidate_dirs,
+        )
+
+    relative_dir = candidate_dirs[0]
+    descriptor, descriptor_errors = resolve_submission_descriptor(
+        resolved_repo_root / relative_dir,
+        repo_root=resolved_repo_root,
+        require_exists=False,
+    )
+    reasons.extend(descriptor_errors)
+    if descriptor is None:
+        return PullRequestInspectionResult(
+            action=PR_ACTION_CLOSE_INVALID,
+            submission_path=None,
+            repo_pack=None,
+            mode=None,
+            submission_id=None,
+            changed_paths=normalized_changed,
+            reasons=dedupe(reasons),
+            candidate_submission_dirs=candidate_dirs,
+        )
+
+    changed_scope = validate_changed_paths(descriptor, normalized_changed)
+    reasons.extend(changed_scope.reasons)
+    if changed_scope.off_scope_paths:
+        reasons.append(
+            "PR changes files outside the allowed submission directory or adds unsupported files."
+        )
+
+    action = PR_ACTION_EVALUATE if not reasons else PR_ACTION_CLOSE_INVALID
+    return PullRequestInspectionResult(
+        action=action,
+        submission_path=str((resolved_repo_root / relative_dir).resolve()),
+        repo_pack=descriptor.repo_pack,
+        mode=descriptor.mode,
+        submission_id=descriptor.submission_id,
+        changed_paths=normalized_changed,
+        reasons=dedupe(reasons),
+        candidate_submission_dirs=candidate_dirs,
+    )
+
+
 def verify_submission_result(
     submission_path: str,
     challenge_summary_path: str,
@@ -299,6 +421,77 @@ def verify_submission_result(
     )
 
 
+def decide_submission_action(
+    submission_path: str,
+    challenge_summary_path: str,
+) -> SubmissionDecisionResult:
+    validation = validate_submission(submission_path)
+    if not validation.is_valid or validation.metadata is None:
+        reasons = validation.reasons or ["Submission is invalid."]
+        return SubmissionDecisionResult(
+            action=PR_ACTION_CLOSE_INVALID,
+            submission_path=validation.submission_path,
+            challenge_summary_path=str(Path(challenge_summary_path).expanduser().resolve()),
+            repo_pack=validation.repo_pack or "unknown",
+            mode=validation.mode or "unknown",
+            submission_id=validation.submission_id or "unknown",
+            reason="Submission is invalid and should be auto-closed.",
+            reasons=reasons,
+            promotion_ready=False,
+            auto_merge_ready=False,
+        )
+
+    verification = verify_submission_result(submission_path, challenge_summary_path)
+    if verification.auto_merge_ready:
+        return SubmissionDecisionResult(
+            action=PR_ACTION_MERGE,
+            submission_path=verification.submission_path,
+            challenge_summary_path=verification.challenge_summary_path,
+            repo_pack=verification.repo_pack,
+            mode=verification.mode,
+            submission_id=verification.submission_id,
+            reason="Submission beat the current frontier and is safe to auto-merge.",
+            reasons=[],
+            promotion_ready=verification.promotion_ready,
+            auto_merge_ready=verification.auto_merge_ready,
+        )
+
+    stale_reasons = [
+        reason
+        for reason in verification.reasons
+        if "stale" in reason or "does not match" in reason
+    ]
+    if stale_reasons:
+        return SubmissionDecisionResult(
+            action=PR_ACTION_RERUN_STALE,
+            submission_path=verification.submission_path,
+            challenge_summary_path=verification.challenge_summary_path,
+            repo_pack=verification.repo_pack,
+            mode=verification.mode,
+            submission_id=verification.submission_id,
+            reason="Submission result is stale and must be rerun against the current frontier.",
+            reasons=stale_reasons,
+            promotion_ready=verification.promotion_ready,
+            auto_merge_ready=False,
+        )
+
+    losing_reasons = verification.reasons or [
+        "Submission did not satisfy the promotion rule against the current frontier."
+    ]
+    return SubmissionDecisionResult(
+        action=PR_ACTION_CLOSE_LOSING,
+        submission_path=verification.submission_path,
+        challenge_summary_path=verification.challenge_summary_path,
+        repo_pack=verification.repo_pack,
+        mode=verification.mode,
+        submission_id=verification.submission_id,
+        reason="Submission lost to the current frontier and should be auto-closed.",
+        reasons=losing_reasons,
+        promotion_ready=verification.promotion_ready,
+        auto_merge_ready=False,
+    )
+
+
 def render_submission_validation(result: SubmissionValidationResult) -> str:
     lines: list[str] = []
     lines.append(f"Submission: {result.submission_path}")
@@ -315,6 +508,22 @@ def render_submission_validation(result: SubmissionValidationResult) -> str:
     if result.off_scope_paths:
         lines.append("Off-scope paths:")
         lines.extend(f"- {path}" for path in result.off_scope_paths)
+    if result.reasons:
+        lines.append("Reasons:")
+        lines.extend(f"- {reason}" for reason in result.reasons)
+    return "\n".join(lines)
+
+
+def render_pull_request_inspection(result: PullRequestInspectionResult) -> str:
+    lines = [
+        f"Action: {result.action}",
+        f"Changed paths: {len(result.changed_paths)}",
+    ]
+    if result.submission_path:
+        lines.append(f"Submission path: {result.submission_path}")
+    if result.candidate_submission_dirs:
+        lines.append("Candidate submission dirs:")
+        lines.extend(f"- {path}" for path in result.candidate_submission_dirs)
     if result.reasons:
         lines.append("Reasons:")
         lines.extend(f"- {reason}" for reason in result.reasons)
@@ -342,7 +551,39 @@ def render_submission_verification(result: SubmissionVerificationResult) -> str:
     return "\n".join(lines)
 
 
-def render_submission_json(value: SubmissionValidationResult | SubmissionVerificationResult) -> str:
+def render_submission_decision(result: SubmissionDecisionResult) -> str:
+    lines = [
+        f"Action: {result.action}",
+        f"Submission: {result.submission_path}",
+        f"Challenge summary: {result.challenge_summary_path}",
+        f"Reason: {result.reason}",
+        f"Promotion ready: {'yes' if result.promotion_ready else 'no'}",
+        f"Auto-merge ready: {'yes' if result.auto_merge_ready else 'no'}",
+    ]
+    if result.reasons:
+        lines.append("Reasons:")
+        lines.extend(f"- {reason}" for reason in result.reasons)
+    return "\n".join(lines)
+
+
+def render_pr_comment(action: str, title: str, reasons: list[str]) -> str:
+    lines = [f"### {title}", ""]
+    if reasons:
+        lines.append("Reasons:")
+        lines.extend(f"- {reason}" for reason in reasons)
+    else:
+        lines.append("No additional reasons recorded.")
+    lines.append("")
+    lines.append(f"Action: `{action}`")
+    return "\n".join(lines)
+
+
+def render_submission_json(
+    value: SubmissionValidationResult
+    | SubmissionVerificationResult
+    | PullRequestInspectionResult
+    | SubmissionDecisionResult,
+) -> str:
     payload = asdict(value)
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
@@ -440,13 +681,15 @@ def resolve_submission_descriptor(
     submission_root: Path,
     *,
     repo_root: Path | None,
+    require_exists: bool = True,
 ) -> tuple[SubmissionDescriptor | None, list[str]]:
     reasons: list[str] = []
     root = submission_root.resolve()
-    if not root.exists():
-        return None, [f"Submission path does not exist: {submission_root}"]
-    if not root.is_dir():
-        return None, [f"Submission path must be a directory: {submission_root}"]
+    if require_exists:
+        if not root.exists():
+            return None, [f"Submission path does not exist: {submission_root}"]
+        if not root.is_dir():
+            return None, [f"Submission path must be a directory: {submission_root}"]
 
     if repo_root is not None:
         try:
@@ -539,6 +782,27 @@ def default_submission_notes() -> str:
         f"- author: your GitHub username\n"
         f"- submission_id: {SUBMISSION_ID_CONVENTION}\n"
     )
+
+
+def infer_submission_dirs(changed_paths: list[str]) -> list[str]:
+    candidate_dirs: list[str] = []
+    for changed_path in changed_paths:
+        parts = Path(changed_path).parts
+        if len(parts) < 5 or parts[0] != SUBMISSIONS_DIRNAME:
+            continue
+        candidate_dir = Path(*parts[:4]).as_posix()
+        if candidate_dir not in candidate_dirs:
+            candidate_dirs.append(candidate_dir)
+    return candidate_dirs
+
+
+def read_changed_paths_file(path: str) -> list[str]:
+    file_path = Path(path).expanduser().resolve()
+    return [
+        line.strip()
+        for line in file_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def normalize_changed_paths(changed_paths: list[str]) -> list[str]:

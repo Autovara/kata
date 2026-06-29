@@ -28,12 +28,13 @@ PromptForge currently supports:
 - manual frontier promotion after a successful challenge
 - PR-submission scaffolding and validation for miner challengers
 - stale-result verification against the current frontier
+- PR decision primitives for external bot workflows
 
 Current MVP boundary:
 
 - it is a working manual competition system
-- it has the local/CI primitives for challenger submissions
-- it is not yet a fully automated PR bot that auto-closes or auto-merges on GitHub
+- it has the engine primitives for challenger submissions
+- it is not the GitHub bot itself
 - it is not yet a full prompt-search engine
 
 Prompt generation exists in this repo as a bootstrap helper:
@@ -71,6 +72,7 @@ Competition flow:
 2. evaluate `baseline`, `frontier`, and `challenger` on the same primary pool
 3. if the challenger beats the frontier, retest on the holdout pool
 4. only promote if the challenger also beats the frontier on holdout
+5. challenger must also clear the configured promotion margin for that lane
 
 The baseline is not the prompt miners should use in production. It is the fixed
 control used to prove that repo-specific optimization is adding value.
@@ -122,6 +124,7 @@ The usual workflow is:
 
 - `promptforge/`: core package and CLI
 - external benchmark registry repo: canonical benchmark source
+- external bot repo: GitHub integration and PR orchestration
 - `submissions/`: miner challenger prompts submitted by PR
 - `scripts/`: adapter commands for real agent evaluation
 - `tests/`: regression tests for evaluator behavior
@@ -164,7 +167,8 @@ Recommended identity convention:
 This is the base contract for future PR auto-close and auto-merge automation.
 
 See `docs/submissions.md` for the detailed submission contract and stale-result
-verification flow.
+verification flow. See `docs/github-automation.md` for the intended bot
+integration contract.
 
 ## Benchmark Registry
 
@@ -284,6 +288,14 @@ uv run python -m promptforge submission validate \
   --changed-path submissions/<repo-pack>/contributor/miner-001/submission.json
 ```
 
+Inspect a PR diff before checking out the PR branch:
+
+```bash
+uv run python -m promptforge submission inspect-pr \
+  --repo-root "$PWD" \
+  --changed-path-file /path/to/changed-paths.txt
+```
+
 Evaluate the challenger against the current frontier:
 
 ```bash
@@ -302,6 +314,21 @@ uv run python -m promptforge submission verify \
 
 That final verification step matters because a challenger result becomes stale if
 another PR has already replaced the frontier.
+
+Convert verification into a PR action:
+
+```bash
+uv run python -m promptforge submission decide \
+  --path submissions/<repo-pack>/contributor/miner-001 \
+  --challenge-run runs/<challenge-run>/challenge_summary.json
+```
+
+Possible actions are:
+
+- `close-invalid`
+- `close-losing`
+- `rerun-stale`
+- `merge`
 
 ## Frontier Workflow
 

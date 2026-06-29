@@ -88,7 +88,33 @@ def test_evaluate_promotion_requires_margin() -> None:
         candidate_score_delta=2.5,
     )
 
-    promotion_ready, reason = evaluate_promotion(primary, None)
+    promotion_ready, reason = evaluate_promotion(
+        primary,
+        None,
+        promotion_margin_points=3.0,
+    )
 
     assert not promotion_ready
     assert reason == "candidate improved the primary score but did not clear the promotion margin"
+
+
+def test_evaluate_promotion_uses_configured_margin() -> None:
+    primary = ChallengePoolSummary(
+        task_ids=["task-a"],
+        eval_run_summary="run_summary.json",
+        total_task_weight=1.0,
+        variant_successes={"frontier": 1, "candidate": 1, "baseline": 0},
+        variant_invalid_tasks={"frontier": 0, "candidate": 0, "baseline": 0},
+        variant_scores={"frontier": 80.0, "candidate": 82.5, "baseline": 0.0},
+        candidate_beats_frontier=True,
+        candidate_score_delta=2.5,
+    )
+
+    promotion_ready, reason = evaluate_promotion(
+        primary,
+        None,
+        promotion_margin_points=2.0,
+    )
+
+    assert promotion_ready
+    assert reason == "candidate cleared the primary score margin"

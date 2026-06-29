@@ -17,16 +17,23 @@ from promptforge.eval_pack import (
 )
 from promptforge.eval_runner import run_eval
 from promptforge.frontier import (
+    DEFAULT_PROMOTION_MARGIN_POINTS,
     init_frontier,
     load_frontier_manifest,
+    render_frontier_json,
     render_frontier_manifest,
     update_frontier_prompt,
 )
 from promptforge.generator import generate_prompt
 from promptforge.reporting import render_report
 from promptforge.submissions import (
+    decide_submission_action,
     evaluate_submission,
     init_submission,
+    inspect_pull_request,
+    read_changed_paths_file,
+    render_pull_request_inspection,
+    render_submission_decision,
     render_submission_json,
     render_submission_validation,
     render_submission_verification,
@@ -162,6 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Task id to include in the holdout pool. Repeat to select multiple tasks.",
     )
+    frontier_init.add_argument(
+        "--promotion-margin-points",
+        type=float,
+        default=None,
+        help="Optional score margin the challenger must clear to replace the frontier.",
+    )
     frontier_init.set_defaults(handler=handle_frontier_init)
 
     frontier_show = frontier_subparsers.add_parser("show", help="Show frontier manifest details.")
@@ -176,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional mode to render.",
     )
+    frontier_show.add_argument("--json", action="store_true")
     frontier_show.set_defaults(handler=handle_frontier_show)
 
     frontier_promote = frontier_subparsers.add_parser(
@@ -186,6 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to a challenge_summary.json file produced by `promptforge challenge`.",
     )
+    frontier_promote.add_argument("--json", action="store_true")
     frontier_promote.set_defaults(handler=handle_frontier_promote)
 
     challenge = subparsers.add_parser(
@@ -320,6 +335,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Changed path from the PR diff. Repeat for each changed file.",
     )
     submission_validate.add_argument(
+        "--changed-path-file",
+        default=None,
+        help="Optional newline-delimited file of changed paths from the PR diff.",
+    )
+    submission_validate.add_argument(
         "--repo-root",
         default=None,
         help="Optional PromptForge repo root used to resolve changed paths.",
@@ -330,6 +350,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON instead of text.",
     )
     submission_validate.set_defaults(handler=handle_submission_validate)
+
+    submission_inspect = submission_subparsers.add_parser(
+        "inspect-pr",
+        help="Inspect PR changed paths and decide whether the PR should be closed or evaluated.",
+    )
+    submission_inspect.add_argument(
+        "--repo-root",
+        required=True,
+        help="PromptForge repo root used to resolve the inferred submission path.",
+    )
+    submission_inspect.add_argument(
+        "--changed-path",
+        action="append",
+        default=None,
+        help="Changed path from the PR diff. Repeat for each changed file.",
+    )
+    submission_inspect.add_argument(
+        "--changed-path-file",
+        default=None,
+        help="Optional newline-delimited file of changed paths from the PR diff.",
+    )
+    submission_inspect.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of text.",
+    )
+    submission_inspect.set_defaults(handler=handle_submission_inspect)
 
     submission_evaluate = submission_subparsers.add_parser(
         "evaluate",
@@ -362,6 +409,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional timeout for each checks.sh run.",
     )
+    submission_evaluate.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON with the challenge summary path.",
+    )
     submission_evaluate.set_defaults(handler=handle_submission_evaluate)
 
     submission_verify = submission_subparsers.add_parser(
@@ -384,6 +436,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON instead of text.",
     )
     submission_verify.set_defaults(handler=handle_submission_verify)
+
+    submission_decide = submission_subparsers.add_parser(
+        "decide",
+        help="Decide whether a submission PR should be closed, rerun, or auto-merged.",
+    )
+    submission_decide.add_argument(
+        "--path",
+        required=True,
+        help="Path to submissions/<repo-pack>/<mode>/<submission-id>.",
+    )
+    submission_decide.add_argument(
+        "--challenge-run",
+        required=True,
+        help="Path to the challenge_summary.json generated for this submission.",
+    )
+    submission_decide.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of text.",
+    )
+    submission_decide.set_defaults(handler=handle_submission_decide)
 
     return parser
 
@@ -437,6 +510,11 @@ def handle_frontier_init(args: argparse.Namespace) -> int:
         registry_url=args.registry_url,
         primary_tasks=args.primary_task,
         holdout_tasks=args.holdout_task,
+        promotion_margin_points=(
+            args.promotion_margin_points
+            if args.promotion_margin_points is not None
+            else DEFAULT_PROMOTION_MARGIN_POINTS
+        ),
     )
     print(render_frontier_manifest(manifest, args.mode))
     return 0
@@ -444,7 +522,11 @@ def handle_frontier_init(args: argparse.Namespace) -> int:
 
 def handle_frontier_show(args: argparse.Namespace) -> int:
     manifest = load_frontier_manifest(args.eval_pack)
-    print(render_frontier_manifest(manifest, args.mode))
+    print(
+        render_frontier_json(manifest)
+        if args.json
+        else render_frontier_manifest(manifest, args.mode)
+    )
     return 0
 
 
@@ -463,7 +545,11 @@ def handle_frontier_promote(args: argparse.Namespace) -> int:
         source=summary.run_id,
         evaluator_version=summary.evaluator_version,
     )
-    print(render_frontier_manifest(manifest, summary.mode))
+    print(
+        render_frontier_json(manifest)
+        if args.json
+        else render_frontier_manifest(manifest, summary.mode)
+    )
     return 0
 
 
@@ -513,9 +599,10 @@ def handle_submission_init(args: argparse.Namespace) -> int:
 
 
 def handle_submission_validate(args: argparse.Namespace) -> int:
+    changed_paths = collect_changed_paths(args.changed_path, args.changed_path_file)
     result = validate_submission(
         args.path,
-        changed_paths=args.changed_path,
+        changed_paths=changed_paths,
         repo_root=args.repo_root,
     )
     print(
@@ -526,6 +613,19 @@ def handle_submission_validate(args: argparse.Namespace) -> int:
     return 0 if result.is_valid else 2
 
 
+def handle_submission_inspect(args: argparse.Namespace) -> int:
+    result = inspect_pull_request(
+        repo_root=args.repo_root,
+        changed_paths=collect_changed_paths(args.changed_path, args.changed_path_file),
+    )
+    print(
+        render_submission_json(result)
+        if args.json
+        else render_pull_request_inspection(result)
+    )
+    return 0 if result.action == "evaluate" else 2
+
+
 def handle_submission_evaluate(args: argparse.Namespace) -> int:
     summary = evaluate_submission(
         args.path,
@@ -534,7 +634,19 @@ def handle_submission_evaluate(args: argparse.Namespace) -> int:
         agent_timeout_seconds=args.agent_timeout_seconds,
         checks_timeout_seconds=args.checks_timeout_seconds,
     )
-    print(render_challenge_summary(summary))
+    if args.json:
+        output_base = Path(args.output_root) if args.output_root else Path("runs")
+        payload = {
+            "run_id": summary.run_id,
+            "challenge_summary_path": str(
+                (output_base / summary.run_id / "challenge_summary.json").resolve()
+            ),
+            "promotion_ready": summary.promotion_ready,
+            "promotion_reason": summary.promotion_reason,
+        }
+        print_json(payload)
+    else:
+        print(render_challenge_summary(summary))
     return 0
 
 
@@ -546,6 +658,32 @@ def handle_submission_verify(args: argparse.Namespace) -> int:
         else render_submission_verification(result)
     )
     return 0 if result.auto_merge_ready else 2
+
+
+def handle_submission_decide(args: argparse.Namespace) -> int:
+    result = decide_submission_action(args.path, args.challenge_run)
+    print(
+        render_submission_json(result)
+        if args.json
+        else render_submission_decision(result)
+    )
+    return 0 if result.action == "merge" else 2
+
+
+def collect_changed_paths(
+    inline_paths: list[str] | None,
+    file_path: str | None,
+) -> list[str]:
+    changed_paths = list(inline_paths or [])
+    if file_path:
+        changed_paths.extend(read_changed_paths_file(file_path))
+    return changed_paths
+
+
+def print_json(payload: dict[str, object]) -> None:
+    import json
+
+    print(json.dumps(payload, indent=2))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

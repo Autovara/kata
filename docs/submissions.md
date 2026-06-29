@@ -72,6 +72,19 @@ These rules are enforced locally or in CI with:
 uv run python -m promptforge submission validate --path <submission-dir>
 ```
 
+Before checking out the PR branch, CI can inspect the diff only:
+
+```bash
+uv run python -m promptforge submission inspect-pr \
+  --repo-root "$PWD" \
+  --changed-path-file /path/to/changed-paths.txt
+```
+
+That command decides whether an external bot should:
+
+- be auto-closed immediately
+- proceed to challenger evaluation
+
 ## Evaluation Flow
 
 After validation, PromptForge can evaluate the challenger against the current
@@ -113,3 +126,22 @@ The verification currently checks:
 - the challenge itself was promotion-ready
 
 If any of those drift, the submission result is stale and should be rerun.
+
+## PR Decision Actions
+
+After verification, PromptForge can collapse the result into a PR action:
+
+```bash
+uv run python -m promptforge submission decide \
+  --path <submission-dir> \
+  --challenge-run <challenge-summary.json>
+```
+
+Current decision actions are:
+
+- `close-invalid`
+- `close-losing`
+- `rerun-stale`
+- `merge`
+
+These actions are intended to drive a separate GitHub bot cleanly.

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "repo_pack": "e35ventura__taopedia-articles",
+  "mode": "contributor",
+  "submission_id": "garis-20260630-01",
+  "created_at": "2026-06-30T00:00:00+00:00",
+  "author": "garis",
+  "title": "Targeted Taopedia contributor agent",
+  "notes": "References the public king bundle but narrows repository context to the most relevant article and policy files for each task."
+}

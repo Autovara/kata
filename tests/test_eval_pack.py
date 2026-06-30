@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from promptforge.eval_pack import render_validation_result, validate_eval_pack
+from kata.eval_pack import render_validation_result, validate_eval_pack
 
 
 def write_eval_file(root: Path, name: str, content: str) -> None:

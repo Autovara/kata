@@ -5,11 +5,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from promptforge.baseline import generate_baseline_prompt
-from promptforge.benchmarks import resolve_eval_pack_path
-from promptforge.eval_pack import discover_eval_pack_tasks
-from promptforge.generator import generate_prompt
-from promptforge.provenance import (
+from kata.baseline import generate_baseline_prompt
+from kata.benchmarks import resolve_eval_pack_path
+from kata.eval_pack import discover_eval_pack_tasks
+from kata.generator import generate_prompt
+from kata.provenance import (
     EVALUATOR_VERSION,
     pool_fingerprint,
     sha256_file,
@@ -87,7 +87,7 @@ def init_frontier(
     invalid = [result.root.name for result in validations if not result.is_valid]
     if invalid:
         raise ValueError(
-            "Eval pack is invalid. Run `promptforge eval-pack validate` first. "
+            "Eval pack is invalid. Run `kata eval-pack validate` first. "
             f"Invalid task directories: {', '.join(invalid)}"
         )
 
@@ -130,7 +130,7 @@ def init_frontier(
         primary_pool_fingerprint=pool_fingerprint(primary_pool),
         holdout_pool_fingerprint=pool_fingerprint(holdout_pool) if holdout_pool else None,
         frontier_updated_at=timestamp_now(),
-        frontier_source="promptforge-init",
+        frontier_source="kata-init",
     )
     updated_manifest = FrontierManifest(
         schema_version=FRONTIER_SCHEMA_VERSION,

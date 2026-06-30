@@ -11,4 +11,4 @@ DEFAULT_REGISTRY_URL = (
 def resolve_registry_url(explicit_url: str | None = None) -> str:
     if explicit_url:
         return explicit_url
-    return os.environ.get("PROMPTFORGE_REGISTRY_URL", DEFAULT_REGISTRY_URL)
+    return os.environ.get("KATA_REGISTRY_URL", DEFAULT_REGISTRY_URL)

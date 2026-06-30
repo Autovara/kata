@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from promptforge.challenge import ChallengePoolSummary, evaluate_promotion
-from promptforge.scoring import score_variant_run
+from kata.challenge import ChallengePoolSummary, evaluate_promotion
+from kata.scoring import score_variant_run
 
 
 def write_file(path: Path, content: str) -> None:

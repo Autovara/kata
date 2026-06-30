@@ -3,7 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 
-from promptforge.eval_pack import REQUIRED_FILES
+from kata.eval_pack import REQUIRED_FILES
 
 EVALUATOR_VERSION = "2026-06-29.v1"
 

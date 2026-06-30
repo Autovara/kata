@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from promptforge.repository import RepositoryContext, resolve_repository
+from kata.repository import RepositoryContext, resolve_repository
 
 
 def generate_baseline_prompt(repo_ref: str, mode: str) -> str:
@@ -17,7 +17,7 @@ def generate_baseline_prompt_from_repository(repo: RepositoryContext, mode: str)
     if repo.full_name:
         lines.append(f"GitHub: `{repo.full_name}`")
     lines.append("")
-    lines.append("This is the generic baseline prompt used for PromptForge comparison.")
+    lines.append("This is the generic baseline prompt used for Kata comparison.")
     lines.append("It is intentionally not repo-specialized.")
     lines.append("")
     if mode == "reviewer":

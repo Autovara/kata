@@ -1,6 +1,6 @@
-# PromptForge Scoring Specification
+# Kata Scoring Specification
 
-**Applies to**: PromptForge benchmark competition
+**Applies to**: Kata benchmark competition
 
 **Status**: Proposed scoring contract for the public MVP
 
@@ -10,7 +10,8 @@
 
 ## Overview
 
-PromptForge is an objective prompt-optimization system. Its scoring algorithm
+Kata is an objective repo-specific agent evaluation system. Its scoring
+algorithm
 must answer one question:
 
 > Under the same repo, benchmark, and execution conditions, did one prompt
@@ -25,7 +26,7 @@ The design goal is:
 - strict enough to resist gaming
 - scoped enough to compare prompts within one repo benchmark lane
 
-PromptForge does **not** define one universal score across all repos.
+Kata does **not** define one universal score across all repos.
 
 Scores are only intended to be compared inside the same:
 
@@ -60,7 +61,7 @@ Scores from different lanes should not be treated as directly comparable.
 
 ## Scoring Principles
 
-PromptForge scoring follows these principles:
+Kata scoring follows these principles:
 
 1. **Objective first**
    Scores must come from benchmark checks, not subjective prompt judgments.
@@ -84,7 +85,7 @@ PromptForge scoring follows these principles:
 
 ## Prompt Roles
 
-PromptForge evaluates three prompt roles inside one challenge:
+Kata evaluates three artifact roles inside one challenge:
 
 - `baseline`: fixed generic control prompt
 - `frontier`: current best verified prompt
@@ -146,7 +147,7 @@ Recommended forms:
 - objective subtask fraction:
   - `completed_required_items / total_required_items`
 
-PromptForge should not use subjective freeform LLM grading as the primary score
+Kata should not use subjective freeform LLM grading as the primary score
 for the public MVP.
 
 ---
@@ -185,7 +186,7 @@ definition and therefore included in the benchmark versioning story.
 
 ## Primary and Holdout Scores
 
-PromptForge uses at least two task pools:
+Kata uses at least two task pools:
 
 - `primary`
 - `holdout`
@@ -203,7 +204,7 @@ Reason:
 - `holdout_score` measures whether the improvement generalizes beyond the set
   used for optimization
 
-PromptForge should not merge primary and holdout into one promotion number in
+Kata should not merge primary and holdout into one promotion number in
 the MVP.
 
 ---
@@ -251,7 +252,7 @@ should clear a takeover bar, not just a strict epsilon.
 
 ## Binary vs Continuous Benchmarks
 
-PromptForge supports both styles.
+Kata supports both styles.
 
 ### Binary Benchmarks
 
@@ -287,7 +288,7 @@ define partial credit objectively.
 
 ## Cost Reporting
 
-PromptForge should report cost separately from correctness score.
+Kata should report cost separately from correctness score.
 
 Recommended metrics:
 
@@ -386,7 +387,7 @@ Helpful secondary metrics:
 
 A scoring system is only useful if it resists the easiest gaming paths.
 
-PromptForge scoring should therefore preserve these rules:
+Kata scoring should therefore preserve these rules:
 
 - invalid benchmark behavior scores zero for the affected task
 - holdout tasks are not merged away into the primary score
@@ -418,7 +419,7 @@ For the public MVP, the recommended defaults are:
 - promotion margin of `3.0` primary-score points
 - no promotion when holdout regresses
 
-This gives PromptForge a scoring model that is:
+This gives Kata a scoring model that is:
 
 - objective
 - simple

@@ -8,14 +8,14 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from promptforge.baseline import generate_baseline_prompt_from_repository
-from promptforge.benchmarks import resolve_eval_pack_path
-from promptforge.config import resolve_registry_url
-from promptforge.eval_pack import EvalPackValidationResult, discover_eval_pack_tasks
-from promptforge.generator import generate_prompt_from_repository
-from promptforge.provenance import EVALUATOR_VERSION, pool_fingerprint
-from promptforge.repository import resolve_repository
-from promptforge.scoring import read_task_weight, score_variant_run
+from kata.baseline import generate_baseline_prompt_from_repository
+from kata.benchmarks import resolve_eval_pack_path
+from kata.config import resolve_registry_url
+from kata.eval_pack import EvalPackValidationResult, discover_eval_pack_tasks
+from kata.generator import generate_prompt_from_repository
+from kata.provenance import EVALUATOR_VERSION, pool_fingerprint
+from kata.repository import resolve_repository
+from kata.scoring import read_task_weight, score_variant_run
 
 IGNORED_COPY_DIRS = (
     ".git",
@@ -29,7 +29,7 @@ IGNORED_COPY_DIRS = (
 @dataclass(frozen=True)
 class VariantResult:
     name: str
-    prompt_path: str
+    artifact_path: str
     workspace: str
     agent_stdout: str
     agent_stderr: str
@@ -72,6 +72,13 @@ class EvalRunSummary:
     metadata: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ArtifactVariant:
+    name: str
+    filename: str
+    content: str
+
+
 def run_eval(
     *,
     repo_ref: str,
@@ -89,20 +96,30 @@ def run_eval(
     if invalid:
         invalid_names = ", ".join(result.root.name for result in invalid)
         raise ValueError(
-            "Eval pack is invalid. Run `promptforge eval-pack validate` first. "
+            "Eval pack is invalid. Run `kata eval-pack validate` first. "
             f"Invalid task directories: {invalid_names}"
         )
 
     resolved_registry_url = resolve_registry_url(registry_url)
-    return run_prompt_variants(
+    with resolve_repository(repo_ref) as repo:
+        artifact_variants = [
+            ArtifactVariant(
+                name="baseline",
+                filename="baseline.md",
+                content=generate_baseline_prompt_from_repository(repo, mode),
+            ),
+            ArtifactVariant(
+                name="generated",
+                filename="generated.md",
+                content=generate_prompt_from_repository(repo, mode, resolved_registry_url),
+            ),
+        ]
+    return run_artifact_variants(
         repo_ref=repo_ref,
         eval_pack_path=str(eval_pack_root),
         mode=mode,
         agent_command=agent_command,
-        prompt_variants=[
-            ("baseline", None),
-            ("generated", resolved_registry_url),
-        ],
+        artifact_variants=artifact_variants,
         output_root=output_root,
         agent_timeout_seconds=agent_timeout_seconds,
         checks_timeout_seconds=checks_timeout_seconds,
@@ -112,13 +129,13 @@ def run_eval(
     )
 
 
-def run_prompt_variants(
+def run_artifact_variants(
     *,
     repo_ref: str,
     eval_pack_path: str,
     mode: str,
     agent_command: str,
-    prompt_variants: list[tuple[str, str | None]],
+    artifact_variants: list[ArtifactVariant],
     task_names: list[str] | None = None,
     output_root: str | None = None,
     agent_timeout_seconds: int | None = None,
@@ -133,7 +150,7 @@ def run_prompt_variants(
     if invalid:
         invalid_names = ", ".join(result.root.name for result in invalid)
         raise ValueError(
-            "Eval pack is invalid. Run `promptforge eval-pack validate` first. "
+            "Eval pack is invalid. Run `kata eval-pack validate` first. "
             f"Invalid task directories: {invalid_names}"
         )
     selected_validations = select_task_validations(validations, task_names)
@@ -165,15 +182,10 @@ def run_prompt_variants(
             copy_repository(repo.root, repo_snapshot)
             variants = [
                 run_variant(
-                    variant_name=variant_name,
-                    prompt_text=resolve_prompt_text(
-                        variant_name=variant_name,
-                        prompt_value=prompt_value,
-                        repo_ref=task_repo_ref,
-                        repo=repo,
-                        mode=mode,
-                    ),
-                    variant_root=task_run_root / variant_name,
+                    variant_name=artifact_variant.name,
+                    artifact_filename=artifact_variant.filename,
+                    artifact_text=artifact_variant.content,
+                    variant_root=task_run_root / artifact_variant.name,
                     repo_snapshot=repo_snapshot,
                     eval_pack_root=task_snapshot,
                     repo_ref=task_repo_ref,
@@ -182,7 +194,7 @@ def run_prompt_variants(
                     agent_timeout_seconds=agent_timeout_seconds,
                     checks_timeout_seconds=checks_timeout_seconds,
                 )
-                for variant_name, prompt_value in prompt_variants
+                for artifact_variant in artifact_variants
             ]
 
         task_summaries.append(
@@ -218,7 +230,8 @@ def run_prompt_variants(
 def run_variant(
     *,
     variant_name: str,
-    prompt_text: str,
+    artifact_filename: str,
+    artifact_text: str,
     variant_root: Path,
     repo_snapshot: Path,
     eval_pack_root: Path,
@@ -231,9 +244,9 @@ def run_variant(
     workspace = variant_root / "workspace"
     shutil.copytree(repo_snapshot, workspace)
 
-    prompt_path = variant_root / "prompt.md"
-    prompt_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_path.write_text(prompt_text + "\n", encoding="utf-8")
+    artifact_path = variant_root / artifact_filename
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(artifact_text.rstrip() + "\n", encoding="utf-8")
 
     agent_stdout = variant_root / "agent.stdout.txt"
     agent_stderr = variant_root / "agent.stderr.txt"
@@ -244,7 +257,7 @@ def run_variant(
     agent_exit_code = run_agent_command(
         command=agent_command,
         workspace=workspace,
-        prompt_path=prompt_path,
+        artifact_path=artifact_path,
         eval_pack_root=eval_pack_root,
         repo_snapshot=repo_snapshot,
         mode=mode,
@@ -257,7 +270,7 @@ def run_variant(
     checks_exit_code = run_checks(
         checks_path=eval_pack_root / "checks.sh",
         workspace=workspace,
-        prompt_path=prompt_path,
+        artifact_path=artifact_path,
         eval_pack_root=eval_pack_root,
         repo_snapshot=repo_snapshot,
         mode=mode,
@@ -277,7 +290,7 @@ def run_variant(
     )
     return VariantResult(
         name=variant_name,
-        prompt_path=str(prompt_path),
+        artifact_path=str(artifact_path),
         workspace=str(workspace),
         agent_stdout=str(agent_stdout),
         agent_stderr=str(agent_stderr),
@@ -306,7 +319,7 @@ def run_agent_command(
     *,
     command: str,
     workspace: Path,
-    prompt_path: Path,
+    artifact_path: Path,
     eval_pack_root: Path,
     repo_snapshot: Path,
     mode: str,
@@ -318,7 +331,7 @@ def run_agent_command(
 ) -> int:
     env = build_env(
         workspace=workspace,
-        prompt_path=prompt_path,
+        artifact_path=artifact_path,
         eval_pack_root=eval_pack_root,
         repo_snapshot=repo_snapshot,
         mode=mode,
@@ -339,7 +352,7 @@ def run_checks(
     *,
     checks_path: Path,
     workspace: Path,
-    prompt_path: Path,
+    artifact_path: Path,
     eval_pack_root: Path,
     repo_snapshot: Path,
     mode: str,
@@ -351,7 +364,7 @@ def run_checks(
 ) -> int:
     env = build_env(
         workspace=workspace,
-        prompt_path=prompt_path,
+        artifact_path=artifact_path,
         eval_pack_root=eval_pack_root,
         repo_snapshot=repo_snapshot,
         mode=mode,
@@ -410,7 +423,7 @@ def run_process(
             )
         except subprocess.TimeoutExpired:
             stderr_file.write(
-                f"PromptForge timeout after {timeout_seconds} seconds for command: "
+                f"Kata timeout after {timeout_seconds} seconds for command: "
                 f"{' '.join(command)}\n"
             )
             return 124
@@ -437,7 +450,7 @@ def build_run_metadata(
 def build_env(
     *,
     workspace: Path,
-    prompt_path: Path,
+    artifact_path: Path,
     eval_pack_root: Path,
     repo_snapshot: Path,
     mode: str,
@@ -445,19 +458,22 @@ def build_env(
     score_file: Path,
 ) -> dict[str, str]:
     env = dict(os.environ)
-    env["PROMPTFORGE_WORKSPACE"] = str(workspace.resolve())
-    env["PROMPTFORGE_PROMPT_FILE"] = str(prompt_path.resolve())
-    env["PROMPTFORGE_MODE"] = mode
-    env["PROMPTFORGE_REPO_REF"] = repo_ref
-    env["PROMPTFORGE_REPO_SNAPSHOT"] = str(repo_snapshot.resolve())
-    env["PROMPTFORGE_EVAL_TASK_DIR"] = str(eval_pack_root.resolve())
-    env["PROMPTFORGE_SCORE_FILE"] = str(score_file.resolve())
-    env["PROMPTFORGE_TASK_FILE"] = str((eval_pack_root / "task.md").resolve())
-    env["PROMPTFORGE_RUBRIC_FILE"] = str((eval_pack_root / "rubric.md").resolve())
-    env["PROMPTFORGE_ALLOWED_PATHS_FILE"] = str((eval_pack_root / "allowed_paths.txt").resolve())
-    env["PROMPTFORGE_FORBIDDEN_PATHS_FILE"] = str(
-        (eval_pack_root / "forbidden_paths.txt").resolve()
-    )
+    env["KATA_WORKSPACE"] = str(workspace.resolve())
+    resolved_artifact = str(artifact_path.resolve())
+    env["KATA_ARTIFACT_FILE"] = resolved_artifact
+    if artifact_path.suffix == ".py":
+        env["KATA_AGENT_FILE"] = resolved_artifact
+    else:
+        env["KATA_PROMPT_FILE"] = resolved_artifact
+    env["KATA_MODE"] = mode
+    env["KATA_REPO_REF"] = repo_ref
+    env["KATA_REPO_SNAPSHOT"] = str(repo_snapshot.resolve())
+    env["KATA_EVAL_TASK_DIR"] = str(eval_pack_root.resolve())
+    env["KATA_SCORE_FILE"] = str(score_file.resolve())
+    env["KATA_TASK_FILE"] = str((eval_pack_root / "task.md").resolve())
+    env["KATA_RUBRIC_FILE"] = str((eval_pack_root / "rubric.md").resolve())
+    env["KATA_ALLOWED_PATHS_FILE"] = str((eval_pack_root / "allowed_paths.txt").resolve())
+    env["KATA_FORBIDDEN_PATHS_FILE"] = str((eval_pack_root / "forbidden_paths.txt").resolve())
     return env
 
 
@@ -483,11 +499,55 @@ def write_summary(path: Path, summary: EvalRunSummary) -> None:
     path.write_text(json.dumps(asdict(summary), indent=2) + "\n", encoding="utf-8")
 
 
+def run_prompt_variants(
+    *,
+    repo_ref: str,
+    eval_pack_path: str,
+    mode: str,
+    agent_command: str,
+    prompt_variants: list[tuple[str, str | None]],
+    task_names: list[str] | None = None,
+    output_root: str | None = None,
+    agent_timeout_seconds: int | None = None,
+    checks_timeout_seconds: int | None = None,
+    run_label: str | None = None,
+    run_kind: str = "eval",
+    metadata: dict[str, str] | None = None,
+) -> EvalRunSummary:
+    with resolve_repository(repo_ref) as repo:
+        artifact_variants = [
+            ArtifactVariant(
+                name=variant_name,
+                filename=f"{variant_name}.md",
+                content=resolve_prompt_text(
+                    variant_name=variant_name,
+                    prompt_value=prompt_value,
+                    repo=repo,
+                    mode=mode,
+                ),
+            )
+            for variant_name, prompt_value in prompt_variants
+        ]
+    return run_artifact_variants(
+        repo_ref=repo_ref,
+        eval_pack_path=eval_pack_path,
+        mode=mode,
+        agent_command=agent_command,
+        artifact_variants=artifact_variants,
+        task_names=task_names,
+        output_root=output_root,
+        agent_timeout_seconds=agent_timeout_seconds,
+        checks_timeout_seconds=checks_timeout_seconds,
+        run_label=run_label,
+        run_kind=run_kind,
+        metadata=metadata,
+    )
+
+
 def resolve_prompt_text(
     *,
     variant_name: str,
     prompt_value: str | None,
-    repo_ref: str,
     repo: object,
     mode: str,
 ) -> str:

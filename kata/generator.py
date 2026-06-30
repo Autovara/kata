@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from promptforge.analyzers import (
+from kata.analyzers import (
     dedupe_facts,
     discover_repo_sources,
     extract_commands,
@@ -14,10 +14,10 @@ from promptforge.analyzers import (
     format_source_path,
     read_text,
 )
-from promptforge.config import resolve_registry_url
-from promptforge.models import PromptData, SourceFact
-from promptforge.registry import load_registry
-from promptforge.repository import RepositoryContext, resolve_repository
+from kata.config import resolve_registry_url
+from kata.models import PromptData, SourceFact
+from kata.registry import load_registry
+from kata.repository import RepositoryContext, resolve_repository
 
 
 def generate_prompt(repo_ref: str, mode: str, registry_url: str | None = None) -> str:
@@ -136,7 +136,7 @@ def as_optional_path(value: Path | list[Path] | None) -> Path | None:
 
 def render_prompt(prompt_data: PromptData, mode: str) -> str:
     lines: list[str] = []
-    lines.append(f"# PromptForge {mode.capitalize()} Prompt: {prompt_data.title}")
+    lines.append(f"# Kata {mode.capitalize()} Prompt: {prompt_data.title}")
     lines.append("")
     lines.append(f"Repo: `{prompt_data.repo_display_name}`")
     if prompt_data.github_full_name:
@@ -379,8 +379,8 @@ def path_section_title(mode: str) -> str:
 
 def checklist_section_title(mode: str) -> str:
     if mode == "reviewer":
-        return "## PromptForge Review Checklist"
-    return "## PromptForge PR Checklist"
+        return "## Kata Review Checklist"
+    return "## Kata PR Checklist"
 
 
 def build_mode_checklist(prompt_data: PromptData, mode: str) -> list[SourceFact]:

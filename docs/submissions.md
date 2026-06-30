@@ -1,6 +1,9 @@
 # Submission Workflow
 
-PromptForge uses miner PR submissions as challenger prompts.
+Kata now accepts challenger agents through PR submissions.
+
+The benchmark lane is still repo-specific, but the miner artifact is no longer
+just prompt text. The required entrypoint is `agent.py`.
 
 ## Canonical Layout
 
@@ -11,24 +14,48 @@ submissions/
   <repo-pack>/
     <mode>/
       <submission-id>/
-        candidate.md
+        agent.py
         submission.json
 ```
 
+Current scope:
+
+- single-file `agent.py` submissions
+- one submission directory per PR
+- one repo-pack lane per submission
+
 ## Required Files
 
-### `candidate.md`
+### `agent.py`
 
-This is the challenger prompt text that will compete against the current
-frontier prompt for the same repo pack and mode.
+This is the challenger agent entrypoint.
+
+It must define:
+
+```python
+def solve(repo_path: str, issue: str, model: str, api_base: str, api_key: str) -> dict:
+    ...
+```
+
+The validator owns:
+
+- `model`
+- `api_base`
+- `api_key`
+- timeouts
+- benchmark tasks
+
+So miners compete on agent behavior, not on model routing or secret management.
 
 ### `submission.json`
 
-This identifies the competition lane and submission metadata. Current schema:
+This identifies the competition lane and submission metadata.
+
+Current schema:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "repo_pack": "example__repo",
   "mode": "contributor",
   "submission_id": "carlos4s-20260629-01",
@@ -44,83 +71,71 @@ Recommended identity convention:
 - `author`: GitHub username
 - `submission_id`: `<github-username>-YYYYMMDD-NN`
 
-Example:
-
-- `author`: `carlos4s`
-- `submission_id`: `carlos4s-20260629-01`
-
-Why this is the preferred convention:
-
-- leaderboard rows can use `author`
-- frontend can resolve avatar/profile directly from `author`
-- each submission still has a unique stable id for history and retries
-
 ## Validation Rules
 
 A competition PR is valid only if:
 
 - it edits one submission directory
-- it changes `candidate.md`
+- it changes `agent.py`
 - it does not edit files outside that submission directory
+- `agent.py` exists and is not the scaffold placeholder
+- `agent.py` defines `solve(...)`
+- it targets a repo-pack that is active in the benchmark registry
 - it targets an existing benchmark repo pack
 - the target pack already has a frontier manifest
 - the target mode is configured in that frontier manifest
 
-These rules are enforced locally or in CI with:
+These rules are enforced with:
 
 ```bash
-uv run python -m promptforge submission validate --path <submission-dir>
+uv run kata submission validate --path <submission-dir>
 ```
 
 Before checking out the PR branch, CI can inspect the diff only:
 
 ```bash
-uv run python -m promptforge submission inspect-pr \
+uv run kata submission inspect-pr \
   --repo-root "$PWD" \
   --changed-path-file /path/to/changed-paths.txt
 ```
 
-That command decides whether an external bot should:
-
-- be auto-closed immediately
-- proceed to challenger evaluation
-
 ## Evaluation Flow
 
-After validation, PromptForge can evaluate the challenger against the current
-frontier:
+After validation, Kata can evaluate the challenger against the current
+benchmark lane:
 
 ```bash
-uv run python -m promptforge submission evaluate \
+uv run kata submission evaluate \
   --path <submission-dir> \
-  --agent-command "$PWD/scripts/run_codex_eval.sh"
+  --agent-command "$PWD/scripts/run_python_agent_eval.sh"
 ```
 
-This runs:
+The current evaluator supports a transition mode:
 
-- `baseline`
-- `frontier`
-- `candidate`
+- challenger submissions can be `agent.py`
+- existing baseline/frontier lane artifacts may still be prompt-backed
+- the runner is artifact-aware and can execute either path
 
-against the benchmark lane referenced by the submission.
+That keeps the migration working while the frontier seeding flow is being
+converted fully to agent artifacts.
 
 ## Stale Frontier Protection
 
 Submission results are only safe to merge if the frontier has not changed since
 the evaluation completed.
 
-PromptForge checks that with:
+Kata checks that with:
 
 ```bash
-uv run python -m promptforge submission verify \
+uv run kata submission verify \
   --path <submission-dir> \
   --challenge-run <challenge-summary.json>
 ```
 
 The verification currently checks:
 
-- candidate prompt hash still matches the submission
-- frontier prompt hash is still current
+- challenger artifact hash still matches the submission
+- frontier hash is still current
 - evaluator version is still current
 - primary and holdout pool fingerprints are still current
 - the challenge itself was promotion-ready
@@ -129,10 +144,10 @@ If any of those drift, the submission result is stale and should be rerun.
 
 ## PR Decision Actions
 
-After verification, PromptForge can collapse the result into a PR action:
+After verification, Kata can collapse the result into a PR action:
 
 ```bash
-uv run python -m promptforge submission decide \
+uv run kata submission decide \
   --path <submission-dir> \
   --challenge-run <challenge-summary.json>
 ```

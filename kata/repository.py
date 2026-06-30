@@ -21,7 +21,7 @@ def resolve_repository(repo_ref: str):
     source_ref, git_ref = split_repo_ref(repo_ref)
 
     if is_github_url(source_ref):
-        with tempfile.TemporaryDirectory(prefix="promptforge-repo-") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="kata-repo-") as tmpdir:
             root = clone_repo(source_ref, Path(tmpdir), git_ref)
             full_name = github_full_name(source_ref)
             yield RepositoryContext(
@@ -37,7 +37,7 @@ def resolve_repository(repo_ref: str):
         raise FileNotFoundError(f"Repository path does not exist: {source_ref}")
 
     if git_ref is not None:
-        with tempfile.TemporaryDirectory(prefix="promptforge-repo-") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="kata-repo-") as tmpdir:
             detached_root = clone_repo(str(root), Path(tmpdir), git_ref)
             full_name = infer_full_name_from_git_remote(detached_root)
             yield RepositoryContext(

@@ -1,8 +1,8 @@
 # Evaluator Versioning
 
-PromptForge promotes prompts based on measured benchmark results. That only
-works if each result can be traced back to the evaluator and benchmark state
-that produced it.
+Kata promotes challengers based on measured benchmark results. That only works
+if each result can be traced back to the evaluator and benchmark state that
+produced it.
 
 ## What should be versioned
 
@@ -14,7 +14,7 @@ Every meaningful eval or challenge run should record:
 - benchmark task ids
 - challenge or eval run id
 
-PromptForge now records this metadata in:
+Kata now records this metadata in:
 
 - `run_summary.json`
 - `challenge_summary.json`
@@ -22,7 +22,7 @@ PromptForge now records this metadata in:
 
 In the intended deployment model, `frontier.json` and the benchmark task files
 live in the benchmark registry repo identified by
-`promptforge-benchmark-registry.json`, while run artifacts stay in `runs/`.
+`kata-benchmark-registry.json`, while run artifacts stay in `runs/`.
 
 ## Why it matters
 
@@ -36,8 +36,8 @@ If any of these change, the result may no longer be comparable:
 - evaluator scoring rules
 - frontier prompt state
 
-This is why PromptForge treats benchmark provenance as part of the result, not
-just background context.
+This is why Kata treats benchmark provenance as part of the result, not just
+background context.
 
 ## Intended promotion flow
 

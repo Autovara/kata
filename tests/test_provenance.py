@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from promptforge.provenance import pool_fingerprint
+from kata.provenance import pool_fingerprint
 
 
 def write_task_file(root: Path, name: str, content: str) -> None:

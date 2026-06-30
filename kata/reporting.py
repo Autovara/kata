@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from promptforge.scoring import (
+from kata.scoring import (
     diff_paths,
     evaluate_path_policy,
     read_path_rules,
@@ -23,7 +23,7 @@ def render_report(run_ref: str) -> str:
     }
 
     lines: list[str] = []
-    lines.append(f"# PromptForge Eval Report: {summary['run_id']}")
+    lines.append(f"# Kata Eval Report: {summary['run_id']}")
     lines.append("")
     lines.append(f"- Created: {summary['created_at']}")
     lines.append(f"- Run kind: {summary.get('run_kind', 'eval')}")
@@ -47,7 +47,7 @@ def render_report(run_ref: str) -> str:
         "against `allowed_paths.txt` and `forbidden_paths.txt`."
     )
     lines.append(
-        "- PromptForge score is the task-weighted average quality scaled to `0-100`."
+        "- Kata score is the task-weighted average quality scaled to `0-100`."
     )
     lines.append("")
     lines.append("## Aggregate Results")
@@ -220,7 +220,7 @@ def compare_variants(left: dict[str, Any], right: dict[str, Any]) -> str:
     left_quality = float(left.get("quality_score", left.get("success_score", 0.0)))
     right_quality = float(right.get("quality_score", right.get("success_score", 0.0)))
     if right_quality > left_quality:
-        return "PromptForge win"
+        return "Kata win"
     if left_quality > right_quality:
         return "Baseline win"
     if not left.get("validity_passed", left["agent_ok"]) and not right.get(
@@ -242,7 +242,7 @@ def summarize_pairwise(
             task_report["variants"][left_variant],
             task_report["variants"][right_variant],
         )
-        if outcome == "PromptForge win":
+        if outcome == "Kata win":
             right_wins += 1
         elif outcome == "Baseline win":
             left_wins += 1
@@ -265,7 +265,7 @@ def summarize_task_outcome(
         left = variants[variant_order[0]]
         right = variants[variant_order[1]]
         outcome = compare_variants(left, right)
-        if outcome == "PromptForge win":
+        if outcome == "Kata win":
             return f"{variant_order[1]} win"
         if outcome == "Baseline win":
             return f"{variant_order[0]} win"

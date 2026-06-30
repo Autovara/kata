@@ -1,32 +1,32 @@
-# PromptForge
+# Kata
 
-PromptForge is an objective prompt-optimization repo for SN74/Gittensor.
+Kata is an objective coding-agent competition repo for SN74/Gittensor.
 
-It evaluates repo-specific agent prompts on pinned benchmark tasks and only
-calls a prompt better when it solves more verified work under the same
+It evaluates repo-specific challenger artifacts on pinned benchmark tasks and
+only calls a challenger better when it solves more verified work under the same
 conditions.
 
-PromptForge is not a prompt library. The main product is the evaluation and
-competition system:
+Kata is not just a prompt library. The main product is the evaluation
+and competition system:
 
 - fixed benchmark tasks
-- fixed baseline prompt
-- current frontier prompt
-- challenger prompt evaluation
+- fixed lane state
+- current frontier artifact
+- challenger agent evaluation
 - objective promotion rules
 
 ## What It Does
 
-PromptForge currently supports:
+Kata currently supports:
 
-- repo-specific prompt initialization from repo sources
-- fixed generic baseline prompts
+- repo-specific benchmark lanes
+- fixed generic baseline lane artifacts
 - eval-pack validation for pinned repo tasks
 - objective eval runs using real agent commands
 - baseline/frontier/challenger competition flow
 - primary and holdout task pools
 - manual frontier promotion after a successful challenge
-- PR-submission scaffolding and validation for miner challengers
+- PR-submission scaffolding and validation for miner challenger agents
 - stale-result verification against the current frontier
 - PR decision primitives for external bot workflows
 
@@ -35,36 +35,47 @@ Current MVP boundary:
 - it is a working manual competition system
 - it has the engine primitives for challenger submissions
 - it is not the GitHub bot itself
-- it is not yet a full prompt-search engine
+- it is not yet a full private-submission production validator
 
-Prompt generation exists in this repo as a bootstrap helper:
+Transition note:
 
-- it can create an initial repo-specific prompt from repo files
-- that prompt can seed the first frontier
-- it is one source of challengers, not the main product
+- miner submissions now use the `agent.py` contract
+- some seeded lane artifacts are still prompt-backed while the migration is in progress
+
+## Current MVP Scope
+
+SN74/Gittensor may register many target repos over time.
+
+Kata does not need to activate all of them on day one. The current MVP
+is intentionally constrained to one active repo-pack:
+
+- `e35ventura__taopedia-articles`
+
+The benchmark registry controls that active set. Later expansion should happen
+by adding more benchmark packs and then updating registry metadata, not by
+rewriting the evaluator.
 
 ## Core Idea
 
-A prompt only improves if it performs better on controlled repo tasks:
+A challenger only improves if it performs better on controlled repo tasks:
 
 - same repo snapshot
 - same task definition
 - same agent command
 - same model and budget
 - same checks
-- prompt is the variable
+- challenger artifact is the variable
 
-Prompt quality is measured by task success, path-policy compliance, and any
-other behavior encoded directly in the benchmark checks. It is not judged by
-wording quality alone.
+Agent quality is measured by task success, path-policy compliance, and any
+other behavior encoded directly in the benchmark checks.
 
 ## Competition Model
 
-PromptForge uses three prompt roles for each repo and mode:
+Kata uses three competition roles for each repo and mode:
 
-- `baseline`: fixed generic control prompt
-- `frontier`: current best verified prompt
-- `challenger`: new candidate prompt
+- `baseline`: fixed generic control artifact
+- `frontier`: current best verified artifact
+- `challenger`: new candidate agent
 
 Competition flow:
 
@@ -74,34 +85,34 @@ Competition flow:
 4. only promote if the challenger also beats the frontier on holdout
 5. challenger must also clear the configured promotion margin for that lane
 
-The baseline is not the prompt miners should use in production. It is the fixed
-control used to prove that repo-specific optimization is adding value.
+The baseline is not the artifact miners should use in production. It is the
+fixed control used to prove that repo-specific optimization is adding value.
 
 ## Benchmark Provenance
 
-PromptForge now records benchmark provenance alongside eval and challenge
+Kata now records benchmark provenance alongside eval and challenge
 results:
 
 - evaluator version
-- prompt hashes
+- artifact hashes
 - task ids
 - task-pool fingerprints
 
-This matters because a prompt win is only meaningful if it was measured against
-the same evaluator and the same benchmark state. See
+This matters because a frontier win is only meaningful if it was measured
+against the same evaluator and the same benchmark state. See
 `docs/evaluator-versioning.md` for the intended model.
 
-PromptForge's proposed benchmark score model is defined in
+Kata's proposed benchmark score model is defined in
 `docs/SCORING.md`.
 
 ## How To Think About The Workflow
 
-PromptForge has two separate jobs:
+Kata currently has two separate jobs:
 
-1. `initialize prompts`
-   Create a starting repo-specific prompt and a fixed baseline.
-2. `evaluate prompts`
-   Compare baseline, frontier, and challenger prompts on the same benchmark.
+1. `initialize lane state`
+   Seed the starting baseline/frontier artifacts for a repo lane.
+2. `evaluate challengers`
+   Compare baseline, frontier, and challenger artifacts on the same benchmark.
 
 That is why the repo has both prompt-creation commands and competition
 commands.
@@ -109,23 +120,23 @@ commands.
 The simplest mental model is:
 
 - `baseline`: fixed generic control
-- `frontier`: current best verified prompt
-- `challenger`: new candidate prompt
+- `frontier`: current best verified artifact
+- `challenger`: new candidate agent
 
 The usual workflow is:
 
 1. define a benchmark pack
 2. initialize a frontier for that repo and mode
-3. use `generate` if you want a first repo-specific prompt to seed the frontier
-4. challenge the frontier with better candidate prompts
+3. seed the lane
+4. challenge the frontier with better candidate agents
 5. promote the challenger if it wins primary and holdout evaluation
 
 ## Repository Layout
 
-- `promptforge/`: core package and CLI
-- external benchmark registry repo: canonical benchmark source
-- external bot repo: GitHub integration and PR orchestration
-- `submissions/`: miner challenger prompts submitted by PR
+- `kata/`: current core package and CLI
+- external `kata-benchmarks` repo: canonical benchmark source
+- external `kata-bot` repo: GitHub integration and PR orchestration
+- `submissions/`: miner challenger agents submitted by PR
 - `scripts/`: adapter commands for real agent evaluation
 - `tests/`: regression tests for evaluator behavior
 
@@ -148,16 +159,18 @@ submissions/
   <repo-pack>/
     <mode>/
       <submission-id>/
-        candidate.md
+        agent.py
         submission.json
 ```
 
 Current validation rules:
 
 - PRs should only touch one submission directory
-- only `candidate.md` and `submission.json` are allowed inside that submission
+- only `agent.py` and `submission.json` are allowed inside that submission
+- the repo-pack must be active in the benchmark registry
 - the target repo pack must already exist in the benchmark registry
 - the target mode must already be configured in that pack's `frontier.json`
+- `agent.py` must define `solve(...)`
 
 Recommended identity convention:
 
@@ -172,17 +185,22 @@ integration contract.
 
 ## Benchmark Registry
 
-PromptForge expects benchmark packs to live in a dedicated benchmark registry
+Kata expects benchmark packs to live in a dedicated benchmark registry
 repo.
 
 The registry repo is identified by a marker file:
 
-- `promptforge-benchmark-registry.json`
+- `kata-benchmark-registry.json`
 
 The benchmark packs then live under that repo's configured benchmarks directory,
 normally:
 
 - `<registry-root>/benchmarks/<repo-pack>/...`
+
+The registry can also declare the current active competition subset:
+
+- `active_repo_packs`
+- `default_repo_pack`
 
 That benchmark repo is the canonical source of:
 
@@ -191,21 +209,27 @@ That benchmark repo is the canonical source of:
 - `prompts/<mode>/baseline.md`
 - `prompts/<mode>/frontier.md`
 
-PromptForge still uses the same file-based task format, but the benchmark
+Kata still uses the same file-based task format, but the benchmark
 content should live in the benchmark registry repo, not inside the main
-PromptForge repo.
+Kata repo.
 
-PromptForge resolves the registry in this order:
+Kata resolves the registry in this order:
 
-1. `PROMPTFORGE_BENCHMARKS_ROOT`
+1. `KATA_BENCHMARKS_ROOT`
 2. an explicitly passed filesystem path
 3. automatic discovery of a nearby repo that contains
-   `promptforge-benchmark-registry.json`
+   `kata-benchmark-registry.json`
 
-`PROMPTFORGE_BENCHMARKS_ROOT` should point to either:
+`KATA_BENCHMARKS_ROOT` should point to either:
 
 - the registry repo root
 - the registry's `benchmarks/` directory
+
+Inspect the resolved registry state with:
+
+```bash
+uv run kata registry show
+```
 
 `--eval-pack` accepts either:
 
@@ -215,16 +239,16 @@ PromptForge resolves the registry in this order:
 ## Benchmark State
 
 This branch does not currently ship a tracked live benchmark pack inside the
-main PromptForge repo.
+main Kata repo.
 
-To run PromptForge end to end, you should first create or add a repo-specific
+To run Kata end to end, you should first create or add a repo-specific
 eval pack in your benchmark registry repo, then initialize a frontier for it.
 
 At minimum, that means:
 
 - one repo-specific pack under `<registry-root>/benchmarks/`
 - valid benchmark task files
-- a frontier manifest created with `promptforge frontier init`
+- a frontier manifest created with `kata frontier init`
 
 ## Quickstart
 
@@ -232,7 +256,7 @@ Generate a repo-specific prompt for initialization or as a challenger starting
 point:
 
 ```bash
-uv run python -m promptforge generate \
+uv run kata generate \
   --repo /path/to/target-repo \
   --mode contributor
 ```
@@ -240,7 +264,7 @@ uv run python -m promptforge generate \
 Generate the fixed baseline prompt:
 
 ```bash
-uv run python -m promptforge baseline \
+uv run kata baseline \
   --repo /path/to/target-repo \
   --mode contributor
 ```
@@ -248,14 +272,14 @@ uv run python -m promptforge baseline \
 Validate the benchmark pack:
 
 ```bash
-uv run python -m promptforge eval-pack validate \
+uv run kata eval-pack validate \
   --path <repo-pack>
 ```
 
 Run a baseline-vs-generated eval:
 
 ```bash
-uv run python -m promptforge eval \
+uv run kata eval \
   --repo /path/to/target-repo \
   --eval-pack <repo-pack> \
   --mode contributor \
@@ -265,7 +289,7 @@ uv run python -m promptforge eval \
 Render an eval report:
 
 ```bash
-uv run python -m promptforge report --run <run-id>
+uv run kata report --run <run-id>
 ```
 
 ## Submission Workflow
@@ -273,7 +297,7 @@ uv run python -m promptforge report --run <run-id>
 Scaffold a challenger submission:
 
 ```bash
-uv run python -m promptforge submission init \
+uv run kata submission init \
   --repo-pack <repo-pack> \
   --mode contributor \
   --submission-id miner-001
@@ -282,16 +306,16 @@ uv run python -m promptforge submission init \
 Validate a submission and its PR-style changed paths:
 
 ```bash
-uv run python -m promptforge submission validate \
+uv run kata submission validate \
   --path submissions/<repo-pack>/contributor/miner-001 \
-  --changed-path submissions/<repo-pack>/contributor/miner-001/candidate.md \
+  --changed-path submissions/<repo-pack>/contributor/miner-001/agent.py \
   --changed-path submissions/<repo-pack>/contributor/miner-001/submission.json
 ```
 
 Inspect a PR diff before checking out the PR branch:
 
 ```bash
-uv run python -m promptforge submission inspect-pr \
+uv run kata submission inspect-pr \
   --repo-root "$PWD" \
   --changed-path-file /path/to/changed-paths.txt
 ```
@@ -299,15 +323,15 @@ uv run python -m promptforge submission inspect-pr \
 Evaluate the challenger against the current frontier:
 
 ```bash
-uv run python -m promptforge submission evaluate \
+uv run kata submission evaluate \
   --path submissions/<repo-pack>/contributor/miner-001 \
-  --agent-command "$PWD/scripts/run_codex_eval.sh"
+  --agent-command "$PWD/scripts/run_python_agent_eval.sh"
 ```
 
 Verify that the result is still current before merge:
 
 ```bash
-uv run python -m promptforge submission verify \
+uv run kata submission verify \
   --path submissions/<repo-pack>/contributor/miner-001 \
   --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
@@ -318,7 +342,7 @@ another PR has already replaced the frontier.
 Convert verification into a PR action:
 
 ```bash
-uv run python -m promptforge submission decide \
+uv run kata submission decide \
   --path submissions/<repo-pack>/contributor/miner-001 \
   --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
@@ -335,7 +359,7 @@ Possible actions are:
 Initialize a frontier manifest:
 
 ```bash
-uv run python -m promptforge frontier init \
+uv run kata frontier init \
   --repo /path/to/target-repo \
   --eval-pack <repo-pack> \
   --mode contributor \
@@ -347,7 +371,7 @@ uv run python -m promptforge frontier init \
 Inspect the current frontier:
 
 ```bash
-uv run python -m promptforge frontier show \
+uv run kata frontier show \
   --eval-pack <repo-pack> \
   --mode contributor
 ```
@@ -355,7 +379,7 @@ uv run python -m promptforge frontier show \
 Challenge the frontier:
 
 ```bash
-uv run python -m promptforge challenge \
+uv run kata challenge \
   --eval-pack <repo-pack> \
   --mode contributor \
   --candidate-prompt path/to/candidate.md \
@@ -365,7 +389,7 @@ uv run python -m promptforge challenge \
 Promote a winning challenger:
 
 ```bash
-uv run python -m promptforge frontier promote \
+uv run kata frontier promote \
   --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
 
@@ -379,8 +403,8 @@ This repo includes two adapter scripts:
 Optional model overrides:
 
 ```bash
-PROMPTFORGE_CODEX_MODEL=o3 uv run python -m promptforge eval ...
-PROMPTFORGE_CLAUDE_MODEL=sonnet uv run python -m promptforge eval ...
+KATA_CODEX_MODEL=o3 uv run kata eval ...
+KATA_CLAUDE_MODEL=sonnet uv run kata eval ...
 ```
 
 These adapters assume the corresponding CLI is already installed and
@@ -388,7 +412,7 @@ authenticated.
 
 ## Open-Source Status
 
-PromptForge is ready to be public as a framework-level MVP.
+Kata is ready to be public as a framework-level MVP.
 
 What is already solid:
 
@@ -415,8 +439,8 @@ What is still planned:
 Run the current checks:
 
 ```bash
-uv run pytest
-uv run ruff check
+uv run --extra dev python -m pytest
+uv run --extra dev python -m ruff check kata tests
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.

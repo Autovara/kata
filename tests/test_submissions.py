@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from promptforge.frontier import (
+from kata.frontier import (
     FRONTIER_SCHEMA_VERSION,
     FrontierManifest,
     FrontierModeConfig,
     write_frontier_manifest,
 )
-from promptforge.provenance import sha256_text
-from promptforge.submissions import (
+from kata.provenance import sha256_text
+from kata.submissions import (
     PR_ACTION_CLOSE_INVALID,
     PR_ACTION_CLOSE_LOSING,
     PR_ACTION_EVALUATE,
@@ -23,18 +23,30 @@ from promptforge.submissions import (
     verify_submission_result,
 )
 
+VALID_AGENT = (
+    "def solve(repo_path, issue, model, api_base, api_key):\n"
+    "    return {\"success\": True, \"diff\": \"\"}\n"
+)
 
-def write_registry(root: Path) -> None:
+
+def write_registry(
+    root: Path,
+    *,
+    active_repo_packs: list[str] | None = None,
+    default_repo_pack: str | None = None,
+) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    (root / "promptforge-benchmark-registry.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "registry_name": "test-registry",
-                "benchmarks_dir": "benchmarks",
-            }
-        )
-        + "\n",
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "registry_name": "test-registry",
+        "benchmarks_dir": "benchmarks",
+    }
+    if active_repo_packs is not None:
+        payload["active_repo_packs"] = active_repo_packs
+    if default_repo_pack is not None:
+        payload["default_repo_pack"] = default_repo_pack
+    (root / "kata-benchmark-registry.json").write_text(
+        json.dumps(payload) + "\n",
         encoding="utf-8",
     )
     (root / "benchmarks").mkdir(parents=True, exist_ok=True)
@@ -82,7 +94,7 @@ def challenge_summary_payload(
 ) -> dict[str, object]:
     baseline_prompt = pack_root / "prompts" / "contributor" / "baseline.md"
     frontier_prompt = pack_root / "prompts" / "contributor" / "frontier.md"
-    candidate_prompt = submission_root / "candidate.md"
+    candidate_prompt = submission_root / "agent.py"
     return {
         "schema_version": 2,
         "run_id": "challenge-1",
@@ -122,20 +134,20 @@ def test_validate_submission_accepts_scoped_submission_pr(
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
         submission_id="miner-1",
         output_root=str(repo_root / "submissions"),
     )
-    (submission_root / "candidate.md").write_text("# challenger\n", encoding="utf-8")
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
 
     result = validate_submission(
         str(submission_root),
         changed_paths=[
-            "submissions/example__repo/contributor/miner-1/candidate.md",
+            "submissions/example__repo/contributor/miner-1/agent.py",
             "submissions/example__repo/contributor/miner-1/submission.json",
         ],
         repo_root=str(repo_root),
@@ -153,20 +165,20 @@ def test_validate_submission_rejects_off_scope_pr_changes(
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
         submission_id="miner-2",
         output_root=str(repo_root / "submissions"),
     )
-    (submission_root / "candidate.md").write_text("# challenger\n", encoding="utf-8")
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
 
     result = validate_submission(
         str(submission_root),
         changed_paths=[
-            "submissions/example__repo/contributor/miner-2/candidate.md",
+            "submissions/example__repo/contributor/miner-2/agent.py",
             "README.md",
         ],
         repo_root=str(repo_root),
@@ -177,15 +189,15 @@ def test_validate_submission_rejects_off_scope_pr_changes(
     assert result.off_scope_paths == ["README.md"]
 
 
-def test_validate_submission_rejects_scaffold_candidate(
+def test_validate_submission_rejects_scaffold_agent(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
@@ -196,11 +208,96 @@ def test_validate_submission_rejects_scaffold_candidate(
     result = validate_submission(str(submission_root))
 
     assert not result.is_valid
-    assert "Candidate prompt still contains scaffold placeholder text." in result.reasons
+    assert "Submission agent still contains scaffold placeholder text." in result.reasons
+
+
+def test_validate_submission_rejects_missing_solve(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-nosolve",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert "Submission agent must define solve(...)." in result.reasons
+
+
+def test_validate_submission_rejects_inactive_repo_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(
+        registry_root,
+        active_repo_packs=["e35ventura__taopedia-articles"],
+        default_repo_pack="e35ventura__taopedia-articles",
+    )
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = repo_root / "submissions" / "example__repo" / "contributor" / "miner-inactive"
+    submission_root.mkdir(parents=True, exist_ok=True)
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
+    (submission_root / "submission.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "repo_pack": "example__repo",
+                "mode": "contributor",
+                "submission_id": "miner-inactive",
+                "created_at": "2026-06-29T00:00:00+00:00",
+                "author": "miner",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert any("Repo pack is not active" in reason for reason in result.reasons)
+
+
+def test_init_submission_rejects_inactive_repo_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(
+        registry_root,
+        active_repo_packs=["e35ventura__taopedia-articles"],
+        default_repo_pack="e35ventura__taopedia-articles",
+    )
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+
+    try:
+        init_submission(
+            repo_pack="example__repo",
+            mode="contributor",
+            submission_id="miner-inactive-init",
+            output_root=str(tmp_path / "Kata" / "submissions"),
+        )
+    except ValueError as exc:
+        assert "Repo pack is not active" in str(exc)
+    else:
+        raise AssertionError("Expected init_submission to reject inactive repo pack.")
 
 
 def test_inspect_pull_request_rejects_non_submission_pr(tmp_path: Path) -> None:
-    repo_root = tmp_path / "PromptForge"
+    repo_root = tmp_path / "Kata"
     repo_root.mkdir()
 
     result = inspect_pull_request(
@@ -212,21 +309,55 @@ def test_inspect_pull_request_rejects_non_submission_pr(tmp_path: Path) -> None:
     assert result.submission_path is None
 
 
-def test_inspect_pull_request_accepts_single_submission_scope(tmp_path: Path) -> None:
-    repo_root = tmp_path / "PromptForge"
+def test_inspect_pull_request_accepts_single_submission_scope(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     repo_root.mkdir()
     submission_root = repo_root / "submissions" / "example__repo" / "contributor" / "miner-9"
 
     result = inspect_pull_request(
         repo_root=str(repo_root),
         changed_paths=[
-            "submissions/example__repo/contributor/miner-9/candidate.md",
+            "submissions/example__repo/contributor/miner-9/agent.py",
             "submissions/example__repo/contributor/miner-9/submission.json",
         ],
     )
 
     assert result.action == PR_ACTION_EVALUATE
     assert result.submission_path == str(submission_root.resolve())
+
+
+def test_inspect_pull_request_rejects_inactive_repo_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(
+        registry_root,
+        active_repo_packs=["e35ventura__taopedia-articles"],
+        default_repo_pack="e35ventura__taopedia-articles",
+    )
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    repo_root.mkdir()
+
+    result = inspect_pull_request(
+        repo_root=str(repo_root),
+        changed_paths=[
+            "submissions/example__repo/contributor/miner-9/agent.py",
+            "submissions/example__repo/contributor/miner-9/submission.json",
+        ],
+    )
+
+    assert result.action == PR_ACTION_CLOSE_INVALID
+    assert any("Repo pack is not active" in reason for reason in result.reasons)
 
 
 def test_verify_submission_result_accepts_current_promotion_ready_result(
@@ -236,16 +367,19 @@ def test_verify_submission_result_accepts_current_promotion_ready_result(
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
         submission_id="miner-3",
         output_root=str(repo_root / "submissions"),
     )
-    candidate_text = "# winner\n"
-    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": True, \"diff\": \"winner\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
     candidate_hash = sha256_text(candidate_text)
     summary_path = tmp_path / "challenge_summary.json"
     summary_path.write_text(
@@ -277,16 +411,19 @@ def test_verify_submission_result_detects_stale_frontier(
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
         submission_id="miner-4",
         output_root=str(repo_root / "submissions"),
     )
-    candidate_text = "# winner\n"
-    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": True, \"diff\": \"winner\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
     summary_path = tmp_path / "challenge_summary.json"
     summary_path.write_text(
         json.dumps(
@@ -315,16 +452,19 @@ def test_decide_submission_action_returns_merge_for_verified_winner(
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
         submission_id="miner-merge",
         output_root=str(repo_root / "submissions"),
     )
-    candidate_text = "# winner\n"
-    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": True, \"diff\": \"winner\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
     summary_path = tmp_path / "challenge_summary.json"
     summary_path.write_text(
         json.dumps(
@@ -352,16 +492,19 @@ def test_decide_submission_action_returns_rerun_for_stale_result(
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
         submission_id="miner-rerun",
         output_root=str(repo_root / "submissions"),
     )
-    candidate_text = "# winner\n"
-    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": True, \"diff\": \"winner\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
     summary_path = tmp_path / "challenge_summary.json"
     summary_path.write_text(
         json.dumps(
@@ -388,16 +531,19 @@ def test_decide_submission_action_returns_close_for_loser(
     registry_root = tmp_path / "registry"
     write_registry(registry_root)
     pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
-    monkeypatch.setenv("PROMPTFORGE_BENCHMARKS_ROOT", str(registry_root))
-    repo_root = tmp_path / "PromptForge"
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
     submission_root = init_submission(
         repo_pack="example__repo",
         mode="contributor",
         submission_id="miner-lose",
         output_root=str(repo_root / "submissions"),
     )
-    candidate_text = "# loser\n"
-    (submission_root / "candidate.md").write_text(candidate_text, encoding="utf-8")
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": False, \"diff\": \"loser\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
     summary_path = tmp_path / "challenge_summary.json"
     payload = challenge_summary_payload(
         pack_root=pack_root,

@@ -1,4 +1,4 @@
-from promptforge.cli import main
+from kata.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

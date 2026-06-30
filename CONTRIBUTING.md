@@ -1,7 +1,7 @@
-# Contributing to PromptForge
+# Contributing to Kata
 
-PromptForge is an objective prompt-optimization repo. Contributions should make
-the evaluator, benchmark packs, or prompt competition workflow more trustworthy
+Kata is an objective coding-agent competition repo. Contributions should make
+the evaluator, benchmark packs, or agent competition workflow more trustworthy
 and more useful.
 
 ## Priorities
@@ -17,9 +17,9 @@ and more useful.
 Run these before opening a PR:
 
 ```bash
-uv run pytest
-uv run ruff check
-uv run python -m promptforge eval-pack validate --path <your-eval-pack>
+uv run --extra dev python -m pytest
+uv run --extra dev python -m ruff check kata tests
+uv run kata eval-pack validate --path <your-eval-pack>
 ```
 
 If you change the benchmark runner or reporting logic, add or update tests.
@@ -37,15 +37,15 @@ Eval-pack tasks should be based on real repo work where possible:
 Do not commit placeholder scaffold tasks as if they were live benchmarks.
 
 Canonical benchmark packs should live in a benchmark registry repo that contains
-`promptforge-benchmark-registry.json`, rather than in the main PromptForge repo.
+`kata-benchmark-registry.json`, rather than in the main Kata repo.
 
-## Prompt competition model
+## Competition model
 
-PromptForge uses three prompt roles:
+Kata uses three lane roles:
 
-- `baseline`: fixed generic control prompt
-- `frontier`: current best verified prompt for a repo and mode
-- `challenger`: new candidate prompt trying to replace the frontier
+- `baseline`: fixed generic control artifact
+- `frontier`: current best verified artifact for a repo and mode
+- `challenger`: new candidate agent trying to replace the frontier
 
 A challenger should only be promoted when it beats the frontier on the primary
 pool and, when configured, on the holdout pool.
@@ -53,19 +53,19 @@ pool and, when configured, on the holdout pool.
 Benchmark changes should also preserve clear provenance:
 
 - evaluator version
-- prompt hashes
+- artifact hashes
 - task-pool fingerprints
 - explicit task ids
 
 ## Submission PR rules
 
-Prompt challenger PRs should submit files only under:
+Challenger PRs should submit files only under:
 
 - `submissions/<repo-pack>/<mode>/<submission-id>/`
 
 Required files:
 
-- `candidate.md`
+- `agent.py`
 - `submission.json`
 
 Recommended metadata convention:
@@ -77,8 +77,8 @@ Submission PRs should not edit:
 
 - benchmark task definitions
 - frontier manifests
-- frontier prompt files
-- unrelated PromptForge code or docs
+- frontier lane artifacts
+- unrelated Kata code or docs
 
 Those PRs should be treated as invalid competition submissions.
 
@@ -94,7 +94,7 @@ Good contributions:
 
 Lower-priority contributions:
 
-- broad prompt rewrites without benchmark evidence
-- subjective prompt-style changes without measured improvement
-- changes that treat prompt generation as the main product rather than as a
+- broad artifact rewrites without benchmark evidence
+- subjective style changes without measured improvement
+- changes that treat initialization as the main product rather than as a
   source of frontier challengers

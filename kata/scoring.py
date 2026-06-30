@@ -79,11 +79,11 @@ def resolve_verifier_score(score_file: Path, *, checks_passed: bool) -> tuple[fl
         value = float(raw)
     except ValueError as exc:
         raise ValueError(
-            f"Invalid PromptForge score file at {score_file}: expected a float in [0, 1]."
+            f"Invalid Kata score file at {score_file}: expected a float in [0, 1]."
         ) from exc
     if not 0.0 <= value <= 1.0:
         raise ValueError(
-            f"Invalid PromptForge score file at {score_file}: score must be in [0, 1], got {value}."
+            f"Invalid Kata score file at {score_file}: score must be in [0, 1], got {value}."
         )
     return value, "score-file"
 

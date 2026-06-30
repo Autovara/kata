@@ -4,8 +4,8 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from promptforge.benchmarks import resolve_benchmarks_root, resolve_eval_pack_path
-from promptforge.repository import github_full_name, is_github_url
+from kata.benchmarks import resolve_benchmarks_root, resolve_eval_pack_path
+from kata.repository import github_full_name, is_github_url
 
 REQUIRED_FILES = (
     "task.md",

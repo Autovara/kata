@@ -5,15 +5,15 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from promptforge.benchmarks import resolve_eval_pack_path
-from promptforge.eval_runner import EvalRunSummary, run_prompt_variants
-from promptforge.frontier import (
+from kata.benchmarks import resolve_eval_pack_path
+from kata.eval_runner import ArtifactVariant, EvalRunSummary, run_artifact_variants
+from kata.frontier import (
     DEFAULT_PROMOTION_MARGIN_POINTS,
     FrontierManifest,
     FrontierModeConfig,
     load_frontier_manifest,
 )
-from promptforge.provenance import EVALUATOR_VERSION, sha256_text, short_hash
+from kata.provenance import EVALUATOR_VERSION, sha256_text, short_hash
 
 
 @dataclass(frozen=True)
@@ -79,15 +79,15 @@ def run_frontier_challenge(
     candidate_hash = sha256_text(candidate_text)
     promotion_margin_points = mode_config.promotion_margin_points
 
-    primary_eval = run_prompt_variants(
+    primary_eval = run_artifact_variants(
         repo_ref=manifest.repo_ref,
         eval_pack_path=eval_pack_path,
         mode=mode,
         agent_command=agent_command,
-        prompt_variants=[
-            ("baseline", baseline_text),
-            ("frontier", frontier_text),
-            ("candidate", candidate_text),
+        artifact_variants=[
+            ArtifactVariant(name="baseline", filename="baseline.md", content=baseline_text),
+            ArtifactVariant(name="frontier", filename="frontier.md", content=frontier_text),
+            ArtifactVariant(name="candidate", filename=candidate_path.name, content=candidate_text),
         ],
         task_names=mode_config.primary_tasks,
         output_root=str(challenge_root / "primary"),
@@ -109,15 +109,19 @@ def run_frontier_challenge(
     holdout_summary: ChallengePoolSummary | None = None
     promotion_ready = False
     if primary_summary.candidate_beats_frontier and mode_config.holdout_tasks:
-        holdout_eval = run_prompt_variants(
+        holdout_eval = run_artifact_variants(
             repo_ref=manifest.repo_ref,
             eval_pack_path=eval_pack_path,
             mode=mode,
             agent_command=agent_command,
-            prompt_variants=[
-                ("baseline", baseline_text),
-                ("frontier", frontier_text),
-                ("candidate", candidate_text),
+            artifact_variants=[
+                ArtifactVariant(name="baseline", filename="baseline.md", content=baseline_text),
+                ArtifactVariant(name="frontier", filename="frontier.md", content=frontier_text),
+                ArtifactVariant(
+                    name="candidate",
+                    filename=candidate_path.name,
+                    content=candidate_text,
+                ),
             ],
             task_names=mode_config.holdout_tasks,
             output_root=str(challenge_root / "holdout"),
@@ -336,7 +340,7 @@ def resolve_mode(manifest: FrontierManifest, mode: str) -> FrontierModeConfig:
     if mode_config is None:
         raise ValueError(
             f"Mode is not configured in frontier manifest: {mode}. "
-            "Run `promptforge frontier init` first."
+            "Run `kata frontier init` first."
         )
     return mode_config
 

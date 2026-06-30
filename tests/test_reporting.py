@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from promptforge.reporting import compare_variants, diff_paths, summarize_task_outcome
+from kata.reporting import compare_variants, diff_paths, summarize_task_outcome
 
 
 def test_diff_paths_reports_deleted_file_path(tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ def test_compare_variants_prefers_valid_task_completion() -> None:
         "success_score": 1,
     }
 
-    assert compare_variants(baseline, generated) == "PromptForge win"
+    assert compare_variants(baseline, generated) == "Kata win"
 
 
 def test_compare_variants_marks_double_invalid_runs_correctly() -> None:

@@ -5,22 +5,22 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from promptforge.benchmarks import resolve_eval_pack_path
-from promptforge.challenge import ChallengeSummary, load_challenge_summary, run_frontier_challenge
-from promptforge.frontier import FrontierModeConfig, load_frontier_manifest
-from promptforge.provenance import sha256_text
+from kata.benchmarks import ensure_active_repo_pack, resolve_eval_pack_path
+from kata.challenge import ChallengeSummary, load_challenge_summary, run_frontier_challenge
+from kata.frontier import FrontierModeConfig, load_frontier_manifest
+from kata.provenance import sha256_text
 
 SUBMISSIONS_DIRNAME = "submissions"
-SUBMISSION_SCHEMA_VERSION = 1
+SUBMISSION_SCHEMA_VERSION = 2
 SUBMISSION_METADATA_FILENAME = "submission.json"
-SUBMISSION_PROMPT_FILENAME = "candidate.md"
+SUBMISSION_AGENT_FILENAME = "agent.py"
 ALLOWED_SUBMISSION_FILENAMES = {
     SUBMISSION_METADATA_FILENAME,
-    SUBMISSION_PROMPT_FILENAME,
+    SUBMISSION_AGENT_FILENAME,
 }
 SUPPORTED_SUBMISSION_MODES = {"contributor", "reviewer"}
-DEFAULT_CANDIDATE_PLACEHOLDER = (
-    "Replace this file with the actual challenger prompt before opening a PR."
+DEFAULT_AGENT_PLACEHOLDER = (
+    "Replace this scaffold with a real challenger agent implementation before opening a PR."
 )
 SUBMISSION_ID_CONVENTION = "<github-username>-YYYYMMDD-NN"
 PR_ACTION_CLOSE_INVALID = "close-invalid"
@@ -48,7 +48,7 @@ class SubmissionDescriptor:
     repo_pack: str
     mode: str
     submission_id: str
-    candidate_prompt: Path
+    agent_path: Path
     metadata_path: Path
 
 
@@ -58,7 +58,7 @@ class SubmissionValidationResult:
     repo_pack: str | None
     mode: str | None
     submission_id: str | None
-    candidate_prompt: str | None
+    agent_path: str | None
     metadata_path: str | None
     changed_paths: list[str]
     off_scope_paths: list[str]
@@ -126,6 +126,9 @@ def init_submission(
     notes: str | None = None,
 ) -> Path:
     validate_submission_mode(mode)
+    lane_reasons = validate_submission_lane(repo_pack, mode)
+    if lane_reasons:
+        raise ValueError("; ".join(lane_reasons))
     effective_author = author.strip() if author and author.strip() else None
     root_base = (
         Path(output_root).expanduser().resolve()
@@ -145,8 +148,8 @@ def init_submission(
         notes=notes or default_submission_notes(),
     )
     write_submission_metadata(submission_root / SUBMISSION_METADATA_FILENAME, metadata)
-    candidate_path = submission_root / SUBMISSION_PROMPT_FILENAME
-    candidate_path.write_text(default_candidate_prompt(mode), encoding="utf-8")
+    agent_path = submission_root / SUBMISSION_AGENT_FILENAME
+    agent_path.write_text(default_submission_agent(mode), encoding="utf-8")
     return submission_root
 
 
@@ -175,7 +178,7 @@ def validate_submission(
             repo_pack=None,
             mode=None,
             submission_id=None,
-            candidate_prompt=None,
+            agent_path=None,
             metadata_path=None,
             changed_paths=normalized_changed,
             off_scope_paths=[],
@@ -184,7 +187,7 @@ def validate_submission(
         )
 
     metadata_path = descriptor.metadata_path
-    candidate_prompt = descriptor.candidate_prompt
+    agent_path = descriptor.agent_path
 
     if normalized_changed:
         changed_scope = validate_changed_paths(descriptor, normalized_changed)
@@ -199,25 +202,34 @@ def validate_submission(
         except (ValueError, json.JSONDecodeError) as exc:
             reasons.append(str(exc))
 
-    if not candidate_prompt.exists():
-        reasons.append(f"Missing required submission file: {candidate_prompt.name}")
+    if not agent_path.exists():
+        reasons.append(f"Missing required submission file: {agent_path.name}")
     else:
-        candidate_text = candidate_prompt.read_text(encoding="utf-8").strip()
-        if not candidate_text:
-            reasons.append("Candidate prompt file is empty.")
-        elif DEFAULT_CANDIDATE_PLACEHOLDER in candidate_text:
-            reasons.append("Candidate prompt still contains scaffold placeholder text.")
+        agent_text = agent_path.read_text(encoding="utf-8").strip()
+        if not agent_text:
+            reasons.append("Submission agent file is empty.")
+        elif DEFAULT_AGENT_PLACEHOLDER in agent_text:
+            reasons.append("Submission agent still contains scaffold placeholder text.")
+        if "def solve(" not in agent_text:
+            reasons.append("Submission agent must define solve(...).")
 
     if metadata is not None:
         reasons.extend(validate_submission_metadata(metadata, descriptor))
         reasons.extend(validate_submission_target(metadata))
+        if agent_path.exists():
+            reasons.extend(
+                validate_submission_candidate(
+                    metadata=metadata,
+                    agent_path=agent_path,
+                )
+            )
 
     return SubmissionValidationResult(
         submission_path=str(descriptor.root),
         repo_pack=descriptor.repo_pack,
         mode=descriptor.mode,
         submission_id=descriptor.submission_id,
-        candidate_prompt=str(candidate_prompt),
+        agent_path=str(agent_path),
         metadata_path=str(metadata_path),
         changed_paths=normalized_changed,
         off_scope_paths=off_scope_paths,
@@ -238,17 +250,17 @@ def evaluate_submission(
     if (
         not validation.is_valid
         or validation.metadata is None
-        or validation.candidate_prompt is None
+        or validation.agent_path is None
     ):
         raise ValueError(
-            "Submission is invalid. Run `promptforge submission validate` first. "
+            "Submission is invalid. Run `kata submission validate` first. "
             + "; ".join(validation.reasons or ["unknown validation failure"])
         )
 
     return run_frontier_challenge(
         eval_pack_path=validation.metadata.repo_pack,
         mode=validation.metadata.mode,
-        candidate_prompt_path=validation.candidate_prompt,
+        candidate_prompt_path=validation.agent_path,
         agent_command=agent_command,
         output_root=output_root,
         agent_timeout_seconds=agent_timeout_seconds,
@@ -281,7 +293,7 @@ def inspect_pull_request(
 
     if not candidate_dirs:
         reasons.append(
-            "PR does not contain a prompt submission under "
+            "PR does not contain an agent submission under "
             "`submissions/<repo-pack>/<mode>/<submission-id>`."
         )
         return PullRequestInspectionResult(
@@ -333,6 +345,7 @@ def inspect_pull_request(
         reasons.append(
             "PR changes files outside the allowed submission directory or adds unsupported files."
         )
+    reasons.extend(validate_submission_lane(descriptor.repo_pack, descriptor.mode))
 
     action = PR_ACTION_EVALUATE if not reasons else PR_ACTION_CLOSE_INVALID
     return PullRequestInspectionResult(
@@ -355,10 +368,10 @@ def verify_submission_result(
     if (
         not validation.is_valid
         or validation.metadata is None
-        or validation.candidate_prompt is None
+        or validation.agent_path is None
     ):
         raise ValueError(
-            "Submission is invalid. Run `promptforge submission validate` first. "
+            "Submission is invalid. Run `kata submission validate` first. "
             + "; ".join(validation.reasons or ["unknown validation failure"])
         )
 
@@ -370,8 +383,8 @@ def verify_submission_result(
             f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
         )
 
-    candidate_text = Path(validation.candidate_prompt).read_text(encoding="utf-8").rstrip() + "\n"
-    candidate_hash = sha256_text(candidate_text)
+    agent_text = Path(validation.agent_path).read_text(encoding="utf-8").rstrip() + "\n"
+    candidate_hash = sha256_text(agent_text)
     current_frontier_hash = resolve_frontier_prompt_hash(mode_config)
 
     expected_manifest_path = (
@@ -501,6 +514,8 @@ def render_submission_validation(result: SubmissionValidationResult) -> str:
         lines.append(f"Mode: {result.mode}")
     if result.submission_id:
         lines.append(f"Submission id: {result.submission_id}")
+    if result.agent_path:
+        lines.append(f"Agent file: {result.agent_path}")
     lines.append(f"Status: {'valid' if result.is_valid else 'invalid'}")
     if result.changed_paths:
         lines.append("Changed paths:")
@@ -621,9 +636,9 @@ def validate_changed_paths(
 
     if off_scope_paths:
         reasons.append("Submission PR touches paths outside the allowed submission scope.")
-    expected_candidate = expected_prefix + SUBMISSION_PROMPT_FILENAME
-    if expected_candidate not in changed_paths:
-        reasons.append("Submission PR must modify candidate.md.")
+    expected_agent = expected_prefix + SUBMISSION_AGENT_FILENAME
+    if expected_agent not in changed_paths:
+        reasons.append("Submission PR must modify agent.py.")
 
     return ChangedPathValidation(
         off_scope_paths=off_scope_paths,
@@ -655,24 +670,44 @@ def validate_submission_metadata(
 
 
 def validate_submission_target(metadata: SubmissionMetadata) -> list[str]:
+    return validate_submission_lane(metadata.repo_pack, metadata.mode)
+
+
+def validate_submission_candidate(
+    *,
+    metadata: SubmissionMetadata,
+    agent_path: Path,
+) -> list[str]:
+    del metadata
+    del agent_path
+    return []
+
+
+def validate_submission_lane(repo_pack: str, mode: str) -> list[str]:
     reasons: list[str] = []
     try:
-        resolve_eval_pack_path(metadata.repo_pack)
+        ensure_active_repo_pack(repo_pack)
+    except (FileNotFoundError, ValueError) as exc:
+        reasons.append(str(exc))
+        return reasons
+
+    try:
+        resolve_eval_pack_path(repo_pack)
     except FileNotFoundError as exc:
         reasons.append(str(exc))
         return reasons
 
     try:
-        manifest = load_frontier_manifest(metadata.repo_pack)
+        manifest = load_frontier_manifest(repo_pack)
     except FileNotFoundError:
         reasons.append(
             "Frontier manifest does not exist for the target repo pack. "
             "Initialize the frontier before accepting PR submissions."
         )
         return reasons
-    if metadata.mode not in manifest.modes:
+    if mode not in manifest.modes:
         reasons.append(
-            f"Mode is not configured in the frontier manifest: {metadata.mode}"
+            f"Mode is not configured in the frontier manifest: {mode}"
         )
     return reasons
 
@@ -695,7 +730,7 @@ def resolve_submission_descriptor(
         try:
             relative = root.relative_to(repo_root)
         except ValueError:
-            return None, ["Submission path must live under the PromptForge repo root."]
+            return None, ["Submission path must live under the Kata repo root."]
         parts = relative.parts
     else:
         parts = root.parts
@@ -723,7 +758,7 @@ def resolve_submission_descriptor(
             repo_pack=repo_pack,
             mode=mode,
             submission_id=submission_id,
-            candidate_prompt=root / SUBMISSION_PROMPT_FILENAME,
+            agent_path=root / SUBMISSION_AGENT_FILENAME,
             metadata_path=root / SUBMISSION_METADATA_FILENAME,
         ),
         reasons,
@@ -769,10 +804,17 @@ def default_submissions_root() -> Path:
     return Path.cwd().resolve() / SUBMISSIONS_DIRNAME
 
 
-def default_candidate_prompt(mode: str) -> str:
+def default_submission_agent(mode: str) -> str:
     return (
-        f"# Candidate Prompt ({mode})\n\n"
-        f"{DEFAULT_CANDIDATE_PLACEHOLDER}\n"
+        "from __future__ import annotations\n\n"
+        f'\"\"\"Kata submission scaffold for the {mode} lane.\"\"\"\n\n'
+        "def solve(repo_path: str, issue: str, model: str, api_base: str, api_key: str) -> dict:\n"
+        f"    # {DEFAULT_AGENT_PLACEHOLDER}\n"
+        "    return {\n"
+        "        \"success\": False,\n"
+        "        \"message\": \"scaffold agent - replace before submitting\",\n"
+        "        \"diff\": \"\",\n"
+        "    }\n"
     )
 
 
@@ -781,6 +823,7 @@ def default_submission_notes() -> str:
         "Recommended conventions:\n"
         f"- author: your GitHub username\n"
         f"- submission_id: {SUBMISSION_ID_CONVENTION}\n"
+        "- implement a real agent in agent.py before opening the PR\n"
     )
 
 

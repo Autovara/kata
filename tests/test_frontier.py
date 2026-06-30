@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from promptforge.challenge import ChallengePoolSummary, promotion_reason
-from promptforge.frontier import (
+from kata.challenge import ChallengePoolSummary, promotion_reason
+from kata.frontier import (
     FrontierManifest,
     FrontierModeConfig,
     render_frontier_json,

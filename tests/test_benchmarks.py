@@ -3,27 +3,36 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from promptforge.benchmarks import (
+from kata.benchmarks import (
     BENCHMARKS_ROOT_ENV,
     REGISTRY_MARKER_FILENAME,
+    ensure_active_repo_pack,
     resolve_benchmark_registry,
     resolve_benchmarks_root,
     resolve_eval_pack_path,
 )
-from promptforge.eval_pack import discover_eval_pack_tasks, init_eval_pack
+from kata.eval_pack import discover_eval_pack_tasks, init_eval_pack
 
 
-def write_registry_marker(root: Path, *, benchmarks_dir: str = "benchmarks") -> None:
+def write_registry_marker(
+    root: Path,
+    *,
+    benchmarks_dir: str = "benchmarks",
+    active_repo_packs: list[str] | None = None,
+    default_repo_pack: str | None = None,
+) -> None:
     root.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "registry_name": "test-registry",
+        "benchmarks_dir": benchmarks_dir,
+    }
+    if active_repo_packs is not None:
+        payload["active_repo_packs"] = active_repo_packs
+    if default_repo_pack is not None:
+        payload["default_repo_pack"] = default_repo_pack
     (root / REGISTRY_MARKER_FILENAME).write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "registry_name": "test-registry",
-                "benchmarks_dir": benchmarks_dir,
-            }
-        )
-        + "\n",
+        json.dumps(payload) + "\n",
         encoding="utf-8",
     )
     (root / benchmarks_dir).mkdir(parents=True, exist_ok=True)
@@ -62,6 +71,45 @@ def test_resolve_benchmark_registry_from_env_repo_root(
     assert registry.root == registry_root.resolve()
     assert registry.benchmarks_dir == (registry_root / "benchmarks").resolve()
     assert registry.registry_name == "test-registry"
+    assert registry.active_repo_packs == ()
+    assert registry.default_repo_pack is None
+
+
+def test_resolve_benchmark_registry_reads_active_repo_packs(
+    tmp_path: Path,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry_marker(
+        registry_root,
+        active_repo_packs=["e35ventura__taopedia-articles"],
+        default_repo_pack="e35ventura__taopedia-articles",
+    )
+
+    registry = resolve_benchmark_registry(str(registry_root))
+
+    assert registry.active_repo_packs == ("e35ventura__taopedia-articles",)
+    assert registry.default_repo_pack == "e35ventura__taopedia-articles"
+
+
+def test_ensure_active_repo_pack_rejects_inactive_repo_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry_marker(
+        registry_root,
+        active_repo_packs=["e35ventura__taopedia-articles"],
+        default_repo_pack="e35ventura__taopedia-articles",
+    )
+    monkeypatch.setenv(BENCHMARKS_ROOT_ENV, str(registry_root))
+
+    try:
+        ensure_active_repo_pack("other__repo")
+    except ValueError as exc:
+        assert "Repo pack is not active" in str(exc)
+        assert "e35ventura__taopedia-articles" in str(exc)
+    else:
+        raise AssertionError("Expected inactive repo pack to be rejected.")
 
 
 def test_resolve_benchmarks_root_from_explicit_benchmarks_dir(
@@ -142,12 +190,12 @@ def test_resolve_benchmark_registry_discovers_marker_from_workspace(
     monkeypatch,
 ) -> None:
     workspace_root = tmp_path / "workspace"
-    promptforge_root = workspace_root / "PromptForge"
+    kata_root = workspace_root / "Kata"
     registry_root = workspace_root / "bench-any-name"
-    promptforge_root.mkdir(parents=True)
+    kata_root.mkdir(parents=True)
     write_registry_marker(registry_root)
     monkeypatch.delenv(BENCHMARKS_ROOT_ENV, raising=False)
-    monkeypatch.chdir(promptforge_root)
+    monkeypatch.chdir(kata_root)
 
     registry = resolve_benchmark_registry()
 

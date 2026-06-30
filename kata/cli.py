@@ -4,19 +4,20 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from promptforge.baseline import generate_baseline_prompt
-from promptforge.challenge import (
+from kata.baseline import generate_baseline_prompt
+from kata.benchmarks import render_benchmark_registry, resolve_benchmark_registry
+from kata.challenge import (
     load_challenge_summary,
     render_challenge_summary,
     run_frontier_challenge,
 )
-from promptforge.eval_pack import (
+from kata.eval_pack import (
     discover_eval_pack_tasks,
     init_eval_pack,
     render_validation_result,
 )
-from promptforge.eval_runner import run_eval
-from promptforge.frontier import (
+from kata.eval_runner import run_eval
+from kata.frontier import (
     DEFAULT_PROMOTION_MARGIN_POINTS,
     init_frontier,
     load_frontier_manifest,
@@ -24,9 +25,9 @@ from promptforge.frontier import (
     render_frontier_manifest,
     update_frontier_prompt,
 )
-from promptforge.generator import generate_prompt
-from promptforge.reporting import render_report
-from promptforge.submissions import (
+from kata.generator import generate_prompt
+from kata.reporting import render_report
+from kata.submissions import (
     decide_submission_action,
     evaluate_submission,
     init_submission,
@@ -44,10 +45,10 @@ from promptforge.submissions import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="promptforge",
-        description="Initialize and evaluate repo-specific coding-agent prompts.",
+        prog="kata",
+        description="Initialize and evaluate repo-specific coding-agent competition lanes.",
     )
-    parser.add_argument("--version", action="version", version="promptforge 0.1.0")
+    parser.add_argument("--version", action="version", version="kata 0.1.0")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -103,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Shell command used to run the agent in each workspace. It runs with "
-            "PROMPTFORGE_WORKSPACE, PROMPTFORGE_PROMPT_FILE, PROMPTFORGE_TASK_FILE, and "
+            "KATA_WORKSPACE, KATA_PROMPT_FILE, KATA_TASK_FILE, and "
             "other eval-pack file paths set."
         ),
     )
@@ -198,7 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     frontier_promote.add_argument(
         "--challenge-run",
         required=True,
-        help="Path to a challenge_summary.json file produced by `promptforge challenge`.",
+        help="Path to a challenge_summary.json file produced by `kata challenge`.",
     )
     frontier_promote.add_argument("--json", action="store_true")
     frontier_promote.set_defaults(handler=handle_frontier_promote)
@@ -259,7 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional benchmark registry root or benchmarks directory. "
             "Defaults to the registry discovered via "
-            "`promptforge-benchmark-registry.json`."
+            "`kata-benchmark-registry.json`."
         ),
     )
     eval_pack_init.set_defaults(handler=handle_eval_pack_init)
@@ -274,13 +275,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_pack_validate.set_defaults(handler=handle_eval_pack_validate)
 
+    registry = subparsers.add_parser(
+        "registry",
+        help="Inspect the configured benchmark registry and active repo packs.",
+    )
+    registry_subparsers = registry.add_subparsers(dest="registry_command", required=True)
+
+    registry_show = registry_subparsers.add_parser(
+        "show",
+        help="Show benchmark registry metadata and active repo packs.",
+    )
+    registry_show.add_argument(
+        "--root",
+        default=None,
+        help="Optional benchmark registry root or benchmarks directory.",
+    )
+    registry_show.add_argument("--json", action="store_true")
+    registry_show.set_defaults(handler=handle_registry_show)
+
     report = subparsers.add_parser("report", help="Render an eval report.")
     report.add_argument("--run", required=True, help="Run id or path to run artifacts.")
     report.set_defaults(handler=handle_report)
 
     submission = subparsers.add_parser(
         "submission",
-        help="Manage miner prompt submissions for PR-based competition.",
+        help="Manage miner agent submissions for PR-based competition.",
     )
     submission_subparsers = submission.add_subparsers(
         dest="submission_command", required=True
@@ -288,14 +307,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     submission_init = submission_subparsers.add_parser(
         "init",
-        help="Scaffold a challenger prompt submission.",
+        help="Scaffold a challenger agent submission.",
     )
     submission_init.add_argument("--repo-pack", required=True, help="Target repo pack id.")
     submission_init.add_argument(
         "--mode",
         choices=["contributor", "reviewer"],
         required=True,
-        help="Prompt mode for the challenger submission.",
+        help="Competition mode for the challenger submission.",
     )
     submission_init.add_argument(
         "--submission-id",
@@ -342,7 +361,7 @@ def build_parser() -> argparse.ArgumentParser:
     submission_validate.add_argument(
         "--repo-root",
         default=None,
-        help="Optional PromptForge repo root used to resolve changed paths.",
+        help="Optional Kata repo root used to resolve changed paths.",
     )
     submission_validate.add_argument(
         "--json",
@@ -358,7 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
     submission_inspect.add_argument(
         "--repo-root",
         required=True,
-        help="PromptForge repo root used to resolve the inferred submission path.",
+        help="Kata repo root used to resolve the inferred submission path.",
     )
     submission_inspect.add_argument(
         "--changed-path",
@@ -577,6 +596,25 @@ def handle_eval_pack_validate(args: argparse.Namespace) -> int:
     results = discover_eval_pack_tasks(args.path)
     print("\n\n".join(render_validation_result(result) for result in results))
     return 0 if all(result.is_valid for result in results) else 2
+
+
+def handle_registry_show(args: argparse.Namespace) -> int:
+    registry = resolve_benchmark_registry(args.root)
+    if args.json:
+        print_json(
+            {
+                "root": str(registry.root),
+                "benchmarks_dir": str(registry.benchmarks_dir),
+                "marker_path": str(registry.marker_path),
+                "schema_version": registry.schema_version,
+                "registry_name": registry.registry_name,
+                "active_repo_packs": list(registry.active_repo_packs),
+                "default_repo_pack": registry.default_repo_pack,
+            }
+        )
+    else:
+        print(render_benchmark_registry(registry))
+    return 0
 
 
 def handle_report(args: argparse.Namespace) -> int:

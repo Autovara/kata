@@ -4,8 +4,8 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
-from promptforge.models import SourceFact
-from promptforge.repository import RepositoryContext
+from kata.models import SourceFact
+from kata.repository import RepositoryContext
 
 COMMAND_PREFIXES = (
     "python",

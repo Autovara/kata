@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workspace=${PROMPTFORGE_WORKSPACE:?PROMPTFORGE_WORKSPACE is required}
-prompt_file=${PROMPTFORGE_PROMPT_FILE:?PROMPTFORGE_PROMPT_FILE is required}
-task_file=${PROMPTFORGE_TASK_FILE:?PROMPTFORGE_TASK_FILE is required}
-mode=${PROMPTFORGE_MODE:-contributor}
-model=${PROMPTFORGE_CODEX_MODEL:-}
+workspace=${KATA_WORKSPACE:-}
+prompt_file=${KATA_PROMPT_FILE:-}
+task_file=${KATA_TASK_FILE:-}
+mode=${KATA_MODE:-contributor}
+model=${KATA_CODEX_MODEL:-}
+
+: "${workspace:?KATA_WORKSPACE is required}"
+: "${prompt_file:?KATA_PROMPT_FILE is required}"
+: "${task_file:?KATA_TASK_FILE is required}"
 
 if ! command -v codex >/dev/null 2>&1; then
   echo "codex CLI is not installed or not on PATH" >&2
@@ -16,7 +20,7 @@ combined_prompt=$(mktemp)
 trap 'rm -f "$combined_prompt"' EXIT
 
 cat > "$combined_prompt" <<EOF
-You are running inside a PromptForge eval workspace.
+You are running inside a Kata eval workspace.
 
 Your job is to modify the repository in the current workspace so it satisfies the eval task.
 
@@ -25,7 +29,7 @@ Rules:
 - Follow the eval task exactly.
 - Keep the diff minimal and task-scoped.
 - Do not edit files outside the task scope unless the task explicitly requires it.
-- The PromptForge runner will execute the task's own checks after you stop.
+- The Kata runner will execute the task's own checks after you stop.
 - Do not spend time running repo validation commands unless the needed dependencies are already available.
 - If a repo validation command is unavailable, skip it and finish the task-scoped edit.
 - Do not print a long explanation. Apply the changes directly in the workspace.

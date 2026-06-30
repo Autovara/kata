@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,13 +12,22 @@ from kata.agent_bundle import (
     AGENT_MANIFEST_FILENAME,
     find_unexpected_bundle_paths,
     is_allowed_bundle_relative_path,
+    load_bundle_files,
     validate_agent_manifest,
     write_agent_manifest,
 )
 from kata.benchmarks import ensure_active_repo_pack, resolve_eval_pack_path
-from kata.challenge import ChallengeSummary, load_challenge_summary, run_frontier_challenge
+from kata.challenge import (
+    ChallengeSummary,
+    load_challenge_summary,
+    run_frontier_challenge,
+)
 from kata.config import resolve_validator_model
-from kata.frontier import load_frontier_manifest, resolve_frontier_artifact_hash
+from kata.frontier import (
+    load_frontier_manifest,
+    resolve_baseline_artifact_hash,
+    resolve_frontier_artifact_hash,
+)
 from kata.provenance import sha256_directory
 
 SUBMISSIONS_DIRNAME = "submissions"
@@ -39,6 +50,19 @@ PR_ACTION_EVALUATE = "evaluate"
 PR_ACTION_CLOSE_LOSING = "close-losing"
 PR_ACTION_RERUN_STALE = "rerun-stale"
 PR_ACTION_MERGE = "merge"
+MAX_SUBMISSION_BUNDLE_FILES = 16
+MAX_SUBMISSION_FILE_BYTES = 64 * 1024
+MAX_SUBMISSION_BUNDLE_BYTES = 128 * 1024
+FORBIDDEN_ENV_REFERENCE_TOKENS = (
+    "KATA_VALIDATOR_API_KEY",
+    "KATA_VALIDATOR_API_BASE",
+    "KATA_VALIDATOR_MODEL",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+)
+SECRET_PATTERN = re.compile(r"(sk-[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{10,}|hf_[A-Za-z0-9]{10,})")
 
 
 @dataclass(frozen=True)
@@ -711,13 +735,53 @@ def validate_submission_candidate(
     metadata: SubmissionMetadata,
     submission_root: Path,
 ) -> list[str]:
-    del metadata
+    reasons: list[str] = []
     unexpected_paths = find_unexpected_bundle_paths(submission_root)
-    if not unexpected_paths:
-        return []
-    return [
-        "Submission bundle contains unsupported files: " + ", ".join(unexpected_paths)
-    ]
+    if unexpected_paths:
+        reasons.append(
+            "Submission bundle contains unsupported files: " + ", ".join(unexpected_paths)
+        )
+
+    symlink_paths = find_bundle_symlink_paths(submission_root)
+    if symlink_paths:
+        reasons.append(
+            "Submission bundle must not contain symlinks: " + ", ".join(symlink_paths)
+        )
+
+    bundle_paths = find_bundle_relative_paths(submission_root)
+    if len(bundle_paths) > MAX_SUBMISSION_BUNDLE_FILES:
+        reasons.append(
+            "Submission bundle is too large. "
+            f"Found {len(bundle_paths)} files; limit is {MAX_SUBMISSION_BUNDLE_FILES}."
+        )
+
+    total_bytes = 0
+    for relative_path in bundle_paths:
+        file_path = submission_root / relative_path
+        file_bytes = file_path.stat().st_size
+        total_bytes += file_bytes
+        if file_bytes > MAX_SUBMISSION_FILE_BYTES:
+            reasons.append(
+                f"Submission bundle file is too large: {relative_path} "
+                f"({file_bytes} bytes; limit is {MAX_SUBMISSION_FILE_BYTES})."
+            )
+    if total_bytes > MAX_SUBMISSION_BUNDLE_BYTES:
+        reasons.append(
+            "Submission bundle total size is too large. "
+            f"Found {total_bytes} bytes; limit is {MAX_SUBMISSION_BUNDLE_BYTES}."
+        )
+
+    bundle_files = load_bundle_files(submission_root)
+    reasons.extend(validate_bundle_python_sources(bundle_files))
+    reasons.extend(validate_bundle_static_policy(bundle_files))
+    reasons.extend(
+        validate_submission_not_copycat(
+            metadata=metadata,
+            submission_root=submission_root,
+            bundle_files=bundle_files,
+        )
+    )
+    return dedupe(reasons)
 
 
 def validate_submission_lane(repo_pack: str, mode: str) -> list[str]:
@@ -916,3 +980,104 @@ def find_bundle_relative_paths(root: Path) -> list[str]:
         if path.is_file() and is_allowed_bundle_relative_path(path.relative_to(root).as_posix())
     ]
     return relative_paths
+
+
+def find_bundle_symlink_paths(root: Path) -> list[str]:
+    return [
+        path.relative_to(root).as_posix()
+        for path in sorted(root.rglob("*"))
+        if path.is_symlink()
+    ]
+
+
+def validate_bundle_python_sources(bundle_files: dict[str, str]) -> list[str]:
+    reasons: list[str] = []
+    for relative_path, content in sorted(bundle_files.items()):
+        try:
+            ast.parse(content, filename=relative_path)
+        except SyntaxError as exc:
+            line_number = exc.lineno or 1
+            reasons.append(
+                "Submission bundle contains invalid Python syntax in "
+                f"{relative_path}:{line_number}."
+            )
+    agent_source = bundle_files.get(AGENT_ENTRY_FILENAME, "")
+    if agent_source and "def solve(" not in agent_source:
+        reasons.append("Submission agent must define solve(...).")
+    return reasons
+
+
+def validate_bundle_static_policy(bundle_files: dict[str, str]) -> list[str]:
+    reasons: list[str] = []
+    for relative_path, content in sorted(bundle_files.items()):
+        for token in FORBIDDEN_ENV_REFERENCE_TOKENS:
+            if token in content:
+                reasons.append(
+                    f"Submission bundle must not read validator/provider secret env vars "
+                    f"directly: {relative_path} references `{token}`."
+                )
+        if SECRET_PATTERN.search(content):
+            reasons.append(
+                f"Submission bundle appears to contain a hardcoded secret token: {relative_path}."
+            )
+    return reasons
+
+
+def validate_submission_not_copycat(
+    *,
+    metadata: SubmissionMetadata,
+    submission_root: Path,
+    bundle_files: dict[str, str],
+) -> list[str]:
+    manifest = load_frontier_manifest(metadata.repo_pack)
+    mode_config = manifest.modes.get(metadata.mode)
+    if mode_config is None:
+        return []
+
+    reasons: list[str] = []
+    candidate_hash = hash_submission_bundle(submission_root)
+    frontier_hash = resolve_frontier_artifact_hash(mode_config)
+    baseline_hash = resolve_baseline_artifact_hash(mode_config)
+    if candidate_hash == frontier_hash:
+        reasons.append("Submission bundle is an exact copy of the current frontier artifact.")
+    if candidate_hash == baseline_hash:
+        reasons.append("Submission bundle is an exact copy of the current baseline artifact.")
+
+    candidate_agent = bundle_files.get(AGENT_ENTRY_FILENAME)
+    if candidate_agent is None:
+        return reasons
+
+    frontier_agent_path = (
+        Path(mode_config.frontier_artifact).expanduser().resolve() / AGENT_ENTRY_FILENAME
+    )
+    if frontier_agent_path.exists() and python_sources_equivalent(
+        candidate_agent,
+        frontier_agent_path.read_text(encoding="utf-8"),
+    ):
+        reasons.append(
+            "Submission agent duplicates the current frontier agent implementation."
+        )
+
+    baseline_agent_path = (
+        Path(mode_config.baseline_artifact).expanduser().resolve() / AGENT_ENTRY_FILENAME
+    )
+    if baseline_agent_path.exists() and python_sources_equivalent(
+        candidate_agent,
+        baseline_agent_path.read_text(encoding="utf-8"),
+    ):
+        reasons.append(
+            "Submission agent duplicates the current baseline agent implementation."
+        )
+    return reasons
+
+
+def python_sources_equivalent(left: str, right: str) -> bool:
+    try:
+        left_tree = ast.parse(left)
+        right_tree = ast.parse(right)
+    except SyntaxError:
+        return left == right
+    return ast.dump(left_tree, include_attributes=False) == ast.dump(
+        right_tree,
+        include_attributes=False,
+    )

@@ -31,7 +31,8 @@ For each miner PR, the bot should do this:
 2. close immediately if the diff is not a valid submission PR or it targets an
    inactive repo-pack
 3. validate the checked-out submission contents
-   This includes checking that `agent.py` is real and defines `solve(...)`.
+   This includes checking that `agent.py` is real, defines `solve(...)`,
+   and does not fail anti-cheat bundle policy.
 4. evaluate the challenger against the current frontier lane
 5. verify the result is still fresh
 6. collapse the outcome to a simple action

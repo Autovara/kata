@@ -182,6 +182,12 @@ Current validation rules:
 - the target mode must already be configured in that pack's `frontier.json`
 - `agent.py` must define `solve(...)`
 - `agent_manifest.json` must match the validator bundle contract
+- bundle Python files must parse cleanly
+- bundle files must stay within validator size/count limits
+- bundle files must not contain symlinks
+- bundle files must not reference validator/provider secret env vars directly
+- bundle files must not contain obvious hardcoded secret tokens
+- challenger bundles must not duplicate the current baseline/frontier artifact
 
 Recommended identity convention:
 
@@ -310,16 +316,17 @@ Scaffold a challenger submission:
 uv run kata submission init \
   --repo-pack <repo-pack> \
   --mode contributor \
-  --submission-id miner-001
+  --submission-id carlos4s-20260630-01 \
+  --author carlos4s
 ```
 
 Validate a submission and its PR-style changed paths:
 
 ```bash
 uv run kata submission validate \
-  --path submissions/<repo-pack>/contributor/miner-001 \
-  --changed-path submissions/<repo-pack>/contributor/miner-001/agent.py \
-  --changed-path submissions/<repo-pack>/contributor/miner-001/submission.json
+  --path submissions/<repo-pack>/contributor/carlos4s-20260630-01 \
+  --changed-path submissions/<repo-pack>/contributor/carlos4s-20260630-01/agent.py \
+  --changed-path submissions/<repo-pack>/contributor/carlos4s-20260630-01/submission.json
 ```
 
 Inspect a PR diff before checking out the PR branch:
@@ -334,7 +341,7 @@ Evaluate the challenger against the current frontier:
 
 ```bash
 uv run kata submission evaluate \
-  --path submissions/<repo-pack>/contributor/miner-001 \
+  --path submissions/<repo-pack>/contributor/carlos4s-20260630-01 \
   --agent-command "$PWD/scripts/run_python_agent_eval.sh"
 ```
 
@@ -342,7 +349,7 @@ Verify that the result is still current before merge:
 
 ```bash
 uv run kata submission verify \
-  --path submissions/<repo-pack>/contributor/miner-001 \
+  --path submissions/<repo-pack>/contributor/carlos4s-20260630-01 \
   --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
 
@@ -353,7 +360,7 @@ Convert verification into a PR action:
 
 ```bash
 uv run kata submission decide \
-  --path submissions/<repo-pack>/contributor/miner-001 \
+  --path submissions/<repo-pack>/contributor/carlos4s-20260630-01 \
   --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
 
@@ -432,6 +439,7 @@ What is already solid:
 - frontier challenge workflow
 - evaluator-version and benchmark-provenance recording
 - validator-owned `Qwen3-32B` runtime policy
+- submission anti-cheat and bundle-policy validation
 - initialization prompt bootstrapping for seeded agents
 - regression tests for evaluator behavior
 

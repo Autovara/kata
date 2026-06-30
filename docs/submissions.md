@@ -116,6 +116,15 @@ These rules are enforced with:
 uv run kata submission validate --path <submission-dir>
 ```
 
+Current validator anti-cheat rules also reject:
+
+- challenger bundles that duplicate the current frontier or baseline
+- invalid Python syntax in `agent.py` or helper modules
+- symlinks inside the submission bundle
+- bundles above the current file-count or size limits
+- direct references to validator/provider secret env vars
+- obvious hardcoded secret-like tokens
+
 Before checking out the PR branch, CI can inspect the diff only:
 
 ```bash

@@ -330,6 +330,121 @@ def test_validate_submission_rejects_unexpected_bundle_file(
     assert "Submission bundle contains unsupported files: notes.txt" in result.reasons
 
 
+def test_validate_submission_rejects_frontier_copycat_agent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-copycat",
+        output_root=str(repo_root / "submissions"),
+    )
+    helpers_root = submission_root / "helpers"
+    helpers_root.mkdir()
+    (helpers_root / "extra.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (submission_root / "agent.py").write_text(SEED_AGENT, encoding="utf-8")
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert (
+        "Submission agent duplicates the current frontier agent implementation."
+        in result.reasons
+    )
+
+
+def test_validate_submission_rejects_validator_env_reference(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-env",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(
+        "import os\n\n"
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    key = os.environ.get('OPENAI_API_KEY', '')\n"
+        "    return {\"success\": bool(key), \"diff\": \"\"}\n",
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert any("OPENAI_API_KEY" in reason for reason in result.reasons)
+
+
+def test_validate_submission_rejects_hardcoded_secret_like_token(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-secret",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    token = 'sk-1234567890abcdef'\n"
+        "    return {\"success\": bool(token), \"diff\": \"\"}\n",
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert any("hardcoded secret token" in reason for reason in result.reasons)
+
+
+def test_validate_submission_rejects_invalid_helper_python_syntax(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-badhelper",
+        output_root=str(repo_root / "submissions"),
+    )
+    helpers_root = submission_root / "helpers"
+    helpers_root.mkdir()
+    (helpers_root / "planner.py").write_text("def plan(:\n    return 'bad'\n", encoding="utf-8")
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert any(
+        "Submission bundle contains invalid Python syntax in helpers/planner.py" in reason
+        for reason in result.reasons
+    )
+
+
 def test_validate_submission_rejects_inactive_repo_pack(
     tmp_path: Path,
     monkeypatch,

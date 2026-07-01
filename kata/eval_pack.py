@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kata.benchmarks import resolve_benchmarks_root, resolve_eval_pack_path
+from kata.oracle import ORACLE_FILENAME, load_oracle_payload, validate_oracle_payload
 from kata.repository import github_full_name, is_github_url
 
 REQUIRED_FILES = (
@@ -38,10 +39,16 @@ class EvalPackValidationResult:
     missing_files: list[str]
     empty_files: list[str]
     placeholder_files: list[str]
+    invalid_files: list[str] | None = None
 
     @property
     def is_valid(self) -> bool:
-        return not self.missing_files and not self.empty_files and not self.placeholder_files
+        return (
+            not self.missing_files
+            and not self.empty_files
+            and not self.placeholder_files
+            and not (self.invalid_files or [])
+        )
 
 
 def init_eval_pack(repo_ref: str, task_id: str, output_root: str | None = None) -> Path:
@@ -66,6 +73,7 @@ def validate_eval_pack(path: str) -> EvalPackValidationResult:
     missing_files: list[str] = []
     empty_files: list[str] = []
     placeholder_files: list[str] = []
+    invalid_files: list[str] = []
 
     for filename in REQUIRED_FILES:
         file_path = root / filename
@@ -77,12 +85,19 @@ def validate_eval_pack(path: str) -> EvalPackValidationResult:
             continue
         if file_contains_placeholder(file_path, filename):
             placeholder_files.append(filename)
+    oracle_path = root / ORACLE_FILENAME
+    if oracle_path.exists():
+        try:
+            validate_oracle_payload(load_oracle_payload(oracle_path))
+        except ValueError:
+            invalid_files.append(ORACLE_FILENAME)
 
     return EvalPackValidationResult(
         root=root,
         missing_files=missing_files,
         empty_files=empty_files,
         placeholder_files=placeholder_files,
+        invalid_files=invalid_files,
     )
 
 
@@ -128,6 +143,9 @@ def render_validation_result(result: EvalPackValidationResult) -> str:
     if result.placeholder_files:
         lines.append("Placeholder scaffold content still present:")
         lines.extend(f"- {name}" for name in result.placeholder_files)
+    if result.invalid_files:
+        lines.append("Invalid files:")
+        lines.extend(f"- {name}" for name in result.invalid_files)
     return "\n".join(lines)
 
 

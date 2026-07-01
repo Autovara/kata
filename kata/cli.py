@@ -23,6 +23,7 @@ from kata.frontier import (
     render_frontier_json,
     render_frontier_manifest,
 )
+from kata.oracle import main as oracle_main
 from kata.reporting import render_report
 from kata.submissions import (
     decide_submission_action,
@@ -239,6 +240,13 @@ def build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser("report", help="Render an eval report.")
     report.add_argument("--run", required=True, help="Run id or path to run artifacts.")
     report.set_defaults(handler=handle_report)
+
+    oracle = subparsers.add_parser(
+        "oracle",
+        help="Run deterministic task oracle checks against a workspace.",
+    )
+    oracle.add_argument("oracle_args", nargs=argparse.REMAINDER)
+    oracle.set_defaults(handler=handle_oracle)
 
     submission = subparsers.add_parser(
         "submission",
@@ -524,6 +532,13 @@ def handle_registry_show(args: argparse.Namespace) -> int:
 def handle_report(args: argparse.Namespace) -> int:
     print(render_report(args.run))
     return 0
+
+
+def handle_oracle(args: argparse.Namespace) -> int:
+    oracle_args = list(args.oracle_args or [])
+    if oracle_args and oracle_args[0] == "--":
+        oracle_args = oracle_args[1:]
+    return oracle_main(oracle_args)
 
 
 def handle_submission_init(args: argparse.Namespace) -> int:

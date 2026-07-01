@@ -15,6 +15,7 @@ contains:
 - `rubric.md`: human-readable pass/fail contract
 - `allowed_paths.txt`: paths the agent may edit
 - `forbidden_paths.txt`: paths the agent must not edit
+- `oracle.json`: optional deterministic task-specific assertions
 - `benchkit.json`: provenance and lifecycle metadata
 
 For the current Taopedia lane, tasks are mined from historical commits. The
@@ -87,6 +88,42 @@ The historical after-commit can be used as reference material, but the checker
 should avoid exact full-file equality unless exact reproduction is the intended
 task. Equivalent correct solutions should pass.
 
+## Deterministic Oracle Format
+
+Kata supports an optional `oracle.json` file in each task:
+
+```json
+{
+  "schema_version": 1,
+  "target_files": ["content/pages/example/index.mdx"],
+  "required_contains": [
+    {
+      "path": "content/pages/example/index.mdx",
+      "text": "required factual claim"
+    }
+  ],
+  "forbidden_contains": [
+    {
+      "path": "content/pages/example/index.mdx",
+      "text": "known wrong claim"
+    }
+  ],
+  "required_regex": [],
+  "forbidden_regex": []
+}
+```
+
+Task checks should run the oracle after repo-level checks:
+
+```bash
+python -m kata.oracle verify \
+  --workspace "$KATA_WORKSPACE" \
+  --task-dir "$KATA_EVAL_TASK_DIR" \
+  --score-file "$KATA_SCORE_FILE"
+```
+
+The oracle writes `1.0` or `0.0` to the score file and exits nonzero on failure.
+
 ## LLM Judges
 
 LLM judging can be useful for content quality, but it should not be the only
@@ -115,4 +152,3 @@ should satisfy:
 - task lint/reporting should flag generic-only checks as not production-ready
 - primary and holdout pools should contain diverse task types and paths
 - retired holdout tasks can be published later as examples of the hidden oracle
-

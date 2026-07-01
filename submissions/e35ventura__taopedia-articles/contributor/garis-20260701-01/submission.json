@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "repo_pack": "e35ventura__taopedia-articles",
+  "mode": "contributor",
+  "submission_id": "garis-20260701-01",
+  "created_at": "2026-07-01T00:00:00+00:00",
+  "author": "garis",
+  "title": "Validated full-file Taopedia editor",
+  "notes": "Requests full article content, validates local article rules, then emits a generated unified diff."
+}

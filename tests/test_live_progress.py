@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kata.challenge import queued_pool_status
+from kata.challenge import queued_pool_status, resolve_candidate_author
 from kata.live_progress import update_live_status, update_pool_status
 
 
@@ -65,3 +65,24 @@ def test_queued_pool_status_initializes_all_tasks_as_pending() -> None:
             "frontier": {"started": False, "finished": False},
         },
     ]
+
+
+def test_resolve_candidate_author_prefers_submission_metadata(tmp_path: Path) -> None:
+    candidate = tmp_path / "folder-prefix-20260701-01"
+    candidate.mkdir()
+    (candidate / "submission.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "repo_pack": "example__repo",
+                "mode": "contributor",
+                "submission_id": "folder-prefix-20260701-01",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "author": "real-github-user",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert resolve_candidate_author(candidate) == "real-github-user"

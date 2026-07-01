@@ -23,6 +23,8 @@ from kata.live_progress import update_live_status
 from kata.provenance import EVALUATOR_VERSION, pool_fingerprint, short_hash
 from kata.public_artifacts import resolve_artifact_path
 
+SUBMISSION_METADATA_FILENAME = "submission.json"
+
 
 @dataclass(frozen=True)
 class ChallengePoolSummary:
@@ -109,7 +111,7 @@ def run_frontier_challenge(
             "repo_pack": eval_pack_root.name,
             "mode": mode,
             "candidate_submission_id": candidate_path.name,
-            "candidate_author": infer_submission_author(candidate_path.name),
+            "candidate_author": resolve_candidate_author(candidate_path),
             "challenge_run_id": challenge_run_id,
             "evaluator_version": evaluator_version,
             "validator_model": validator_model,
@@ -581,6 +583,20 @@ def infer_submission_author(submission_id: str) -> str | None:
     if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
         return parts[0]
     return submission_id or None
+
+
+def resolve_candidate_author(candidate_path: Path) -> str | None:
+    metadata_path = candidate_path / SUBMISSION_METADATA_FILENAME
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return infer_submission_author(candidate_path.name)
+    if not isinstance(payload, dict):
+        return infer_submission_author(candidate_path.name)
+    author = payload.get("author")
+    if isinstance(author, str) and author.strip():
+        return author.strip()
+    return infer_submission_author(candidate_path.name)
 
 
 def sha256_bundle_dict(files: dict[str, str]) -> str:

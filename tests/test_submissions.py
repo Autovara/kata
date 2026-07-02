@@ -305,6 +305,34 @@ def test_decide_submission_action_reruns_stale_benchmark(tmp_path, monkeypatch) 
     assert decision.action == PR_ACTION_RERUN_STALE
 
 
+def test_decide_submission_action_honors_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root, submission_root, summary, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    stale_decision = decide_submission_action(
+        str(submission_root),
+        str(summary_path),
+    )
+    assert stale_decision.action != PR_ACTION_MERGE
+
+    decision = decide_submission_action(
+        str(submission_root),
+        str(summary_path),
+        public_root=str(public_root),
+    )
+
+    assert decision.action == PR_ACTION_MERGE
+    assert decision.auto_merge_ready
+
+
 def write_evaluator_lane(public_root: Path, *, active: bool = True) -> None:
     write_lane_metadata(
         EvaluatorLaneMetadata(

@@ -663,8 +663,10 @@ def verify_submission_result(
 def decide_submission_action(
     submission_path: str,
     challenge_summary_path: str,
+    *,
+    public_root: str | None = None,
 ) -> SubmissionDecisionResult:
-    validation = validate_submission(submission_path)
+    validation = validate_submission(submission_path, public_root=public_root)
     if not validation.is_valid or validation.metadata is None:
         reasons = validation.reasons or ["Submission is invalid."]
         return SubmissionDecisionResult(
@@ -680,7 +682,11 @@ def decide_submission_action(
             auto_merge_ready=False,
         )
 
-    verification = verify_submission_result(submission_path, challenge_summary_path)
+    verification = verify_submission_result(
+        submission_path,
+        challenge_summary_path,
+        public_root=public_root,
+    )
     if verification.auto_merge_ready:
         return SubmissionDecisionResult(
             action=PR_ACTION_MERGE,

@@ -305,6 +305,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the challenge_summary.json generated for this submission.",
     )
     submission_verify.add_argument(
+        "--public-root",
+        default=None,
+        help=(
+            "Optional Kata root that owns lane state and kings. Defaults to "
+            "KATA_ROOT or the current working directory."
+        ),
+    )
+    submission_verify.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
@@ -324,6 +332,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--challenge-run",
         required=True,
         help="Path to the challenge_summary.json generated for this submission.",
+    )
+    submission_decide.add_argument(
+        "--public-root",
+        default=None,
+        help=(
+            "Optional Kata root that owns lane state and kings. Defaults to "
+            "KATA_ROOT or the current working directory."
+        ),
     )
     submission_decide.add_argument(
         "--json",
@@ -450,7 +466,16 @@ def handle_submission_evaluate(args: argparse.Namespace) -> int:
 
 
 def handle_submission_verify(args: argparse.Namespace) -> int:
-    result = verify_submission_result(args.path, args.challenge_run)
+    public_root = (
+        str(Path(args.public_root).expanduser().resolve())
+        if args.public_root
+        else None
+    )
+    result = verify_submission_result(
+        args.path,
+        args.challenge_run,
+        public_root=public_root,
+    )
     print(
         render_submission_json(result)
         if args.json
@@ -460,7 +485,16 @@ def handle_submission_verify(args: argparse.Namespace) -> int:
 
 
 def handle_submission_decide(args: argparse.Namespace) -> int:
-    result = decide_submission_action(args.path, args.challenge_run)
+    public_root = (
+        str(Path(args.public_root).expanduser().resolve())
+        if args.public_root
+        else None
+    )
+    result = decide_submission_action(
+        args.path,
+        args.challenge_run,
+        public_root=public_root,
+    )
     print(
         render_submission_json(result)
         if args.json

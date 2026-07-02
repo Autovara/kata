@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "packs": [
+    {
+      "lane_id": "sn60__bitsec",
+      "repo_pack": "sn60__bitsec",
+      "mode": "miner",
+      "evaluator_id": "sn60_bitsec",
+      "active": true
+    }
+  ],
+  "updated_at": "2026-07-02T13:36:19.712436+00:00"
+}

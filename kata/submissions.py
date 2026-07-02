@@ -240,12 +240,12 @@ def init_submission(
         created_at=datetime.now(UTC).isoformat(),
         author=effective_author,
         title=title,
-        notes=notes or default_submission_notes(mode),
+        notes=notes or default_submission_notes(),
     )
     write_submission_metadata(submission_root / SUBMISSION_METADATA_FILENAME, metadata)
     write_agent_manifest(submission_root / SUBMISSION_AGENT_MANIFEST_FILENAME)
     agent_path = submission_root / SUBMISSION_AGENT_FILENAME
-    agent_path.write_text(default_submission_agent(mode), encoding="utf-8")
+    agent_path.write_text(default_submission_agent(), encoding="utf-8")
     return submission_root
 
 
@@ -325,8 +325,8 @@ def validate_submission(
             reasons.append("Submission agent file is empty.")
         elif DEFAULT_AGENT_PLACEHOLDER in agent_text:
             reasons.append("Submission agent still contains scaffold placeholder text.")
-        if not agent_defines_required_entrypoint(agent_text, descriptor.mode):
-            reasons.append(required_submission_entrypoint_reason(descriptor.mode))
+        if not agent_defines_required_entrypoint(agent_text):
+            reasons.append(required_submission_entrypoint_reason())
 
     if not agent_manifest_path.exists():
         reasons.append(f"Missing required submission file: {agent_manifest_path.name}")
@@ -363,17 +363,13 @@ def validate_submission(
 def evaluate_submission(
     submission_path: str,
     *,
-    agent_command: str | None = None,
     output_root: str | None = None,
-    agent_timeout_seconds: int | None = None,
-    checks_timeout_seconds: int | None = None,
     sn60_project_keys: list[str] | None = None,
     sn60_replicas_per_project: int | None = None,
     sn60_sandbox_root: str | None = None,
     sn60_benchmark_file: str | None = None,
     sn60_sandbox_commit: str | None = None,
 ) -> ChallengeSummary:
-    del agent_command, agent_timeout_seconds, checks_timeout_seconds  # legacy CLI compat
     validation = validate_submission(submission_path)
     if (
         not validation.is_valid
@@ -1007,8 +1003,8 @@ def validate_submission_candidate(
     if metadata.mode == "miner":
         reasons.extend(validate_sn60_static_screening(submission_root))
 
-    reasons.extend(validate_bundle_python_sources(bundle_files, mode=metadata.mode))
-    reasons.extend(validate_bundle_static_policy(bundle_files, mode=metadata.mode))
+    reasons.extend(validate_bundle_python_sources(bundle_files))
+    reasons.extend(validate_bundle_static_policy(bundle_files))
     reasons.extend(
         validate_submission_not_copycat(
             metadata=metadata,
@@ -1136,8 +1132,7 @@ def default_submissions_root() -> Path:
     return Path.cwd().resolve() / SUBMISSIONS_DIRNAME
 
 
-def default_submission_agent(mode: str) -> str:
-    del mode
+def default_submission_agent() -> str:
     return (
         "from __future__ import annotations\n\n"
         '\"\"\"Kata submission scaffold for the miner lane.\"\"\"\n\n'
@@ -1152,8 +1147,7 @@ def default_submission_agent(mode: str) -> str:
     )
 
 
-def default_submission_notes(mode: str) -> str:
-    del mode
+def default_submission_notes() -> str:
     lines = [
         "Recommended conventions:",
         "- author: your GitHub username",
@@ -1164,20 +1158,12 @@ def default_submission_notes(mode: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def submission_entrypoint_name(mode: str) -> str:
-    del mode
-    return "agent_main"
-
-
-def required_submission_entrypoint_reason(mode: str) -> str:
-    del mode
+def required_submission_entrypoint_reason() -> str:
     return "Submission agent must define agent_main(...)."
 
 
-def agent_defines_required_entrypoint(agent_source: str, mode: str) -> bool:
-    pattern = re.compile(
-        rf"(?m)^(?:async\s+)?def\s+{re.escape(submission_entrypoint_name(mode))}\s*\("
-    )
+def agent_defines_required_entrypoint(agent_source: str) -> bool:
+    pattern = re.compile(r"(?m)^(?:async\s+)?def\s+agent_main\s*\(")
     return pattern.search(agent_source) is not None
 
 
@@ -1241,11 +1227,7 @@ def find_bundle_symlink_paths(root: Path) -> list[str]:
     ]
 
 
-def validate_bundle_python_sources(
-    bundle_files: dict[str, str],
-    *,
-    mode: str,
-) -> list[str]:
+def validate_bundle_python_sources(bundle_files: dict[str, str]) -> list[str]:
     reasons: list[str] = []
     for relative_path, content in sorted(bundle_files.items()):
         try:
@@ -1277,16 +1259,12 @@ def validate_bundle_python_sources(
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
     agent_source = bundle_files.get(AGENT_ENTRY_FILENAME, "")
-    if agent_source and not agent_defines_required_entrypoint(agent_source, mode):
-        reasons.append(required_submission_entrypoint_reason(mode))
+    if agent_source and not agent_defines_required_entrypoint(agent_source):
+        reasons.append(required_submission_entrypoint_reason())
     return reasons
 
 
-def validate_bundle_static_policy(
-    bundle_files: dict[str, str],
-    *,
-    mode: str,
-) -> list[str]:
+def validate_bundle_static_policy(bundle_files: dict[str, str]) -> list[str]:
     reasons: list[str] = []
     parsed_trees: dict[str, ast.AST] = {}
     for relative_path, content in sorted(bundle_files.items()):
@@ -1311,18 +1289,9 @@ def validate_bundle_static_policy(
             reasons.append(
                 f"Submission bundle appears to contain a hardcoded secret token: {relative_path}."
             )
-    reasons.extend(validate_bundle_entrypoint_contract(parsed_trees, mode=mode))
-    reasons.extend(validate_bundle_sampling_policy(parsed_trees, mode=mode))
+    reasons.extend(validate_bundle_miner_contract(parsed_trees))
+    reasons.extend(validate_bundle_sampling_policy(parsed_trees))
     return reasons
-
-
-def validate_bundle_entrypoint_contract(
-    parsed_trees: dict[str, ast.AST],
-    *,
-    mode: str,
-) -> list[str]:
-    del mode
-    return validate_bundle_miner_contract(parsed_trees)
 
 
 
@@ -1339,7 +1308,7 @@ def validate_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[str
                 "sandbox runner calls agent_main() directly and does not await "
                 "coroutines."
             ]
-        return [required_submission_entrypoint_reason("miner")]
+        return [required_submission_entrypoint_reason()]
 
     if not function_supports_no_arg_invocation(agent_main_fn):
         return ["Submission agent must support no-argument invocation: agent_main()."]
@@ -1355,12 +1324,7 @@ def validate_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[str
     return []
 
 
-def validate_bundle_sampling_policy(
-    parsed_trees: dict[str, ast.AST],
-    *,
-    mode: str,
-) -> list[str]:
-    del mode
+def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[str]:
     reasons: list[str] = []
     for relative_path, tree in sorted(parsed_trees.items()):
         for node in ast.walk(tree):

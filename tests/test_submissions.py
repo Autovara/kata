@@ -495,7 +495,6 @@ def test_evaluate_submission_uses_seeded_lane_king_for_registry_lane(
 
     summary = evaluate_submission(
         str(submission_root),
-        agent_command="/bin/true",
         sn60_project_keys=["project-a"],
     )
 
@@ -524,8 +523,7 @@ def test_evaluate_submission_requires_seeded_king_for_registry_lane(
     with pytest.raises(ValueError, match="king artifact is not seeded"):
         evaluate_submission(
             str(submission_root),
-            agent_command="/bin/true",
-            sn60_project_keys=["project-a"],
+                sn60_project_keys=["project-a"],
         )
 
 
@@ -571,7 +569,6 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
 
     summary = evaluate_submission(
         str(submission_root),
-        agent_command="/bin/true",
         sn60_project_keys=["project-a"],
     )
 

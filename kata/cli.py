@@ -252,26 +252,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to submissions/<repo-pack>/<mode>/<submission-id>.",
     )
     submission_evaluate.add_argument(
-        "--agent-command",
-        required=True,
-        help="Shell command used to run the agent in each workspace.",
-    )
-    submission_evaluate.add_argument(
         "--output-root",
         default=None,
         help="Optional base directory for run artifacts. Defaults to ./runs.",
-    )
-    submission_evaluate.add_argument(
-        "--agent-timeout-seconds",
-        type=int,
-        default=None,
-        help="Optional timeout for each agent-command run.",
-    )
-    submission_evaluate.add_argument(
-        "--checks-timeout-seconds",
-        type=int,
-        default=None,
-        help="Optional timeout for each checks.sh run.",
     )
     submission_evaluate.add_argument(
         "--sn60-project-key",
@@ -443,10 +426,7 @@ def handle_submission_inspect(args: argparse.Namespace) -> int:
 def handle_submission_evaluate(args: argparse.Namespace) -> int:
     summary = evaluate_submission(
         args.path,
-        agent_command=args.agent_command,
         output_root=args.output_root,
-        agent_timeout_seconds=args.agent_timeout_seconds,
-        checks_timeout_seconds=args.checks_timeout_seconds,
         sn60_project_keys=args.sn60_project_key,
         sn60_replicas_per_project=args.sn60_replicas_per_project,
         sn60_sandbox_root=args.sn60_sandbox_root,

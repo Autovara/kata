@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -9,7 +10,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import fmean
-from typing import Callable, TypedDict
+from typing import Callable, NamedTuple, TypedDict
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files, write_bundle_files
 from kata.provenance import sha256_directory
@@ -45,6 +46,48 @@ class Sn60ReplicaContext:
     report_path: str
     evaluation_path: str
     sandbox_source: Sn60SandboxSource
+    eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS
+
+
+class Sn60SyntheticIds(NamedTuple):
+    """Deterministic numeric identity for a single SN60 replica.
+
+    SN60 normally gets these from the platform job payload. Locally we derive
+    stable synthetic ids so (a) the pinned proxy meters/summaries each replica
+    distinctly instead of colliding under a fixed id, and (b) king and
+    candidate replicas are distinguishable in scorer/executor logs.
+    """
+
+    job_run_id: int
+    job_id: int
+    validator_id: int
+    agent_id: int
+
+
+def stable_synthetic_id(*parts: object) -> int:
+    key = "\x1f".join(str(part) for part in parts).encode("utf-8")
+    digest = hashlib.sha256(key).digest()
+    # Positive value inside signed-32-bit range; avoids the 0 sentinel.
+    return 1 + (int.from_bytes(digest[:4], "big") % (2**31 - 2))
+
+
+def sn60_synthetic_ids(context: Sn60ReplicaContext) -> Sn60SyntheticIds:
+    return Sn60SyntheticIds(
+        # Distinct per scored replica so proxy metering and scorer headers do
+        # not collide across replicas, variants, or duels.
+        job_run_id=stable_synthetic_id(
+            context.run_id,
+            context.variant_name,
+            context.project_key,
+            context.replica_index,
+        ),
+        # Groups all replicas of one duel.
+        job_id=stable_synthetic_id(context.run_id),
+        # Stable local validator identity.
+        validator_id=1,
+        # Distinct per side (king vs candidate) within a duel.
+        agent_id=stable_synthetic_id(context.run_id, context.variant_name),
+    )
 
 
 @dataclass(frozen=True)
@@ -133,6 +176,7 @@ def run_sn60_bitsec_duel(
     benchmark_file: str | None = None,
     sandbox_commit: str | None = None,
     scorer_version: str = "ScaBenchScorerV2",
+    eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
     execution_hook: Sn60ExecutionHook | None = None,
     evaluation_hook: Sn60EvaluationHook | None = None,
 ) -> Sn60DuelSummary:
@@ -140,6 +184,8 @@ def run_sn60_bitsec_duel(
         raise ValueError("SN60 duel requires at least one project key.")
     if replicas_per_project <= 0:
         raise ValueError("SN60 duel replicas_per_project must be positive.")
+    if eval_max_vulns <= 0:
+        raise ValueError("SN60 duel eval_max_vulns must be positive.")
 
     source = resolve_sn60_sandbox_source(
         sandbox_root=sandbox_root,
@@ -166,6 +212,7 @@ def run_sn60_bitsec_duel(
         project_keys=project_keys,
         replicas_per_project=replicas_per_project,
         sandbox_source=source,
+        eval_max_vulns=eval_max_vulns,
         execution_hook=execution_hook or build_default_execution_hook(source),
         evaluation_hook=evaluation_hook or build_default_evaluation_hook(source),
     )
@@ -177,6 +224,7 @@ def run_sn60_bitsec_duel(
         project_keys=project_keys,
         replicas_per_project=replicas_per_project,
         sandbox_source=source,
+        eval_max_vulns=eval_max_vulns,
         execution_hook=execution_hook or build_default_execution_hook(source),
         evaluation_hook=evaluation_hook or build_default_evaluation_hook(source),
     )
@@ -207,6 +255,7 @@ def evaluate_variant(
     sandbox_source: Sn60SandboxSource,
     execution_hook: Sn60ExecutionHook,
     evaluation_hook: Sn60EvaluationHook,
+    eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
 ) -> Sn60VariantSummary:
     variant_root = run_root / variant_name
     artifact_hash = hash_bundle_root(artifact_root)
@@ -230,6 +279,7 @@ def evaluate_variant(
                 report_path=str(project_reports_root / "report.json"),
                 evaluation_path=str(project_reports_root / "evaluation.json"),
                 sandbox_source=sandbox_source,
+                eval_max_vulns=eval_max_vulns,
             )
             report_payload = execution_hook(context)
             write_json(Path(context.report_path), report_payload)
@@ -267,6 +317,18 @@ def resolve_sn60_sandbox_source(
     if not resolved_benchmark_file.exists():
         raise FileNotFoundError(
             f"SN60 benchmark snapshot does not exist: {resolved_benchmark_file}"
+        )
+    if resolved_benchmark_file.name != DEFAULT_BENCHMARK_FILENAME:
+        # The pinned Bitsec scorer hardcodes this filename and reads it from
+        # settings.validator_dir. Kata points VALIDATOR_DIR at this file's
+        # parent, so a differently-named file would make the recorded
+        # benchmark_sha256 describe a file the scorer never reads. Reject it
+        # rather than record dishonest provenance.
+        raise ValueError(
+            "SN60 benchmark file must be named "
+            f"'{DEFAULT_BENCHMARK_FILENAME}' because the pinned Bitsec scorer "
+            f"reads that hardcoded filename; got '{resolved_benchmark_file.name}'. "
+            "Rename the snapshot or update the sandbox mirror to match."
         )
     if sandbox_commit and (resolved_sandbox_root / ".git").exists():
         actual_commit = resolve_git_commit(resolved_sandbox_root)
@@ -509,11 +571,14 @@ def build_default_evaluation_hook(source: Sn60SandboxSource) -> Sn60EvaluationHo
             text=True,
             env={
                 **default_subprocess_env(),
-                "KATA_SN60_JOB_RUN_REPORTS_DIR": str(
-                    Path(context.reports_root).parent.resolve()
+                # Point the SN60 scorer at the exact benchmark file Kata
+                # resolved and recorded in provenance. The scorer hardcodes the
+                # filename and reads settings.validator_dir, so without this the
+                # recorded benchmark_sha256 could describe a different file than
+                # the one actually scored.
+                "VALIDATOR_DIR": str(
+                    Path(source.benchmark_file).expanduser().resolve().parent
                 ),
-                "KATA_SN60_PROJECT_KEY": context.project_key,
-                "KATA_SN60_EVAL_MAX_VULNS": str(DEFAULT_EVAL_MAX_VULNS),
                 "CHUTES_API_KEY": required_env("CHUTES_API_KEY"),
                 "PROXY_URL": DEFAULT_SANDBOX_PROXY_URL,
             },
@@ -546,12 +611,22 @@ def build_bitsec_execution_command(
 ) -> list[str]:
     bundle_root = Path(context.bundle_root).resolve()
     reports_root = Path(context.reports_root).resolve()
+    ids = sn60_synthetic_ids(context)
     return [
         "docker",
         "run",
         "--rm",
         "--network",
         proxy_network,
+        # Match the SN60 executor's container resource envelope so agents run
+        # under the same limits the real validator grants (executor.run_project:
+        # memory="512m", cpu_quota=25000 == 0.25 CPU, pids_limit=64).
+        "--memory",
+        "512m",
+        "--cpus",
+        "0.25",
+        "--pids-limit",
+        "64",
         "--volume",
         f"{bundle_root}:/kata_bundle:ro",
         "--volume",
@@ -563,7 +638,9 @@ def build_bitsec_execution_command(
         "--env",
         "REPORT_FILE=/kata_output/report.json",
         "--env",
-        f"JOB_RUN_ID={context.run_id}",
+        f"AGENT_ID={ids.agent_id}",
+        "--env",
+        f"JOB_RUN_ID={ids.job_run_id}",
         "--env",
         f"PROJECT_KEY={context.project_key}",
         "--env",
@@ -579,15 +656,19 @@ def bitsec_project_image(project_key: str) -> str:
 
 
 def build_bitsec_evaluation_command(context: Sn60ReplicaContext) -> list[str]:
-    # repr() quotes the interpolated values so a project key or path
-    # containing quote characters cannot break or alter the script.
+    # repr() quotes the interpolated strings so a project key or path
+    # containing quote characters cannot break or alter the script. The ids
+    # and eval_max_vulns are validated ints, safe to interpolate directly.
+    ids = sn60_synthetic_ids(context)
     script = (
         "import json; "
         "from validator.executor import AgentExecutor; "
         "from validator.models.platform import MockJobRun; "
         "from validator.platform_client import MockPlatformClient; "
         "executor = AgentExecutor("
-        "job_run=MockJobRun(id=1, job_id=1, validator_id=1, agent_id=1), "
+        "job_run=MockJobRun("
+        f"id={ids.job_run_id}, job_id={ids.job_id}, "
+        f"validator_id={ids.validator_id}, agent_id={ids.agent_id}), "
         "agent_filepath='', "
         "project_key="
         + repr(str(context.project_key))
@@ -597,7 +678,7 @@ def build_bitsec_evaluation_command(context: Sn60ReplicaContext) -> list[str]:
         + ", "
         "platform_client=MockPlatformClient(), "
         "eval_max_vulns="
-        + str(DEFAULT_EVAL_MAX_VULNS)
+        + str(int(context.eval_max_vulns))
         + "); "
         "print(json.dumps(executor.eval_job_run(), default=str))"
     )

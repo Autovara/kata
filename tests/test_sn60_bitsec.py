@@ -13,6 +13,7 @@ from kata.evaluators.sn60_bitsec import (
     project_passes,
     resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
+    sn60_synthetic_ids,
 )
 
 
@@ -193,9 +194,150 @@ def test_build_bitsec_execution_command_mounts_bundle_and_sets_pythonpath(tmp_pa
     assert "AGENT_FILE=/kata_bundle/agent.py" in command
     assert "PYTHONPATH=/kata_bundle" in command
     assert "INFERENCE_API_KEY" in command
-    assert f"JOB_RUN_ID={context.run_id}" in command
     assert f"PROJECT_KEY={context.project_key}" in command
     assert command[-1] == "ghcr.io/bitsec-ai/project-alpha:latest"
+    # Resource envelope matches the SN60 executor.
+    assert "--memory" in command and "512m" in command
+    assert "--cpus" in command and "0.25" in command
+    assert "--pids-limit" in command and "64" in command
+    # Execution carries the synthetic numeric identity, not the duel string,
+    # so proxy metering is keyed per replica exactly like SN60.
+    ids = sn60_synthetic_ids(context)
+    assert f"JOB_RUN_ID={ids.job_run_id}" in command
+    assert f"AGENT_ID={ids.agent_id}" in command
+    assert f"JOB_RUN_ID={context.run_id}" not in command
+
+
+def _make_context(tmp_path: Path, source, **overrides) -> Sn60ReplicaContext:
+    base = dict(
+        run_id="run-1",
+        variant_name="candidate",
+        project_key="project-alpha",
+        replica_index=1,
+        bundle_root=str(tmp_path / "bundle"),
+        reports_root=str(tmp_path / "reports" / "project-alpha"),
+        report_path=str(tmp_path / "reports" / "project-alpha" / "report.json"),
+        evaluation_path=str(tmp_path / "reports" / "project-alpha" / "evaluation.json"),
+        sandbox_source=source,
+    )
+    base.update(overrides)
+    return Sn60ReplicaContext(**base)
+
+
+def test_build_bitsec_evaluation_command_uses_synthetic_ids_and_eval_max_vulns(
+    tmp_path: Path,
+) -> None:
+    from kata.evaluators.sn60_bitsec import build_bitsec_evaluation_command
+
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    context = _make_context(tmp_path, source, eval_max_vulns=25)
+    ids = sn60_synthetic_ids(context)
+
+    script = build_bitsec_evaluation_command(context)[-1]
+
+    assert f"id={ids.job_run_id}" in script
+    assert f"agent_id={ids.agent_id}" in script
+    assert f"validator_id={ids.validator_id}" in script
+    # eval_max_vulns is threaded from the context, not hardcoded.
+    assert "eval_max_vulns=25" in script
+    # The old fixed-identity form must be gone.
+    assert "MockJobRun(id=1," not in script
+    import ast
+
+    ast.parse(script)
+
+
+def test_sn60_synthetic_ids_are_distinct_and_stable(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    king_r1 = sn60_synthetic_ids(_make_context(tmp_path, source, variant_name="king"))
+    king_r2 = sn60_synthetic_ids(
+        _make_context(tmp_path, source, variant_name="king", replica_index=2)
+    )
+    cand_r1 = sn60_synthetic_ids(
+        _make_context(tmp_path, source, variant_name="candidate")
+    )
+
+    # Stable for identical context.
+    assert king_r1 == sn60_synthetic_ids(
+        _make_context(tmp_path, source, variant_name="king")
+    )
+    # Distinct job_run_id per replica; distinct agent_id per side.
+    assert king_r1.job_run_id != king_r2.job_run_id
+    assert king_r1.agent_id == king_r2.agent_id
+    assert king_r1.agent_id != cand_r1.agent_id
+    assert king_r1.job_run_id != cand_r1.job_run_id
+    # King and candidate share the duel-level job_id.
+    assert king_r1.job_id == cand_r1.job_id
+    assert all(
+        1 <= value < 2**31
+        for value in (*king_r1, *cand_r1)
+    )
+
+
+def test_resolve_sn60_sandbox_source_rejects_mismatched_benchmark_filename(
+    tmp_path: Path,
+) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    write_sandbox_source(sandbox_root)
+    renamed = sandbox_root / "validator" / "custom-benchmark.json"
+    (sandbox_root / "validator" / "curated-highs-only-2025-08-08.json").rename(renamed)
+
+    with pytest.raises(ValueError, match="must be named"):
+        resolve_sn60_sandbox_source(
+            sandbox_root=str(sandbox_root),
+            benchmark_file=str(renamed),
+            sandbox_commit="commit-1",
+            scorer_version="ScaBenchScorerV2",
+        )
+
+
+def test_default_evaluation_hook_points_validator_dir_at_recorded_benchmark(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from kata.evaluators.sn60_bitsec import build_default_evaluation_hook
+
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    context = _make_context(tmp_path, source)
+    Path(context.report_path).parent.mkdir(parents=True, exist_ok=True)
+
+    captured = {}
+
+    def fake_run(cmd, *args, **kwargs):
+        captured["env"] = kwargs.get("env", {})
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setenv("CHUTES_API_KEY", "scoring-key")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    build_default_evaluation_hook(source)(context, {"success": True})
+
+    assert captured["env"]["VALIDATOR_DIR"] == str(benchmark_path.parent)
+    # The scorer joins VALIDATOR_DIR + the hardcoded filename, so that must be
+    # the exact file whose hash Kata recorded.
+    assert (
+        Path(captured["env"]["VALIDATOR_DIR"]) / "curated-highs-only-2025-08-08.json"
+    ) == benchmark_path
 
 
 def test_project_passes_requires_two_of_three_runs() -> None:

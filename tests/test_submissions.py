@@ -292,6 +292,44 @@ def test_inspect_pull_request_accepts_single_submission_scope(
     assert result.submission_id == "alice-20260702-01"
 
 
+def test_inspect_pull_request_uses_public_root_for_lane_registry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # The pack registry lives under the canonical public root, while KATA_ROOT
+    # points at an unrelated worktree directory (as it does when kata-bot
+    # inspects a PR worktree). Without threading public_root the lane check
+    # reads the wrong registry and falsely closes a valid submission.
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    changed_paths = [
+        "submissions/sn60__bitsec/miner/alice-20260702-01/agent.py",
+        "submissions/sn60__bitsec/miner/alice-20260702-01/submission.json",
+    ]
+
+    without_public_root = inspect_pull_request(
+        repo_root=str(tmp_path),
+        changed_paths=changed_paths,
+    )
+    assert without_public_root.action == PR_ACTION_CLOSE_INVALID
+    assert any(
+        "registered in the pack registry" in reason
+        for reason in without_public_root.reasons
+    )
+
+    with_public_root = inspect_pull_request(
+        repo_root=str(tmp_path),
+        changed_paths=changed_paths,
+        public_root=str(public_root),
+    )
+    assert with_public_root.action == PR_ACTION_EVALUATE
+    assert with_public_root.submission_id == "alice-20260702-01"
+
+
 def test_decide_submission_action_merges_registry_winner(tmp_path, monkeypatch) -> None:
     _, submission_root, _, summary_path = run_registry_lane_sn60_duel(
         tmp_path, monkeypatch

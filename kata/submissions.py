@@ -514,6 +514,7 @@ def inspect_pull_request(
     *,
     repo_root: str,
     changed_paths: list[str],
+    public_root: str | None = None,
 ) -> PullRequestInspectionResult:
     resolved_repo_root = Path(repo_root).expanduser().resolve()
     normalized_changed = normalize_changed_paths(changed_paths)
@@ -587,7 +588,11 @@ def inspect_pull_request(
         reasons.append(
             "PR changes files outside the allowed submission directory or adds unsupported files."
         )
-    reasons.extend(validate_submission_lane(descriptor.repo_pack, descriptor.mode))
+    reasons.extend(
+        validate_submission_lane(
+            descriptor.repo_pack, descriptor.mode, public_root=public_root
+        )
+    )
 
     action = PR_ACTION_EVALUATE if not reasons else PR_ACTION_CLOSE_INVALID
     return PullRequestInspectionResult(

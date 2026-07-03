@@ -257,6 +257,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional newline-delimited file of changed paths from the PR diff.",
     )
     submission_inspect.add_argument(
+        "--public-root",
+        default=None,
+        help=(
+            "Optional canonical Kata root that owns the pack registry, used for the "
+            "lane-registered/active check. Defaults to KATA_ROOT or the current working "
+            "directory. Set this when inspecting a PR worktree whose KATA_ROOT differs "
+            "from the lane state."
+        ),
+    )
+    submission_inspect.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
@@ -441,6 +451,7 @@ def handle_submission_inspect(args: argparse.Namespace) -> int:
     result = inspect_pull_request(
         repo_root=args.repo_root,
         changed_paths=collect_changed_paths(args.changed_path, args.changed_path_file),
+        public_root=args.public_root,
     )
     print(
         render_submission_json(result)

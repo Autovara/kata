@@ -1399,6 +1399,14 @@ def validate_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[str
     return []
 
 
+def dict_literal_string_keys(node: ast.Dict) -> list[str]:
+    keys: list[str] = []
+    for key in node.keys:
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            keys.append(key.value)
+    return keys
+
+
 def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[str]:
     reasons: list[str] = []
     for relative_path, tree in sorted(parsed_trees.items()):
@@ -1406,10 +1414,31 @@ def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[st
             if not isinstance(node, ast.Call):
                 continue
             for keyword in node.keywords:
-                if keyword.arg in FORBIDDEN_SAMPLING_NAMES:
+                if keyword.arg is not None:
+                    if keyword.arg in FORBIDDEN_SAMPLING_NAMES:
+                        reasons.append(
+                            "Submission bundle must not control model sampling parameters "
+                            f"directly: {relative_path} uses `{keyword.arg}`."
+                        )
+                    continue
+                # `**expr` unpacking: `keyword.arg` is None and the forbidden
+                # names, if any, are hidden inside `keyword.value` instead of
+                # being visible as a plain keyword name above.
+                if isinstance(keyword.value, ast.Dict):
+                    forbidden = sorted(
+                        set(dict_literal_string_keys(keyword.value))
+                        & FORBIDDEN_SAMPLING_NAMES
+                    )
+                    for name in forbidden:
+                        reasons.append(
+                            "Submission bundle must not control model sampling parameters "
+                            f"directly: {relative_path} uses `**` unpacking with `{name}`."
+                        )
+                else:
                     reasons.append(
-                        "Submission bundle must not control model sampling parameters "
-                        f"directly: {relative_path} uses `{keyword.arg}`."
+                        "Submission bundle must not pass a dynamic `**` keyword-argument "
+                        f"unpacking to a call in {relative_path}; its contents cannot be "
+                        "statically verified to exclude model sampling parameters."
                     )
     return reasons
 

@@ -242,6 +242,36 @@ def test_validate_submission_rejects_sampling_override(tmp_path, monkeypatch) ->
     assert any("sampling parameters" in reason for reason in reasons)
 
 
+def test_validate_submission_rejects_sampling_override_via_dict_splat(
+    tmp_path, monkeypatch
+) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    overrides = {\"temperature\": 0.0, \"seed\": 42}\n"
+            "    call(model=\"x\", **overrides)\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("sampling parameters" in reason for reason in reasons)
+
+
+def test_validate_submission_rejects_dynamic_kwargs_splat(tmp_path, monkeypatch) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    extra_kwargs = build_kwargs()\n"
+            "    call(model=\"x\", **extra_kwargs)\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("cannot be statically verified" in reason for reason in reasons)
+
+
 def test_validate_submission_rejects_provider_endpoint(tmp_path, monkeypatch) -> None:
     reasons = validation_reasons(
         tmp_path,

@@ -17,6 +17,19 @@ The live system is split across repos:
   under `kings/<subnet-pack>/<mode>/`
 - the engine, bot, and board discover packs only through the registry
 
+## Inference and cost
+
+- Miners submit only an agent. The **validator** funds inference with two of its own
+  keys: `INFERENCE_API_KEY` (OpenRouter) for the agent and `CHUTES_API_KEY` (Chutes)
+  for scoring.
+- Agents run on an internet-blocked Docker network and reach models only through the
+  endpoint the validator provides (`KATA_SN60_INFERENCE_API`). Pointing that at the
+  **model-pinning relay** forces every agent request onto one fixed model, so the
+  duel is fair and the budget is protected.
+- Two optional cost levers: the relay meters exact per-PR token spend (`/costs`), and
+  two-phase early-stop can short-circuit a decisive candidate loss without ever
+  shortcutting a promotion (see `docs/sn60-early-stop.md`).
+
 ## From PR to king
 
 1. Miner opens one PR touching exactly one submission bundle.

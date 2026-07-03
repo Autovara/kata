@@ -62,8 +62,7 @@ specific subnet-pack multipliers:
 
 ```json
 "label_multipliers": {
-  "kata:winner:e35ventura__taopedia-articles": 1.0,
-  "kata:winner:entrius__gittensor": 2.0,
+  "kata:winner:sn60__bitsec": 1.0,
   "kata:winner:*": 0.5
 }
 ```

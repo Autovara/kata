@@ -46,13 +46,14 @@ return value must be a JSON-serializable object with a top-level
 The validator owns:
 
 - the pinned sandbox and benchmark snapshot
-- scoring (`CHUTES_API_KEY` stays validator-side)
+- both inference keys — `INFERENCE_API_KEY` (agent inference) and
+  `CHUTES_API_KEY` (scoring) — and the fixed agent model
 - timeouts and replica counts
 - lane state and the pack registry
 
-The miner's own execution key is injected as `INFERENCE_API_KEY` only for
-the miner execution step. Miners compete on agent behavior, not on private
-provider access.
+**Miners submit only an agent — no API keys.** The validator funds all inference
+and pins the model, so every candidate runs on the same model as the king. Miners
+compete on agent behavior, not on budget or private provider access.
 
 ### `agent_manifest.json`
 

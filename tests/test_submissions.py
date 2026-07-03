@@ -790,3 +790,35 @@ def test_verify_and_promote_honor_explicit_public_root(
     # Nothing was written to the decoy KATA_ROOT.
     assert not (decoy_root / "kings").exists()
     assert not (decoy_root / "lanes").exists()
+
+
+def test_verify_rejects_challenge_summary_from_different_submission_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root, submission_a, _summary, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+
+    repo_root = tmp_path / "Kata"
+    submission_b = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="bob-20260703-01",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_b / "agent.py").write_text(
+        (submission_a / "agent.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    verification = verify_submission_result(str(submission_b), str(summary_path))
+    assert not verification.submission_matches_challenge
+    assert not verification.auto_merge_ready
+    assert any(
+        "does not match the current submission identity" in reason
+        for reason in verification.reasons
+    )
+
+    decision = decide_submission_action(str(submission_b), str(summary_path))
+    assert decision.action == PR_ACTION_RERUN_STALE

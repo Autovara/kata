@@ -643,10 +643,22 @@ def verify_submission_result(
     lane_benchmark_is_current = sn60_lane_benchmark_is_current(
         evaluator_entry.lane_id, summary, public_root=public_root
     )
+    submission_path = Path(validation.submission_path).expanduser().resolve()
+    summary_candidate_path = Path(summary.candidate_artifact).expanduser().resolve()
     submission_matches = (
         summary.mode == validation.metadata.mode
         and summary.candidate_artifact_hash == candidate_hash
+        and summary_candidate_path == submission_path
     )
+    if challenge_state_path(evaluator_entry.lane_id, public_root=public_root).exists():
+        challenge_state = load_challenge_state(
+            evaluator_entry.lane_id, public_root=public_root
+        )
+        if (
+            challenge_state.candidate_submission_id
+            != validation.metadata.submission_id
+        ):
+            submission_matches = False
     king_is_current = summary.king_artifact_hash == current_king_hash
     benchmark_is_current = (
         summary.validator_model == SN60_VALIDATOR_MODEL and lane_benchmark_is_current
@@ -655,7 +667,9 @@ def verify_submission_result(
 
     reasons: list[str] = []
     if not submission_matches:
-        reasons.append("Challenge result does not match the current submission payload.")
+        reasons.append(
+            "Challenge result does not match the current submission identity."
+        )
     if not king_is_current:
         reasons.append("Challenge result is stale because the king artifact has changed.")
     if not benchmark_is_current:

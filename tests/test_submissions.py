@@ -427,6 +427,40 @@ def test_validate_submission_accepts_miner_submission_for_registry_lane(
     assert result.evaluator_id == "sn60_bitsec"
 
 
+def test_validate_submission_honors_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-12",
+        output_root=str(repo_root / "submissions"),
+        author="alice",
+    )
+    (submission_root / "agent.py").write_text(VALID_MINER_AGENT, encoding="utf-8")
+
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    without_root = validate_submission(str(submission_root), repo_root=str(repo_root))
+    assert not without_root.is_valid
+
+    with_root = validate_submission(
+        str(submission_root),
+        repo_root=str(repo_root),
+        public_root=str(public_root),
+    )
+    assert with_root.reasons == []
+    assert with_root.is_valid
+    assert with_root.evaluator_id == "sn60_bitsec"
+
+
 def test_init_submission_rejects_inactive_registry_lane(
     tmp_path: Path,
     monkeypatch,

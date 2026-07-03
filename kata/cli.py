@@ -230,6 +230,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional Kata repo root used to resolve changed paths.",
     )
     submission_validate.add_argument(
+        "--public-root",
+        default=None,
+        help=(
+            "Optional Kata root that owns lane state under `lanes/`. "
+            "Use when validating from a PR worktree while lane state lives elsewhere."
+        ),
+    )
+    submission_validate.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
@@ -425,6 +433,7 @@ def handle_submission_validate(args: argparse.Namespace) -> int:
         args.path,
         changed_paths=changed_paths,
         repo_root=args.repo_root,
+        public_root=args.public_root,
     )
     print(
         render_submission_json(result)

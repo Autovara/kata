@@ -13,9 +13,11 @@ from kata.sn60_model_relay import (
     DEFAULT_PINNED_MODEL,
     DEFAULT_UPSTREAM,
     CostMeter,
+    authorize_cost_reset,
     build_server,
     extract_usage,
     pin_model_in_body,
+    resolve_admin_token,
     resolve_pinned_model,
     resolve_timeout,
     resolve_upstream,
@@ -90,6 +92,48 @@ def test_resolve_timeout_reads_positive_override(monkeypatch) -> None:
     assert resolve_timeout() == 12.5
 
 
+def test_resolve_admin_token_unset_returns_none(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_ADMIN_TOKEN", raising=False)
+    assert resolve_admin_token() is None
+
+
+def test_resolve_admin_token_strips_whitespace(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "  secret-token  ")
+    assert resolve_admin_token() == "secret-token"
+
+
+def test_authorize_cost_reset_disabled_without_admin_token(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_ADMIN_TOKEN", raising=False)
+    allowed, status, detail = authorize_cost_reset("Bearer anything")
+    assert not allowed
+    assert status == 403
+    assert "disabled" in detail
+
+
+def test_authorize_cost_reset_requires_bearer_token(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "secret")
+    allowed, status, detail = authorize_cost_reset(None)
+    assert not allowed
+    assert status == 401
+    assert "missing" in detail
+
+
+def test_authorize_cost_reset_rejects_wrong_token(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "secret")
+    allowed, status, detail = authorize_cost_reset("Bearer wrong")
+    assert not allowed
+    assert status == 403
+    assert "invalid" in detail
+
+
+def test_authorize_cost_reset_accepts_matching_bearer(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "secret")
+    allowed, status, detail = authorize_cost_reset("Bearer secret")
+    assert allowed
+    assert status == 200
+    assert detail == "reset"
+
+
 # --- end-to-end over real sockets -------------------------------------------
 
 
@@ -153,6 +197,7 @@ def relay_and_upstream(monkeypatch):
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "qwen/pinned-test")
     monkeypatch.setenv("KATA_RELAY_PRICE_INPUT_PER_M", "2")
     monkeypatch.setenv("KATA_RELAY_PRICE_OUTPUT_PER_M", "5")
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "operator-secret")
 
     relay = build_server("127.0.0.1", 0)
     threading.Thread(target=relay.serve_forever, daemon=True).start()
@@ -334,12 +379,62 @@ def test_costs_reset_zeroes_the_running_total(relay_and_upstream) -> None:
           {"Content-Type": "application/json"})
     assert _get_json(base + "/costs")["input_tokens"] == 100
 
-    _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+    _post(
+        base + "/costs/reset",
+        b"",
+        {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer operator-secret",
+        },
+    )
 
     after = _get_json(base + "/costs")
     assert after["requests"] == 0
     assert after["input_tokens"] == 0
     assert after["usd_total"] == 0.0
+
+
+def test_costs_reset_rejects_unauthenticated_agent_style_reset(relay_and_upstream) -> None:
+    base, _ = relay_and_upstream
+    _post(base + "/inference", json.dumps({"messages": []}).encode(),
+          {"Content-Type": "application/json"})
+
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+
+    assert excinfo.value.code == 401
+    assert _get_json(base + "/costs")["input_tokens"] == 100
+
+
+def test_costs_reset_disabled_when_admin_token_unset(monkeypatch) -> None:
+    COST_METER.reset()
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
+    upstream.records = []  # type: ignore[attr-defined]
+    upstream.daemon_threads = True
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    upstream_port = upstream.server_address[1]
+
+    monkeypatch.setenv("KATA_RELAY_UPSTREAM", f"http://127.0.0.1:{upstream_port}")
+    monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "qwen/pinned-test")
+    monkeypatch.delenv("KATA_RELAY_ADMIN_TOKEN", raising=False)
+
+    relay = build_server("127.0.0.1", 0)
+    threading.Thread(target=relay.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{relay.server_address[1]}"
+    try:
+        with pytest.raises(HTTPError) as excinfo:
+            _post(
+                base + "/costs/reset",
+                b"",
+                {
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer operator-secret",
+                },
+            )
+        assert excinfo.value.code == 403
+    finally:
+        relay.shutdown()
+        upstream.shutdown()
 
 
 def test_scoring_style_traffic_is_not_metered(relay_and_upstream) -> None:

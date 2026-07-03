@@ -132,6 +132,37 @@ def resolve_price_output() -> float:
     return _resolve_price("KATA_RELAY_PRICE_OUTPUT_PER_M", DEFAULT_PRICE_OUTPUT_PER_M)
 
 
+def resolve_admin_token() -> str | None:
+    """Operator-only credential for POST /costs/reset; unset disables the endpoint."""
+    value = os.environ.get("KATA_RELAY_ADMIN_TOKEN")
+    if value and value.strip():
+        return value.strip()
+    return None
+
+
+def _read_bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    prefix = "bearer "
+    if authorization.lower().startswith(prefix):
+        token = authorization[len(prefix) :].strip()
+        return token or None
+    return None
+
+
+def authorize_cost_reset(authorization: str | None) -> tuple[bool, int, str]:
+    """Return (allowed, http_status, detail) for POST /costs/reset."""
+    expected = resolve_admin_token()
+    if expected is None:
+        return (False, 403, "cost reset is disabled without KATA_RELAY_ADMIN_TOKEN")
+    provided = _read_bearer_token(authorization)
+    if provided is None:
+        return (False, 401, "missing bearer token")
+    if provided != expected:
+        return (False, 403, "invalid bearer token")
+    return (True, 200, "reset")
+
+
 def _as_int(value) -> int:
     try:
         return int(value)
@@ -255,6 +286,12 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self._path_without_query() == COST_RESET_PATH:
             self._read_body()  # drain any body so the connection stays consistent
+            allowed, status, detail = authorize_cost_reset(
+                self.headers.get("Authorization")
+            )
+            if not allowed:
+                self._send_json(status, {"detail": detail})
+                return
             COST_METER.reset()
             self._send_json(200, {"status": "reset"})
             return

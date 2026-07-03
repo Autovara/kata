@@ -372,13 +372,14 @@ def evaluate_submission(
     submission_path: str,
     *,
     output_root: str | None = None,
+    public_root: str | None = None,
     sn60_project_keys: list[str] | None = None,
     sn60_replicas_per_project: int | None = None,
     sn60_sandbox_root: str | None = None,
     sn60_benchmark_file: str | None = None,
     sn60_sandbox_commit: str | None = None,
 ) -> ChallengeSummary:
-    validation = validate_submission(submission_path)
+    validation = validate_submission(submission_path, public_root=public_root)
     if (
         not validation.is_valid
         or validation.metadata is None
@@ -388,7 +389,7 @@ def evaluate_submission(
             "Submission is invalid. Run `kata submission validate` first. "
             + "; ".join(validation.reasons or ["unknown validation failure"])
         )
-    if not is_sn60_miner_metadata(validation.metadata):
+    if not is_sn60_miner_metadata(validation.metadata, public_root=public_root):
         raise ValueError(
             "Submission does not target a registered SN60 evaluator lane. "
             "Register the lane in the pack registry before evaluating."
@@ -404,7 +405,9 @@ def evaluate_submission(
             "SN60 miner evaluation requires at least one project key in the "
             "resolved benchmark snapshot."
         )
-    lane_id, king_artifact_path = resolve_sn60_king_artifact(validation.metadata)
+    lane_id, king_artifact_path = resolve_sn60_king_artifact(
+        validation.metadata, public_root=public_root
+    )
     return run_sn60_challenge(
         king_artifact_path=king_artifact_path,
         candidate_artifact_path=validation.submission_path,
@@ -416,6 +419,7 @@ def evaluate_submission(
         sandbox_root=sn60_sandbox_root,
         benchmark_file=sn60_benchmark_file,
         sandbox_commit=sn60_sandbox_commit,
+        public_root=public_root,
     )
 
 
@@ -443,8 +447,14 @@ def resolve_sn60_project_keys(
     return load_sn60_benchmark_project_keys(sandbox_source)
 
 
-def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
-    entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
+def is_sn60_miner_metadata(
+    metadata: SubmissionMetadata,
+    *,
+    public_root: str | None = None,
+) -> bool:
+    entry = find_evaluator_pack_entry(
+        metadata.repo_pack, metadata.mode, public_root=public_root
+    )
     return entry is not None and entry.evaluator_id == SN60_BITSEC_EVALUATOR_ID
 
 
@@ -488,16 +498,22 @@ def sn60_lane_benchmark_is_current(
     return True
 
 
-def resolve_sn60_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
+def resolve_sn60_king_artifact(
+    metadata: SubmissionMetadata,
+    *,
+    public_root: str | None = None,
+) -> tuple[str, str]:
     """Resolve (lane_id, king_artifact_path) for an SN60 duel from the pack registry."""
-    entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
+    entry = find_evaluator_pack_entry(
+        metadata.repo_pack, metadata.mode, public_root=public_root
+    )
     if entry is None:
         raise ValueError(
             "No evaluator-backed lane is registered for "
             f"`{metadata.repo_pack}/{metadata.mode}`."
         )
     king_root = resolve_public_king_root(
-        public_root=None,
+        public_root=public_root,
         repo_pack=metadata.repo_pack,
         mode=metadata.mode,
     )

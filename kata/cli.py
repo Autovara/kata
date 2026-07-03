@@ -308,6 +308,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional SN60 sandbox commit identifier.",
     )
     submission_evaluate.add_argument(
+        "--public-root",
+        default=None,
+        help=(
+            "Optional Kata root that owns lane state under `lanes/`. "
+            "Use when evaluating from a PR worktree while lane state lives elsewhere."
+        ),
+    )
+    submission_evaluate.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON with the challenge summary path.",
@@ -451,6 +459,7 @@ def handle_submission_evaluate(args: argparse.Namespace) -> int:
     summary = evaluate_submission(
         args.path,
         output_root=args.output_root,
+        public_root=args.public_root,
         sn60_project_keys=args.sn60_project_key,
         sn60_replicas_per_project=args.sn60_replicas_per_project,
         sn60_sandbox_root=args.sn60_sandbox_root,

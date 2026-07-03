@@ -13,6 +13,7 @@ from kata.lane_state import (
     LANE_METADATA_SCHEMA_VERSION,
     EvaluatorLaneMetadata,
     LaneKingState,
+    benchmark_snapshot_path,
     load_benchmark_snapshot,
     load_challenge_state,
     load_lane_king_state,
@@ -754,4 +755,75 @@ def test_verify_and_promote_honor_explicit_public_root(
     assert king_state.current_king_artifact_hash == summary.candidate_artifact_hash
     # Nothing was written to the decoy KATA_ROOT.
     assert not (decoy_root / "kings").exists()
+    assert not (decoy_root / "lanes").exists()
+
+
+def test_evaluate_submission_honors_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    seed_lane_king(public_root, "sn60__bitsec")
+
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = sandbox_root / "validator" / "curated-highs-only-2025-08-08.json"
+    benchmark_path.parent.mkdir(parents=True)
+    benchmark_path.write_text(
+        json.dumps([{"project_id": "project-alpha", "vulnerabilities": []}]) + "\n",
+        encoding="utf-8",
+    )
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-11",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(VALID_MINER_AGENT, encoding="utf-8")
+
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    def execute(context):
+        return {"success": True, "report": {"vulnerabilities": []}}
+
+    def evaluate(context, report_payload):
+        rate = 1.0 if context.variant_name == "candidate" else 0.0
+        return {
+            "status": "success",
+            "result": {
+                "detection_rate": rate,
+                "true_positives": int(rate * 2),
+                "total_expected": 2,
+                "total_found": 1,
+                "result": "PASS" if rate == 1.0 else "FAIL",
+            },
+        }
+
+    original_run = run_sn60_challenge
+
+    def hooked_run(**kwargs):
+        return original_run(
+            **kwargs,
+            screening_hook=lambda ctx: {"success": True, "report": {"vulnerabilities": []}},
+            execution_hook=execute,
+            evaluation_hook=evaluate,
+        )
+
+    monkeypatch.setattr("kata.submissions.run_sn60_challenge", hooked_run)
+
+    evaluate_submission(
+        str(submission_root),
+        output_root=str(tmp_path / "runs"),
+        public_root=str(public_root),
+        sn60_project_keys=["project-alpha"],
+        sn60_sandbox_root=str(sandbox_root),
+        sn60_benchmark_file=str(benchmark_path),
+        sn60_sandbox_commit="commit-a",
+    )
+
+    assert benchmark_snapshot_path("sn60__bitsec", public_root=str(public_root)).exists()
     assert not (decoy_root / "lanes").exists()

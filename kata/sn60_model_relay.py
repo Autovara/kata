@@ -22,13 +22,21 @@ a small sidecar container on the agent network:
     docker run --rm --name kata_model_relay --network bitsec-net \\
         -e KATA_RELAY_UPSTREAM=http://bitsec_proxy:8000 \\
         -e KATA_RELAY_PINNED_MODEL=qwen/qwen3.6-35b-a3b \\
+        -e KATA_RELAY_ADMIN_TOKEN=<operator-only secret> \\
         kata-sn60-model-relay
 
 Then start the validator with ``KATA_SN60_INFERENCE_API=http://kata_model_relay:8000``.
+
+``KATA_RELAY_ADMIN_TOKEN`` gates ``POST /costs/reset``. The metered agent
+container reaches the relay on this same internal network via
+``INFERENCE_API``, so resetting cost accounting requires
+``Authorization: Bearer <token>``; without a configured token the reset
+endpoint is disabled rather than left open to whoever it is metering.
 """
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import sys
@@ -95,6 +103,14 @@ def resolve_pinned_model() -> str:
     if value and value.strip():
         return value.strip()
     return DEFAULT_PINNED_MODEL
+
+
+def resolve_admin_token() -> str | None:
+    """Shared secret required to reset cost accounting, or None if unset."""
+    value = os.environ.get("KATA_RELAY_ADMIN_TOKEN")
+    if value and value.strip():
+        return value.strip()
+    return None
 
 
 def resolve_timeout() -> float:
@@ -255,10 +271,33 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self._path_without_query() == COST_RESET_PATH:
             self._read_body()  # drain any body so the connection stays consistent
+            if not self._is_authorized_admin():
+                self._send_json(
+                    403,
+                    {
+                        "detail": "costs/reset requires a valid Authorization: Bearer "
+                        "<KATA_RELAY_ADMIN_TOKEN>; the metered agent shares this "
+                        "network and must not be able to erase its own spend."
+                    },
+                )
+                return
             COST_METER.reset()
             self._send_json(200, {"status": "reset"})
             return
         self._forward("POST")
+
+    def _is_authorized_admin(self) -> bool:
+        # The untrusted agent reaches the relay on the same internal docker
+        # network it uses for /inference, so resetting the cost meter must not
+        # be possible without a secret only the operator holds.
+        expected = resolve_admin_token()
+        if expected is None:
+            return False
+        supplied = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if not supplied.startswith(prefix):
+            return False
+        return hmac.compare_digest(supplied[len(prefix):], expected)
 
     # -- forwarding -----------------------------------------------------------
     def _forward(self, method: str) -> None:
@@ -338,10 +377,14 @@ def main() -> int:
     host = os.environ.get("KATA_RELAY_HOST", "0.0.0.0")
     port = int(os.environ.get("KATA_RELAY_PORT", "8000"))
     server = build_server(host, port)
+    reset_note = (
+        f"zero it with POST {COST_RESET_PATH} + Authorization: Bearer <token>"
+        if resolve_admin_token() is not None
+        else f"POST {COST_RESET_PATH} disabled: set KATA_RELAY_ADMIN_TOKEN to enable it"
+    )
     print(
         f"SN60 model-pinning relay listening on {host}:{port} -> {resolve_upstream()} "
-        f"(model pinned to {resolve_pinned_model()}; cost at GET {COST_PATH}, "
-        f"zero it with POST {COST_RESET_PATH})",
+        f"(model pinned to {resolve_pinned_model()}; cost at GET {COST_PATH}, {reset_note})",
         file=sys.stderr,
         flush=True,
     )

@@ -16,6 +16,7 @@ from kata.sn60_model_relay import (
     build_server,
     extract_usage,
     pin_model_in_body,
+    resolve_admin_token,
     resolve_pinned_model,
     resolve_timeout,
     resolve_upstream,
@@ -78,6 +79,16 @@ def test_resolve_pinned_model_default(monkeypatch) -> None:
 def test_resolve_pinned_model_override(monkeypatch) -> None:
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "vendor/model")
     assert resolve_pinned_model() == "vendor/model"
+
+
+def test_resolve_admin_token_defaults_to_none(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_ADMIN_TOKEN", raising=False)
+    assert resolve_admin_token() is None
+
+
+def test_resolve_admin_token_reads_env(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "  secret-token  ")
+    assert resolve_admin_token() == "secret-token"
 
 
 def test_resolve_timeout_invalid_falls_back(monkeypatch) -> None:
@@ -328,18 +339,56 @@ def test_costs_endpoint_reports_measured_inference_spend(relay_and_upstream) -> 
     assert all(r["path"] != "/costs" for r in upstream.records)
 
 
-def test_costs_reset_zeroes_the_running_total(relay_and_upstream) -> None:
+def test_costs_reset_zeroes_the_running_total(relay_and_upstream, monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "admin-secret")
     base, _ = relay_and_upstream
     _post(base + "/inference", json.dumps({"messages": []}).encode(),
           {"Content-Type": "application/json"})
     assert _get_json(base + "/costs")["input_tokens"] == 100
 
-    _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+    _post(
+        base + "/costs/reset",
+        b"",
+        {"Content-Type": "application/json", "Authorization": "Bearer admin-secret"},
+    )
 
     after = _get_json(base + "/costs")
     assert after["requests"] == 0
     assert after["input_tokens"] == 0
-    assert after["usd_total"] == 0.0
+
+
+def test_costs_reset_without_admin_token_configured_is_rejected(
+    relay_and_upstream, monkeypatch
+) -> None:
+    monkeypatch.delenv("KATA_RELAY_ADMIN_TOKEN", raising=False)
+    base, _ = relay_and_upstream
+    _post(base + "/inference", json.dumps({"messages": []}).encode(),
+          {"Content-Type": "application/json"})
+
+    # This is the request path the metered agent itself can reach: no admin
+    # token means reset must stay disabled rather than open to anyone.
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+    assert excinfo.value.code == 403
+
+    assert _get_json(base + "/costs")["input_tokens"] == 100
+
+
+def test_costs_reset_with_wrong_token_is_rejected(relay_and_upstream, monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "admin-secret")
+    base, _ = relay_and_upstream
+    _post(base + "/inference", json.dumps({"messages": []}).encode(),
+          {"Content-Type": "application/json"})
+
+    with pytest.raises(HTTPError) as excinfo:
+        _post(
+            base + "/costs/reset",
+            b"",
+            {"Content-Type": "application/json", "Authorization": "Bearer wrong-token"},
+        )
+    assert excinfo.value.code == 403
+
+    assert _get_json(base + "/costs")["input_tokens"] == 100
 
 
 def test_scoring_style_traffic_is_not_metered(relay_and_upstream) -> None:

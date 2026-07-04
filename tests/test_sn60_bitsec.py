@@ -19,6 +19,7 @@ from kata.evaluators.sn60_bitsec import (
     resolve_sn60_proxy_network,
     resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
+    sn60_container_name,
     sn60_codebase_pass_count,
     sn60_synthetic_ids,
 )
@@ -326,7 +327,9 @@ def test_build_bitsec_execution_command_mounts_bundle_and_sets_pythonpath(tmp_pa
 
     command = build_bitsec_execution_command(context)
 
-    assert command[:4] == ["docker", "run", "--rm", "--network"]
+    assert command[:3] == ["docker", "run", "--rm"]
+    assert "--name" in command
+    assert sn60_container_name(context) in command
     assert "AGENT_FILE=/kata_bundle/agent.py" in command
     assert "PYTHONPATH=/kata_bundle" in command
     assert "INFERENCE_API_KEY" in command
@@ -852,6 +855,49 @@ def test_default_execution_hook_refuses_non_internal_network(
 
     # Untrusted agent must never start on an egress-capable network.
     assert docker_ran["value"] is False
+
+
+def test_default_execution_hook_removes_named_container_on_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    context = _make_context(tmp_path, source)
+    monkeypatch.setenv("INFERENCE_API_KEY", "run-token")
+    monkeypatch.setenv("KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS", "3")
+
+    calls = []
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[:3] == ["docker", "network", "inspect"]:
+            return _completed(cmd, returncode=0, stdout="true\n")
+        if cmd[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return _completed(cmd, returncode=0)
+        return _completed(cmd, returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = build_default_execution_hook(
+        source,
+        timeout_env_name="KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS",
+        timeout_default=300,
+    )(context)
+
+    assert result["success"] is False
+    assert "timed out after 3.0 seconds" in str(result["error"])
+    docker_run = next(cmd for cmd, _kwargs in calls if cmd[:2] == ["docker", "run"])
+    cleanup = next(cmd for cmd, _kwargs in calls if cmd[:3] == ["docker", "rm", "-f"])
+    assert sn60_container_name(context) in docker_run
+    assert cleanup[-1] == sn60_container_name(context)
 
 
 # --- full-grid duel execution -----------------------------------------------

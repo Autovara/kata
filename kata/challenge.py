@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 
@@ -34,6 +34,7 @@ from kata.provenance import short_hash
 from kata.screening import (
     Sn60ScreeningHook,
     Sn60ScreeningResult,
+    resolve_sn60_screening_execution_timeout_seconds,
     run_sn60_screening,
     screening_result_payload,
     sn60_screening_freshness_fingerprint,
@@ -106,6 +107,8 @@ def run_sn60_challenge(
 ) -> ChallengeSummary:
     if not project_keys:
         raise ValueError("SN60 challenge requires at least one screening project key.")
+    screening_started_at = datetime.now(UTC)
+    screening_timeout_seconds = resolve_sn60_screening_execution_timeout_seconds()
     sandbox_source = resolve_sn60_sandbox_source(
         sandbox_root=sandbox_root,
         benchmark_file=benchmark_file,
@@ -119,6 +122,12 @@ def run_sn60_challenge(
             "lane_id": lane_id,
             "candidate_submission_id": candidate_submission_id,
             "project_keys": list(project_keys),
+            "screening_project_key": project_keys[0],
+            "screening_started_at": screening_started_at.isoformat(),
+            "screening_timeout_seconds": screening_timeout_seconds,
+            "screening_timeout_at": (
+                screening_started_at + timedelta(seconds=screening_timeout_seconds)
+            ).isoformat(),
         }
     )
     screening = run_sn60_screening(

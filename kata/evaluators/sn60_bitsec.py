@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -784,7 +785,12 @@ def ensure_internal_agent_network(
         )
 
 
-def build_default_execution_hook(source: Sn60SandboxSource) -> Sn60ExecutionHook:
+def build_default_execution_hook(
+    source: Sn60SandboxSource,
+    *,
+    timeout_env_name: str = "KATA_SN60_EXECUTION_TIMEOUT_SECONDS",
+    timeout_default: float = DEFAULT_EXECUTION_SUBPROCESS_TIMEOUT_SECONDS,
+) -> Sn60ExecutionHook:
     def _execute(context: Sn60ReplicaContext) -> dict[str, object]:
         proxy_network = resolve_sn60_proxy_network()
         inference_api = resolve_sn60_inference_api()
@@ -800,21 +806,31 @@ def build_default_execution_hook(source: Sn60SandboxSource) -> Sn60ExecutionHook
             "INFERENCE_API_KEY": required_env("INFERENCE_API_KEY"),
         }
         try:
+            timeout_seconds = _env_positive_float(timeout_env_name, timeout_default)
             completed = subprocess.run(
                 command,
                 cwd=source.sandbox_root,
                 capture_output=True,
                 text=True,
                 env={**execution_subprocess_env(), **env},
-                timeout=_env_positive_float(
-                    "KATA_SN60_EXECUTION_TIMEOUT_SECONDS",
-                    DEFAULT_EXECUTION_SUBPROCESS_TIMEOUT_SECONDS,
-                ),
+                timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
+            try:
+                cleanup = force_remove_sn60_container(context)
+                cleanup_suffix = (
+                    ""
+                    if cleanup.returncode == 0
+                    else f" Cleanup failed: {cleanup.stderr.strip() or cleanup.stdout.strip()}"
+                )
+            except Exception as cleanup_exc:
+                cleanup_suffix = f" Cleanup failed: {cleanup_exc}"
             return {
                 "success": False,
-                "error": f"Bitsec execution command timed out after {exc.timeout} seconds.",
+                "error": (
+                    f"Bitsec execution command timed out after {exc.timeout} seconds."
+                    f"{cleanup_suffix}"
+                ),
             }
         report_path = Path(context.report_path)
         if report_path.exists():
@@ -936,6 +952,8 @@ def build_bitsec_execution_command(
         "docker",
         "run",
         "--rm",
+        "--name",
+        sn60_container_name(context),
         "--network",
         proxy_network,
         # Match the SN60 executor's container resource envelope so agents run
@@ -969,6 +987,32 @@ def build_bitsec_execution_command(
         "INFERENCE_API_KEY",
         bitsec_project_image(context.project_key),
     ]
+
+
+def sn60_container_name(context: Sn60ReplicaContext) -> str:
+    digest = hashlib.sha256(
+        "|".join(
+            [
+                context.run_id,
+                context.variant_name,
+                context.project_key,
+                str(context.replica_index),
+            ]
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+    project = re.sub(r"[^a-z0-9_.-]+", "-", context.project_key.lower()).strip(".-")
+    project = project[:42] or "project"
+    variant = re.sub(r"[^a-z0-9_.-]+", "-", context.variant_name.lower()).strip(".-")
+    variant = variant[:16] or "variant"
+    return f"kata-sn60-{variant}-{project}-r{context.replica_index}-{digest}"
+
+
+def force_remove_sn60_container(context: Sn60ReplicaContext) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", "rm", "-f", sn60_container_name(context)],
+        capture_output=True,
+        text=True,
+    )
 
 
 def bitsec_project_image(project_key: str) -> str:

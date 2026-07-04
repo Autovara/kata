@@ -87,6 +87,8 @@ Requirements:
 - The file must contain valid Python syntax.
 - The file must not be the scaffold placeholder.
 - The implementation must be self-contained for SN60 V1.
+- Keep screening fast. The recommended MVP validator rejects the one screening
+  sandbox run after `300` seconds.
 
 ### `agent_manifest.json`
 
@@ -200,6 +202,7 @@ Your submission should pass these checks:
 - `agent_main` does real analysis; it must not directly return an empty
   `vulnerabilities` list.
 - The one screening sandbox run finishes successfully.
+- The screening sandbox run finishes before the validator timeout.
 - The screening report is a JSON object with a top-level `vulnerabilities` list.
 - The screening report contains at least one candidate vulnerability.
 - Each candidate finding is a JSON object with a non-empty `title`.

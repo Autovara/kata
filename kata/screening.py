@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import secrets
 from dataclasses import asdict, dataclass
@@ -31,6 +32,8 @@ SN60_SCREENING_STATUS_FAILED = "failed"
 SN60_SCREENING_STAGE_STATIC = "static"
 SN60_SCREENING_STAGE_EXECUTION = "execution"
 SN60_SCREENING_MAX_FINDINGS = 100
+SN60_SCREENING_TIMEOUT_ENV = "KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS"
+DEFAULT_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS = 5 * 60
 VALID_SCREENING_SEVERITIES = {"critical", "high", "medium", "low"}
 
 BENCHMARK_LEAK_TOKENS = (
@@ -132,7 +135,8 @@ def run_sn60_screening(
         evaluation_path=str(reports_root / "evaluation.json"),
         sandbox_source=sandbox_source,
     )
-    execute = execution_hook or build_default_execution_hook(sandbox_source)
+    timeout_seconds = resolve_sn60_screening_execution_timeout_seconds()
+    execute = execution_hook or build_default_screening_execution_hook(sandbox_source)
     try:
         report_payload = execute(context)
     except Exception as exc:
@@ -156,11 +160,34 @@ def run_sn60_screening(
         report_path=Path(context.report_path),
         result_path=run_root / "screening_result.json",
         reasons=execution_reasons,
-        details={"execution_report_success": bool(report_payload.get("success"))},
+        details={
+            "execution_report_success": bool(report_payload.get("success")),
+            "execution_timeout_seconds": timeout_seconds,
+        },
         sandbox_source=sandbox_source,
     )
     write_screening_result(Path(result.result_path), result)
     return result
+
+
+def build_default_screening_execution_hook(source: Sn60SandboxSource) -> Sn60ScreeningHook:
+    return build_default_execution_hook(
+        source,
+        timeout_env_name=SN60_SCREENING_TIMEOUT_ENV,
+        timeout_default=DEFAULT_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS,
+    )
+
+
+def resolve_sn60_screening_execution_timeout_seconds() -> float:
+    value = os.environ.get(SN60_SCREENING_TIMEOUT_ENV)
+    if value and value.strip():
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return DEFAULT_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS
+        if parsed > 0:
+            return parsed
+    return DEFAULT_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS
 
 
 def validate_sn60_static_screening(candidate_root: str | Path) -> list[str]:
@@ -370,7 +397,6 @@ def sn60_screening_freshness_fingerprint(
 def build_sn60_screening_id() -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"sn60-screening-{timestamp}-{secrets.token_hex(3)}"
-
 
 
 

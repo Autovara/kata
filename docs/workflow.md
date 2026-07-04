@@ -77,7 +77,8 @@ Static screening rejects obvious cost-wasters before the sandbox starts:
 
 Execution screening then requires one valid Bitsec-style report:
 
-- sandbox execution must complete successfully
+- sandbox execution must complete successfully within the validator screening
+  timeout
 - report must contain a top-level `vulnerabilities` list
 - the list must contain at least one candidate finding
 - each finding must include a title and useful description
@@ -86,6 +87,16 @@ Execution screening then requires one valid Bitsec-style report:
 
 If screening fails, the PR is closed with the screening reason and the full duel
 is skipped.
+
+Production validators should keep screening cheap. The recommended MVP timeout
+is:
+
+```bash
+KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS=300
+```
+
+This timeout only applies to the one screening sandbox execution. Full duel
+executions keep the normal SN60 execution timeout.
 
 ### 3. Duel
 
@@ -118,6 +129,7 @@ KATA_SN60_PROJECT_KEYS=
 KATA_SN60_PROJECT_SAMPLE_SIZE=12
 KATA_SN60_PROJECT_SAMPLE_SECRET=<private-validator-secret>
 KATA_SN60_REPLICAS_PER_PROJECT=1
+KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS=300
 ```
 
 ### 4. Promotion Gate

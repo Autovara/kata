@@ -1401,9 +1401,13 @@ def validate_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[str
 
 def dict_literal_string_keys(node: ast.Dict) -> list[str]:
     keys: list[str] = []
-    for key in node.keys:
+    for key, value in zip(node.keys, node.values):
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             keys.append(key.value)
+        elif key is None and isinstance(value, ast.Dict):
+            # `{**{"temperature": 0}}` pairs a None key with the inner dict
+            # literal; recurse so nested merges cannot hide sampling params.
+            keys.extend(dict_literal_string_keys(value))
     return keys
 
 

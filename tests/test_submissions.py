@@ -272,6 +272,21 @@ def test_validate_submission_rejects_dynamic_kwargs_splat(tmp_path, monkeypatch)
     assert any("cannot be statically verified" in reason for reason in reasons)
 
 
+def test_validate_submission_rejects_sampling_override_via_nested_dict_merge(
+    tmp_path, monkeypatch
+) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    call(model=\"x\", **{**{\"temperature\": 0.0}})\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("sampling parameters" in reason for reason in reasons)
+
+
 def test_validate_submission_rejects_provider_endpoint(tmp_path, monkeypatch) -> None:
     reasons = validation_reasons(
         tmp_path,

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "luciferlive112116-20260704-03",
+  "created_at": "2026-07-04T05:00:00+00:00",
+  "author": "luciferlive112116",
+  "title": "Whole-codebase cross-contract auditor with self-verify for SN60 Bitsec",
+  "notes": "Self-contained agent.py. Audits the whole codebase together (file manifest + maximal source context) to catch cross-contract bugs, then runs a self-verify refine pass and emits precisely-located high/critical findings."
+}

@@ -13,6 +13,7 @@ from pathlib import Path
 from kata.agent_bundle import (
     AGENT_ENTRY_FILENAME,
     AGENT_MANIFEST_FILENAME,
+    collect_bundle_relative_paths,
     find_unexpected_bundle_paths,
     is_allowed_bundle_relative_path,
     load_bundle_files,
@@ -50,7 +51,7 @@ from kata.lane_state import (
     load_pack_registry,
     write_lane_king_state,
 )
-from kata.provenance import sha256_directory, short_hash
+from kata.provenance import short_hash
 from kata.public_artifacts import (
     publish_public_king,
     resolve_kata_root,
@@ -1030,7 +1031,7 @@ def validate_submission_candidate(
             "Submission bundle must not contain symlinks: " + ", ".join(symlink_paths)
         )
 
-    bundle_paths = find_bundle_relative_paths(submission_root)
+    bundle_paths = collect_bundle_relative_paths(submission_root)
     if len(bundle_paths) > MAX_SUBMISSION_BUNDLE_FILES:
         reasons.append(
             "Submission bundle is too large. "
@@ -1276,22 +1277,7 @@ def normalize_changed_paths(changed_paths: list[str]) -> list[str]:
 
 
 def hash_submission_bundle(root: Path) -> str:
-    bundle_root = root.expanduser().resolve()
-    relative_paths = sorted(
-        path for path in find_bundle_relative_paths(bundle_root)
-    )
-    return sha256_directory(bundle_root, include=relative_paths)
-
-
-def find_bundle_relative_paths(root: Path) -> list[str]:
-    relative_paths = [
-        path.relative_to(root).as_posix()
-        for path in sorted(root.rglob("*"))
-        if not path.is_symlink()
-        and path.is_file()
-        and is_allowed_bundle_relative_path(path.relative_to(root).as_posix())
-    ]
-    return relative_paths
+    return hash_bundle_root(root.expanduser().resolve())
 
 
 def find_bundle_symlink_paths(root: Path) -> list[str]:

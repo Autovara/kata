@@ -202,6 +202,27 @@ def test_validate_submission_ignores_python_cache_artifacts(tmp_path, monkeypatc
     assert result.is_valid
 
 
+def test_hash_submission_bundle_matches_hash_bundle_root(tmp_path: Path) -> None:
+    from kata.evaluators.sn60_bitsec import hash_bundle_root
+
+    bundle_root = tmp_path / "submission"
+    bundle_root.mkdir()
+    (bundle_root / "agent.py").write_text(
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    return {\"vulnerabilities\": []}\n",
+        encoding="utf-8",
+    )
+    (bundle_root / "agent_manifest.json").write_text(
+        '{"schema_version": 1, "runtime": "python", "entrypoint": "agent.py"}\n',
+        encoding="utf-8",
+    )
+    cache = bundle_root / "__pycache__"
+    cache.mkdir()
+    (cache / "agent.cpython-313.pyc").write_bytes(b"\x00")
+
+    assert hash_submission_bundle(bundle_root) == hash_bundle_root(bundle_root)
+
+
 def test_validate_submission_rejects_validator_env_reference(tmp_path, monkeypatch) -> None:
     reasons = validation_reasons(
         tmp_path,

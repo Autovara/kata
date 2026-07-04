@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "luciferlive112116-20260704-01",
+  "created_at": "2026-07-04T00:00:00+00:00",
+  "author": "luciferlive112116",
+  "title": "LLM security auditor for SN60 Bitsec high-severity findings",
+  "notes": "Self-contained agent.py. Enumerates smart-contract sources, audits them via the validator-pinned inference proxy, and reports only high/critical exploitable vulnerabilities in the Bitsec report schema."
+}

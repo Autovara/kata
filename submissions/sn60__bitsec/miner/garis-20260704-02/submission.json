@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "garis-20260704-02",
+  "created_at": "2026-07-04T00:00:00+00:00",
+  "author": "garis",
+  "title": "Stdlib LLM smart-contract auditor",
+  "notes": "Chunked HIGH/CRITICAL vulnerability audit over the mounted project source via the pinned inference proxy."
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "luciferlive112116-20260704-02",
+  "created_at": "2026-07-04T04:00:00+00:00",
+  "author": "luciferlive112116",
+  "title": "Precise-location smart-contract auditor for SN60 Bitsec",
+  "notes": "Self-contained agent.py. Deep per-file audit via the validator-pinned proxy; emits high/critical findings whose title and description embed the exact .sol file and function() so the benchmark matcher can locate them."
+}

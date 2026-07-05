@@ -36,6 +36,14 @@ def read_status(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _set_world_readable(path: Path) -> None:
+    # Unix file modes are not meaningful on Windows; chmod there either no-ops
+    # or leaves a mode (typically 0o666) that does not match 0o644.
+    if os.name == "nt":
+        return
+    path.chmod(0o644)
+
+
 def write_status(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -46,9 +54,9 @@ def write_status(path: Path, payload: dict[str, Any]) -> None:
     ) as handle:
         temp_path = Path(handle.name)
         handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    temp_path.chmod(0o644)
+    _set_world_readable(temp_path)
     os.replace(temp_path, path)
-    path.chmod(0o644)
+    _set_world_readable(path)
 
 
 def merge_status(current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:

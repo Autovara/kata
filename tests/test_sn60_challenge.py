@@ -355,7 +355,7 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
     assert first.primary_pool_fingerprint != second.primary_pool_fingerprint
 
 
-def test_run_sn60_challenge_fails_screening_when_candidate_reports_no_findings(
+def test_run_sn60_challenge_scores_zero_instead_of_closing_on_empty_output(
     tmp_path: Path,
 ) -> None:
     sandbox_root = tmp_path / "sandbox"
@@ -366,8 +366,8 @@ def test_run_sn60_challenge_fails_screening_when_candidate_reports_no_findings(
     write_bundle(candidate_root, "candidate")
 
     def execute(context: Sn60ReplicaContext) -> dict[str, object]:
-        # Candidate produces an empty findings report on every sampled project ->
-        # it fails the (now duel-reused) execution screening gate.
+        # Candidate returns an empty findings report on every project. This is NOT
+        # a screening failure: the duel scores it 0 and it simply loses.
         if context.variant_name == "candidate":
             return {"success": True, "report": {"vulnerabilities": []}}
         return {"success": True, "report": VALID_SCREENING_REPORT}
@@ -387,12 +387,74 @@ def test_run_sn60_challenge_fails_screening_when_candidate_reports_no_findings(
         evaluation_hook=lambda context, report: {"status": "success", "result": {}},
     )
 
+    # Loses the duel; NOT closed as a screening failure.
+    assert not summary.promotion_ready
+    assert "failed SN60 screening" not in summary.promotion_reason
+    assert "did not beat" in summary.promotion_reason
+    assert Path(summary.manifest_path).name == "duel_summary.json"
+
+    # The execution screening result is informational (passed) and records a
+    # per-problem findings note for feedback.
+    screening_path = Path(summary.manifest_path).with_name("screening_result.json")
+    screening = json.loads(screening_path.read_text(encoding="utf-8"))
+    assert screening["status"] == "passed"
+    assert screening["stage"] == "execution"
+    finding_quality = screening["details"]["finding_quality"]
+    assert finding_quality["total_problems"] == 1
+    assert finding_quality["problems_with_findings"] == 0
+    assert finding_quality["problems_without_findings"] == 1
+
+    promotion_record = load_promotion_record(
+        SN60_MINER_LANE_ID,
+        public_root=str(tmp_path / "public"),
+    )
+    assert promotion_record.final_winner == "king"
+
+
+def test_run_sn60_challenge_closes_before_duel_on_static_failure(
+    tmp_path: Path,
+) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    king_root = tmp_path / "king"
+    candidate_root = tmp_path / "candidate"
+    write_bundle(king_root, "king")
+    # Candidate source references the benchmark answer key -> static screening fails.
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    (candidate_root / "agent.py").write_text(
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    # cheat: peek at expected_findings from the answer key\n"
+        "    return {'vulnerabilities': [{'title': 'x'}]}\n",
+        encoding="utf-8",
+    )
+
+    duel_started = False
+
+    def execute(context: Sn60ReplicaContext) -> dict[str, object]:
+        nonlocal duel_started
+        duel_started = True
+        return {"success": True, "report": VALID_SCREENING_REPORT}
+
+    summary = run_sn60_challenge(
+        king_artifact_path=str(king_root),
+        candidate_artifact_path=str(candidate_root),
+        project_keys=["project-alpha"],
+        candidate_submission_id="miner-sn60-1",
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="sandbox-commit-1",
+        public_root=str(tmp_path / "public"),
+        execution_hook=execute,
+        evaluation_hook=lambda context, report: {"status": "success", "result": {}},
+    )
+
+    # The duel never ran, and the PR is closed as a screening failure.
+    assert not duel_started
     assert not summary.promotion_ready
     assert "candidate failed SN60 screening" in summary.promotion_reason
     assert Path(summary.manifest_path).name == "screening_result.json"
-
-    challenge_summary_path = Path(summary.manifest_path).with_name("challenge_summary.json")
-    assert challenge_summary_path.exists()
 
     challenge_state = load_challenge_state(
         SN60_MINER_LANE_ID,
@@ -403,14 +465,8 @@ def test_run_sn60_challenge_fails_screening_when_candidate_reports_no_findings(
         public_root=str(tmp_path / "public"),
     )
     assert challenge_state.screening_result["status"] == "failed"
+    assert challenge_state.screening_result["stage"] == "static"
     assert promotion_record.final_winner == "king"
-
-    snapshot = load_benchmark_snapshot(
-        SN60_MINER_LANE_ID,
-        public_root=str(tmp_path / "public"),
-    )
-    assert snapshot.sandbox_commit_hash == "sandbox-commit-1"
-    assert snapshot.project_keys == ["project-alpha"]
 
 
 def build_variant(

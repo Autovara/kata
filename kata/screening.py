@@ -92,6 +92,74 @@ class Sn60ScreeningResult:
 Sn60ScreeningHook = Callable[[Sn60ReplicaContext], dict[str, object]]
 
 
+def run_sn60_static_screening(
+    *,
+    candidate_artifact_path: str,
+    project_key: str,
+    output_root: str,
+    sandbox_source: Sn60SandboxSource,
+) -> Sn60ScreeningResult:
+    """Source-only screening gate. Runs the static anti-cheat checks (no agent
+    execution, no inference) so a cheating / no-op submission is rejected *before*
+    the duel is ever started. ``passed`` is True when no static problems are found.
+    """
+    artifact_root = Path(candidate_artifact_path).expanduser().resolve()
+    output_base = Path(output_root).expanduser().resolve()
+    run_id = build_sn60_screening_id()
+    run_root = output_base / run_id
+    run_root.mkdir(parents=True, exist_ok=False)
+
+    artifact_hash = hash_bundle_root(artifact_root)
+    static_reasons = validate_sn60_static_screening(artifact_root)
+    result = build_screening_result(
+        run_id=run_id,
+        status=SN60_SCREENING_STATUS_FAILED if static_reasons else SN60_SCREENING_STATUS_PASSED,
+        stage=SN60_SCREENING_STAGE_STATIC,
+        artifact_root=artifact_root,
+        artifact_hash=artifact_hash,
+        project_key=project_key,
+        report_path=None,
+        result_path=run_root / "screening_result.json",
+        reasons=static_reasons,
+        details={"static_checks": "failed" if static_reasons else "passed"},
+        sandbox_source=sandbox_source,
+    )
+    write_screening_result(Path(result.result_path), result)
+    return result
+
+
+def build_sn60_execution_note_result(
+    *,
+    candidate_artifact_path: str,
+    project_key: str,
+    sandbox_source: Sn60SandboxSource,
+    run_id: str,
+    result_path: str | Path,
+    finding_quality: dict[str, object],
+) -> Sn60ScreeningResult:
+    """Build the *informational* execution-screening result from the candidate's
+    real duel reports. This never fails the challenge: bad or empty output is
+    already scored 0 by the duel. It only records a per-problem findings note so
+    the PR feedback can tell a contributor how many problems produced findings.
+    """
+    artifact_root = Path(candidate_artifact_path).expanduser().resolve()
+    result = build_screening_result(
+        run_id=run_id,
+        status=SN60_SCREENING_STATUS_PASSED,
+        stage=SN60_SCREENING_STAGE_EXECUTION,
+        artifact_root=artifact_root,
+        artifact_hash=hash_bundle_root(artifact_root),
+        project_key=project_key,
+        report_path=None,
+        result_path=Path(result_path),
+        reasons=[],
+        details={"execution": "informational", "finding_quality": finding_quality},
+        sandbox_source=sandbox_source,
+    )
+    write_screening_result(Path(result.result_path), result)
+    return result
+
+
 def run_sn60_screening(
     *,
     candidate_artifact_path: str,
@@ -99,16 +167,12 @@ def run_sn60_screening(
     output_root: str,
     sandbox_source: Sn60SandboxSource,
     execution_hook: Sn60ScreeningHook | None = None,
-    precomputed_reports: list[dict[str, object]] | None = None,
 ) -> Sn60ScreeningResult:
-    """Static + execution screening for an SN60 candidate.
+    """Static + execution screening for a single project (runs the agent once).
 
-    When ``precomputed_reports`` is provided (the candidate's report.json from each
-    duel project), the execution stage reuses those runs instead of executing the
-    agent a second time — the candidate already ran on these projects in the duel.
-    The agent passes execution screening if it produced a well-formed findings
-    report on at least one sampled project, so a transient failure on any single
-    project cannot fail the whole gate.
+    Retained as a self-contained building block; the resident challenge flow uses
+    :func:`run_sn60_static_screening` before the duel and reuses the duel's own
+    reports afterwards instead of executing the agent a second time.
     """
     artifact_root = Path(candidate_artifact_path).expanduser().resolve()
     output_base = Path(output_root).expanduser().resolve()
@@ -130,40 +194,6 @@ def run_sn60_screening(
             result_path=run_root / "screening_result.json",
             reasons=static_reasons,
             details={"static_checks": "failed"},
-            sandbox_source=sandbox_source,
-        )
-        write_screening_result(Path(result.result_path), result)
-        return result
-
-    if precomputed_reports is not None:
-        if precomputed_reports:
-            per_report_reasons = [
-                validate_sn60_screening_report(report) for report in precomputed_reports
-            ]
-        else:
-            per_report_reasons = [
-                ["SN60 screening: candidate produced no evaluated reports."]
-            ]
-        passed = any(not reasons for reasons in per_report_reasons)
-        execution_reasons = [] if passed else per_report_reasons[0]
-        result = build_screening_result(
-            run_id=run_id,
-            status=(
-                SN60_SCREENING_STATUS_PASSED
-                if passed
-                else SN60_SCREENING_STATUS_FAILED
-            ),
-            stage=SN60_SCREENING_STAGE_EXECUTION,
-            artifact_root=artifact_root,
-            artifact_hash=artifact_hash,
-            project_key=project_key,
-            report_path=None,
-            result_path=run_root / "screening_result.json",
-            reasons=execution_reasons,
-            details={
-                "execution_report_success": passed,
-                "reused_duel_reports": len(precomputed_reports),
-            },
             sandbox_source=sandbox_source,
         )
         write_screening_result(Path(result.result_path), result)

@@ -34,10 +34,12 @@ from kata.provenance import short_hash
 from kata.screening import (
     Sn60ScreeningHook,
     Sn60ScreeningResult,
-    run_sn60_screening,
+    build_sn60_execution_note_result,
+    build_sn60_screening_id,
+    run_sn60_static_screening,
     screening_result_payload,
     sn60_screening_freshness_fingerprint,
-    write_screening_result,
+    validate_sn60_screening_report,
 )
 
 SN60_MINER_LANE_ID = "sn60__bitsec"
@@ -86,26 +88,39 @@ class Sn60PromotionDecision:
 
 
 
-def read_duel_candidate_reports(
+def summarize_candidate_finding_quality(
     duel_summary: Sn60DuelSummary,
-) -> list[dict[str, object]]:
-    """Load the candidate's report.json from each duel replica.
+) -> dict[str, object]:
+    """Per-problem findings note for contributor feedback (informational only).
 
-    These are the runs screening reuses instead of a separate agent pass. A
-    missing/unreadable report is surfaced as an unsuccessful payload so it fails
-    that project's screening check without raising.
+    A problem counts as "produced findings" when at least one of its candidate
+    replicas returned a screening-valid report (a non-empty high/critical finding
+    with a description and source location). This never gates the challenge — the
+    duel already scores empty/unparseable output as 0 for that problem and keeps
+    going — it only lets the PR comment say how many problems yielded findings.
     """
-    reports: list[dict[str, object]] = []
+    produced_findings: dict[str, bool] = {}
     for replica in duel_summary.candidate.replica_results:
         try:
-            payload = json.loads(Path(replica.report_path).read_text(encoding="utf-8"))
+            report = json.loads(Path(replica.report_path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            payload = {
-                "success": False,
-                "error": "candidate report missing or unreadable",
-            }
-        reports.append(payload if isinstance(payload, dict) else {"success": False})
-    return reports
+            report = {"success": False}
+        if not isinstance(report, dict):
+            report = {"success": False}
+        is_valid = not validate_sn60_screening_report(report)
+        key = replica.project_key
+        produced_findings[key] = produced_findings.get(key, False) or is_valid
+    total = len(produced_findings)
+    with_findings = sum(1 for valid in produced_findings.values() if valid)
+    return {
+        "total_problems": total,
+        "problems_with_findings": with_findings,
+        "problems_without_findings": total - with_findings,
+        "per_problem": [
+            {"project_key": key, "produced_findings": valid}
+            for key, valid in produced_findings.items()
+        ],
+    }
 
 
 def run_sn60_challenge(
@@ -134,10 +149,57 @@ def run_sn60_challenge(
         sandbox_commit=sandbox_commit,
         scorer_version="ScaBenchScorerV2",
     )
-    # The candidate runs on every sampled project inside the duel, so we no longer
-    # spend a separate screening inference pass. The duel runs first; screening
-    # then validates the candidate's real duel reports (anti-cheat + well-formed
-    # findings), passing if any sampled project produced a valid findings report.
+    # Task 1 -- static anti-cheat gate BEFORE the duel (source-only, no inference).
+    # A cheating / no-op submission is closed here without spending any duel cost.
+    update_live_status(
+        {
+            "state": "screening",
+            "phase": "sn60-screening",
+            "lane_id": lane_id,
+            "candidate_submission_id": candidate_submission_id,
+            "project_keys": list(project_keys),
+        }
+    )
+    static_screening = run_sn60_static_screening(
+        candidate_artifact_path=candidate_artifact_path,
+        project_key=project_keys[0],
+        output_root=output_root or "runs",
+        sandbox_source=sandbox_source,
+    )
+    if not static_screening.passed:
+        update_live_status(
+            {
+                "state": "verifying",
+                "phase": "verifying",
+                "lane_id": lane_id,
+                "promotion_ready": False,
+                "promotion_reason": "candidate failed SN60 screening",
+            }
+        )
+        summary = build_sn60_screening_failure_summary(
+            king_artifact_path=king_artifact_path,
+            candidate_artifact_path=candidate_artifact_path,
+            project_keys=project_keys,
+            lane_id=lane_id,
+            screening=static_screening,
+        )
+        write_challenge_summary(
+            Path(static_screening.result_path).with_name("challenge_summary.json"),
+            summary,
+        )
+        record_sn60_screening_failure_provenance(
+            lane_id=lane_id,
+            candidate_submission_id=candidate_submission_id,
+            king_artifact_path=king_artifact_path,
+            project_keys=project_keys,
+            replicas_per_project=replicas_per_project,
+            screening=static_screening,
+            public_root=public_root,
+        )
+        return summary
+
+    # The duel runs every sampled project (resilient): bad/empty output is scored 0
+    # for that problem and evaluation continues to the next one.
     update_live_status(
         {
             "state": "evaluating",
@@ -160,12 +222,16 @@ def run_sn60_challenge(
         execution_hook=execution_hook,
         evaluation_hook=evaluation_hook,
     )
-    screening = run_sn60_screening(
+    # Task 2 -- execution screening is informational only. It never closes the PR;
+    # it records a per-problem findings note (reusing the duel's own reports) so the
+    # feedback can report how many problems produced findings.
+    screening = build_sn60_execution_note_result(
         candidate_artifact_path=candidate_artifact_path,
         project_key=project_keys[0],
-        output_root=output_root or "runs",
         sandbox_source=sandbox_source,
-        precomputed_reports=read_duel_candidate_reports(duel_summary),
+        run_id=build_sn60_screening_id(),
+        result_path=Path(duel_summary.output_root) / "screening_result.json",
+        finding_quality=summarize_candidate_finding_quality(duel_summary),
     )
     effective_screening_result = screening_result_payload(screening)
     if screening_result:
@@ -173,39 +239,6 @@ def run_sn60_challenge(
             **dict(effective_screening_result.get("details") or {}),
             "caller_context": screening_result,
         }
-    if not screening.passed:
-        update_live_status(
-            {
-                "state": "verifying",
-                "phase": "verifying",
-                "lane_id": lane_id,
-                "promotion_ready": False,
-                "promotion_reason": "candidate failed SN60 screening",
-            }
-        )
-        summary = build_sn60_screening_failure_summary(
-            king_artifact_path=king_artifact_path,
-            candidate_artifact_path=candidate_artifact_path,
-            project_keys=project_keys,
-            lane_id=lane_id,
-            screening=screening,
-        )
-        write_challenge_summary(
-            Path(screening.result_path).with_name("challenge_summary.json"),
-            summary,
-        )
-        record_sn60_screening_failure_provenance(
-            lane_id=lane_id,
-            candidate_submission_id=candidate_submission_id,
-            king_artifact_path=king_artifact_path,
-            project_keys=project_keys,
-            replicas_per_project=replicas_per_project,
-            screening=screening,
-            public_root=public_root,
-        )
-        return summary
-
-    write_screening_result(Path(duel_summary.output_root) / "screening_result.json", screening)
     summary = sn60_duel_to_challenge_summary(
         duel_summary,
         lane_id=lane_id,

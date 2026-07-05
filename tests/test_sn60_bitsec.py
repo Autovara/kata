@@ -20,8 +20,8 @@ from kata.evaluators.sn60_bitsec import (
     resolve_sn60_proxy_network,
     resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
-    sn60_container_name,
     sn60_codebase_pass_count,
+    sn60_container_name,
     sn60_synthetic_ids,
 )
 

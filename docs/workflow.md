@@ -44,7 +44,11 @@ For the exact miner bundle contract, see [submissions.md](submissions.md).
 
 ## Evaluation Stages
 
-Kata currently runs the live SN60 Bitsec miner lane: `sn60__bitsec/miner`.
+The stages, decisions, and provenance below are the general Kata flow and apply to any
+lane. The concrete rules, metrics, and environment variables in this section are the
+implementation of the one lane live today — **SN60 / Bitsec** (`sn60__bitsec/miner`).
+Future lanes plug into the same stages with their own evaluator, benchmark, and scoring;
+they will document their lane-specific rules separately.
 
 ### 1. Validation
 
@@ -61,48 +65,29 @@ Validation checks the candidate bundle before any expensive sandbox work:
 
 ### 2. Screening
 
-Screening is the cheap reject gate:
+Screening has two parts, and **only the static part can close a PR**:
 
-- static SN60 checks
-- one candidate sandbox execution
-- no king run
-
-Static screening rejects obvious cost-wasters before the sandbox starts:
+**Static screening — runs BEFORE the duel; the only early closer.** Cheap, source-only
+checks (no model calls). If any fail, the PR is closed immediately with the reason and
+**no duel cost is spent**:
 
 - helper files in SN60 V1 bundles
-- hardcoded provider keys or validator secret env references
+- hardcoded provider keys or validator-secret env references
 - benchmark-answer leakage indicators
 - async or non-callable `agent_main`
-- direct no-op returns such as `{"vulnerabilities": []}`
+- a stub that directly returns `{"vulnerabilities": []}` without doing any analysis
 
-Execution screening then requires one valid Bitsec-style report:
+**Execution screening — informational only; never closes a PR.** The candidate already
+runs on every sampled project inside the duel, so Kata reuses those runs (no separate
+screening execution) to record a per-problem findings note — e.g. *"produced findings on
+2/6 problems"* — for feedback. A bad, empty, or unparsable result on a problem is simply
+**scored 0 for that problem**, never a rejection. An agent that finds nothing loses on
+detection; it is not "screened out". A *non-stub* agent that happens to return no
+findings is fine.
 
-- sandbox execution must complete successfully within the validator screening
-  timeout
-- report must contain a top-level `vulnerabilities` list
-- the list must contain at least one candidate high/critical finding
-- each finding must include a title
-- each finding must include `severity: "high"` or `severity: "critical"`
-- each finding must include a useful description of at least 80 characters
-- each finding must include a source location hint, either in `file`, `path`,
-  or `location`, or by naming a source file such as `Vault.sol` or `program.rs`
-- reports are capped at 100 findings
-
-Empty screening reports are rejected as no-op submissions. Agents should not
-catch inference/API failures and return `{"vulnerabilities": []}` as a fallback.
-
-If screening fails, the PR is closed with the screening reason and the full duel
-is skipped.
-
-Production validators should keep screening cheap. The recommended MVP timeout
-is:
-
-```bash
-KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS=300
-```
-
-This timeout only applies to the one screening sandbox execution. Full duel
-executions keep the normal SN60 execution timeout.
+There is therefore no separate screening sandbox run and no separate screening timeout;
+each agent runs once per project inside the duel, under the normal duel execution
+timeout.
 
 ### 3. Duel
 
@@ -112,9 +97,11 @@ Default production behavior:
 
 - all projects from the resolved benchmark snapshot are eligible
 - candidate and king run the same selected project set
-- each selected project runs once by default, matching the SN60 job-run style
-- execution is per project: candidate first, then king for that same project,
-  then the next project
+- each selected project runs once per replica by default, matching the SN60 job-run style
+- execution is per project: candidate and king both run on a project, then Kata moves to
+  the next project
+- the duel is **resilient** — every selected project is scored, and a bad or invalid
+  result on one project (scored 0 for that project) does not abort the rest
 - the sandbox returns SN60 metrics for each project: true positives, total
   expected, detection rate, precision, F1, and PASS/FAIL
 
@@ -132,10 +119,9 @@ Example MVP settings:
 
 ```bash
 KATA_SN60_PROJECT_KEYS=
-KATA_SN60_PROJECT_SAMPLE_SIZE=12
+KATA_SN60_PROJECT_SAMPLE_SIZE=6
 KATA_SN60_PROJECT_SAMPLE_SECRET=<private-validator-secret>
 KATA_SN60_REPLICAS_PER_PROJECT=1
-KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS=300
 ```
 
 ### 4. Promotion Gate

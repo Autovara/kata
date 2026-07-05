@@ -1,10 +1,17 @@
-# Submission Guide
+# Submission Guide — SN60 / Bitsec lane
 
-This document is the contributor-facing contract for miner submissions. It lists
-what a valid Kata submission must contain, what is rejected, and what to check
-before opening a pull request.
+> **Scope:** this guide is the contributor contract for the **SN60 / Bitsec**
+> competition lane (`sn60__bitsec`), which is the one lane live today. Kata is a
+> subnet-agnostic framework, so future lanes will each publish their own submission
+> guide with their own agent contract and scoring. Everything below — the `agent.py`
+> shape (`vulnerabilities`), the inference contract, and the screening rules — is
+> **specific to SN60**. For the general, subnet-independent flow, see
+> [workflow.md](workflow.md); for how Kata is governed and funded, see the README's
+> "Built with Gittensor (SN74)" section.
 
-For the full PR-to-promotion process, see [workflow.md](workflow.md).
+This document lists what a valid SN60 miner submission must contain, what is rejected,
+and what to check before opening a pull request. For the full PR-to-promotion process,
+see [workflow.md](workflow.md).
 
 ## Current Scope
 

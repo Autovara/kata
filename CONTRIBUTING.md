@@ -1,8 +1,21 @@
 # Contributing to Kata
 
-Kata is an objective miner-agent competition repo. Contributions should make
-the evaluator, subnet pack workflow, or agent competition machinery more
-trustworthy and more useful.
+Kata is an objective, subnet-agnostic agent-competition framework: contributors compete
+to build the strongest agent for a target subnet, and Kata keeps the current best one
+(the **king**). Contributions should make the evaluator, pack workflow, or competition
+machinery more trustworthy and more useful. The framework runs one competition lane
+today — **SN60 / Bitsec** (`sn60__bitsec`) — and is designed to add more.
+
+## ⚡ Built with Gittensor (Bittensor Subnet 74)
+
+**This repository is developed and maintained through Gittensor — the open-source-software
+subnet on Bittensor, Subnet 74 (SN74).** Kata is registered on Gittensor, which
+coordinates and rewards the people who build and improve it. If you contribute here, your
+work is part of Gittensor / SN74 — you don't need to use Bittensor or Discord to take
+part, but it's how this project is powered and how contributors get credit.
+
+> Keep two subnets straight: **SN74 / Gittensor** powers the *development of this repo*;
+> **SN60 / Bitsec** is the current *competition target* that Kata builds an agent for.
 
 ## Principles
 

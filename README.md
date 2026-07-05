@@ -9,8 +9,23 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/gittensor-integrated-2f6bff.svg" alt="Gittensor integrated">
+  <img src="https://img.shields.io/badge/built%20with-Gittensor%20(SN74)-2f6bff.svg" alt="Built with Gittensor (SN74)">
 </p>
+
+> ## ⚡ Built with Gittensor (Bittensor Subnet 74)
+>
+> **Kata is developed and maintained through Gittensor — the open-source-software subnet
+> on Bittensor, Subnet 74 (SN74).** This repository is registered on Gittensor, which
+> coordinates and rewards the contributors who build and improve Kata. You don't need to
+> use Bittensor, join Discord, or understand SN74 to use or contribute to Kata — but the
+> software here is **powered by Gittensor**, and that's where the work comes from.
+>
+> ℹ️ **Two subnets are involved — keep them straight:** **SN74 / Gittensor** funds and
+> coordinates the *development of this repository*. **SN60 / Bitsec** is the *competition
+> target* — the subnet Kata currently builds an agent for (below). More targets will be
+> added over time.
+
+---
 
 **Kata builds the best AI agent for a subnet through open competition — so anyone can
 mine that subnet with a proven, optimized agent.**
@@ -87,16 +102,18 @@ The full workflow from a pull request to a new king:
    `submissions/<pack>/<mode>/<submission-id>/`.
 2. **Validate.** `kata-bot` checks the PR shape (one bundle, correct files, no edits
    outside the submission) and enqueues a durable job.
-3. **Screen.** The engine runs static checks plus a single sandbox execution to reject
-   broken or non-conforming agents cheaply, before any expensive evaluation.
-4. **Duel.** For each selected benchmark codebase, Kata runs the candidate first,
-   then the current king for that same codebase before moving to the next
-   codebase. By default the selected set is the full snapshot; MVP validators can
-   set secret-seeded sampling to use a random-looking subset per evaluation.
-5. **Decide.** The winner is chosen by SN60-style metrics: **detection score**,
-   then **true positives**, **precision**, **F1 score**, and fewer invalid/error
-   evaluations. The PR resolves to one action: `merge`, `close-losing`,
-   `close-invalid`, or `rerun-stale`.
+3. **Screen.** Cheap static anti-cheat checks run **before** the duel — a cheating or
+   no-op agent is rejected up front, with no expensive evaluation spent. (A bad or
+   empty result *during* the duel is simply scored 0 for that problem, never a
+   rejection.)
+4. **Duel.** For each selected benchmark codebase, Kata runs both the candidate and the
+   current king, then moves to the next codebase; the duel is resilient (every selected
+   codebase is scored). MVP validators can set secret-seeded sampling to use a
+   random-looking subset per evaluation.
+5. **Decide.** The winner is chosen by the active pack's scoring rules — for the SN60
+   lane: **detection score**, then **true positives**, **precision**, **F1 score**, and
+   fewer invalid/error evaluations. The PR resolves to one action: `merge`,
+   `close-losing`, `close-invalid`, or `rerun-stale`.
 6. **Verify freshness.** Before a merge, the result is re-checked against the current
    king and the pinned benchmark snapshot; a stale result is re-run rather than merged.
 7. **Promote.** A verified winner is merged, labeled, published as the new king under
@@ -151,11 +168,15 @@ For process details, see **[docs/workflow.md](docs/workflow.md)**.
 
 ---
 
-## Gittensor integration
+## Gittensor & SN74
 
-Kata is registered on Gittensor, and `kata-bot` records the outcome of every duel as an
-**objective label** on the pull request so the result can be read without re-running the
-evaluation. This is implemented today for the live `sn60__bitsec` pack:
+**Kata's development is powered by Gittensor (Bittensor Subnet 74)** — see the callout at
+the top of this README. Gittensor coordinates and rewards the contributors who build and
+maintain this repository.
+
+To keep each competition outcome auditable, `kata-bot` also records the result of every
+duel as an **objective label** on the pull request, so the result can be read without
+re-running the evaluation. This is implemented today for the live `sn60__bitsec` pack:
 
 - `kata:winner:sn60__bitsec` — a verified king promotion. Applied only after the duel
   and freshness checks pass.

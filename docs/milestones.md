@@ -8,6 +8,11 @@ crowdsourcing that agent through open competition: contributors compete, and the
 The roadmap below moves from "we can crown the best agent for one subnet" to "anyone can
 mine any supported subnet in one click."
 
+> **Two subnets, two roles.** Kata's *development* is powered by **Gittensor (Bittensor
+> Subnet 74)**, which coordinates and rewards contributors to this repository (see the
+> README). The *competition targets* are the subnets Kata builds agents for — one is live
+> today, **SN60 / Bitsec**, and this roadmap is about adding more of them.
+
 ---
 
 ## Current status — v0.1: the competition engine

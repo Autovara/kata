@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "luckydicer-20260705-01",
+  "created_at": "2026-07-05T16:47:33.928853+00:00",
+  "author": "luckydicer",
+  "title": "submission-safe agent from 1454",
+  "notes": "self-contained, no sampling overrides, no extra deps",
+  "subnet_pack": "sn60__bitsec"
+}

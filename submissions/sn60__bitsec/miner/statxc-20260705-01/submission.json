@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "statxc-20260705-01",
+  "created_at": "2026-07-05T14:55:44.000000+00:00",
+  "author": "statxc",
+  "title": "Multi-pass triage with cross-file context and similarity dedup",
+  "notes": "Adds cheap regex-resolved related-file context (imports/inheritance), per-language prompt hints (Vyper/Cairo/Rust-Anchor/Rust-Stylus), a bounded single retry on transient inference failures, and Jaccard-similarity based dedup in place of exact-title matching. File-analysis cap and time budget raised (8->14 files, 300s->600s) since the sandbox execution timeout has much more headroom. Still a single self-contained, stdlib-only agent.py with no extra model calls beyond the four specialist passes."
+}

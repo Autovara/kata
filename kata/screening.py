@@ -99,7 +99,17 @@ def run_sn60_screening(
     output_root: str,
     sandbox_source: Sn60SandboxSource,
     execution_hook: Sn60ScreeningHook | None = None,
+    precomputed_reports: list[dict[str, object]] | None = None,
 ) -> Sn60ScreeningResult:
+    """Static + execution screening for an SN60 candidate.
+
+    When ``precomputed_reports`` is provided (the candidate's report.json from each
+    duel project), the execution stage reuses those runs instead of executing the
+    agent a second time — the candidate already ran on these projects in the duel.
+    The agent passes execution screening if it produced a well-formed findings
+    report on at least one sampled project, so a transient failure on any single
+    project cannot fail the whole gate.
+    """
     artifact_root = Path(candidate_artifact_path).expanduser().resolve()
     output_base = Path(output_root).expanduser().resolve()
     run_id = build_sn60_screening_id()
@@ -120,6 +130,40 @@ def run_sn60_screening(
             result_path=run_root / "screening_result.json",
             reasons=static_reasons,
             details={"static_checks": "failed"},
+            sandbox_source=sandbox_source,
+        )
+        write_screening_result(Path(result.result_path), result)
+        return result
+
+    if precomputed_reports is not None:
+        if precomputed_reports:
+            per_report_reasons = [
+                validate_sn60_screening_report(report) for report in precomputed_reports
+            ]
+        else:
+            per_report_reasons = [
+                ["SN60 screening: candidate produced no evaluated reports."]
+            ]
+        passed = any(not reasons for reasons in per_report_reasons)
+        execution_reasons = [] if passed else per_report_reasons[0]
+        result = build_screening_result(
+            run_id=run_id,
+            status=(
+                SN60_SCREENING_STATUS_PASSED
+                if passed
+                else SN60_SCREENING_STATUS_FAILED
+            ),
+            stage=SN60_SCREENING_STAGE_EXECUTION,
+            artifact_root=artifact_root,
+            artifact_hash=artifact_hash,
+            project_key=project_key,
+            report_path=None,
+            result_path=run_root / "screening_result.json",
+            reasons=execution_reasons,
+            details={
+                "execution_report_success": passed,
+                "reused_duel_reports": len(precomputed_reports),
+            },
             sandbox_source=sandbox_source,
         )
         write_screening_result(Path(result.result_path), result)

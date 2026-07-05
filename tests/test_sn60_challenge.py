@@ -75,14 +75,9 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
     write_bundle(candidate_root, "candidate")
 
     def execute(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {
-            "success": True,
-            "report": {
-                "vulnerabilities": [
-                    {"title": f"{context.variant_name}-{context.replica_index}"}
-                ],
-            },
-        }
+        # Screening now reuses the duel's candidate reports, so the duel report
+        # must itself be a well-formed findings report (as a real agent produces).
+        return {"success": True, "report": VALID_SCREENING_REPORT}
 
     def evaluate(
         context: Sn60ReplicaContext,
@@ -170,6 +165,48 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
     assert (
         Path(summary.manifest_path).with_name("screening_result.json")
     ).exists()
+
+
+def test_run_sn60_challenge_screens_without_a_second_inference_pass(
+    tmp_path: Path,
+) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    king_root = tmp_path / "king"
+    candidate_root = tmp_path / "candidate"
+    write_bundle(king_root, "king")
+    write_bundle(candidate_root, "candidate")
+
+    candidate_runs = 0
+
+    def execute(context: Sn60ReplicaContext) -> dict[str, object]:
+        nonlocal candidate_runs
+        if context.variant_name == "candidate":
+            candidate_runs += 1
+        return {"success": True, "report": VALID_SCREENING_REPORT}
+
+    summary = run_sn60_challenge(
+        king_artifact_path=str(king_root),
+        candidate_artifact_path=str(candidate_root),
+        project_keys=["project-alpha"],
+        candidate_submission_id="miner-sn60-1",
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="sandbox-commit-1",
+        public_root=str(tmp_path / "public"),
+        execution_hook=execute,
+        evaluation_hook=lambda context, report: {
+            "status": "success",
+            "result": {"total_expected": 1, "total_found": 1, "true_positives": 1},
+        },
+    )
+
+    # One project x one replica -> the candidate runs exactly once (in the duel);
+    # screening reuses that report instead of a second inference pass.
+    assert candidate_runs == 1
+    assert Path(summary.manifest_path).with_name("screening_result.json").exists()
 
 
 def test_evaluate_sn60_promotion_uses_invalid_runs_as_last_tiebreaker() -> None:
@@ -318,7 +355,7 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
     assert first.primary_pool_fingerprint != second.primary_pool_fingerprint
 
 
-def test_run_sn60_challenge_stops_before_duel_when_screening_fails(
+def test_run_sn60_challenge_fails_screening_when_candidate_reports_no_findings(
     tmp_path: Path,
 ) -> None:
     sandbox_root = tmp_path / "sandbox"
@@ -328,14 +365,11 @@ def test_run_sn60_challenge_stops_before_duel_when_screening_fails(
     write_bundle(king_root, "king")
     write_bundle(candidate_root, "candidate")
 
-    execution_called = False
-
-    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": False, "error": "screening timeout"}
-
     def execute(context: Sn60ReplicaContext) -> dict[str, object]:
-        nonlocal execution_called
-        execution_called = True
+        # Candidate produces an empty findings report on every sampled project ->
+        # it fails the (now duel-reused) execution screening gate.
+        if context.variant_name == "candidate":
+            return {"success": True, "report": {"vulnerabilities": []}}
         return {"success": True, "report": VALID_SCREENING_REPORT}
 
     summary = run_sn60_challenge(
@@ -349,12 +383,10 @@ def test_run_sn60_challenge_stops_before_duel_when_screening_fails(
         benchmark_file=str(benchmark_path),
         sandbox_commit="sandbox-commit-1",
         public_root=str(tmp_path / "public"),
-        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=lambda context, report: {"status": "success", "result": {}},
     )
 
-    assert not execution_called
     assert not summary.promotion_ready
     assert "candidate failed SN60 screening" in summary.promotion_reason
     assert Path(summary.manifest_path).name == "screening_result.json"

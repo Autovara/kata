@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
@@ -34,7 +34,6 @@ from kata.provenance import short_hash
 from kata.screening import (
     Sn60ScreeningHook,
     Sn60ScreeningResult,
-    resolve_sn60_screening_execution_timeout_seconds,
     run_sn60_screening,
     screening_result_payload,
     sn60_screening_freshness_fingerprint,
@@ -87,6 +86,28 @@ class Sn60PromotionDecision:
 
 
 
+def read_duel_candidate_reports(
+    duel_summary: Sn60DuelSummary,
+) -> list[dict[str, object]]:
+    """Load the candidate's report.json from each duel replica.
+
+    These are the runs screening reuses instead of a separate agent pass. A
+    missing/unreadable report is surfaced as an unsuccessful payload so it fails
+    that project's screening check without raising.
+    """
+    reports: list[dict[str, object]] = []
+    for replica in duel_summary.candidate.replica_results:
+        try:
+            payload = json.loads(Path(replica.report_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {
+                "success": False,
+                "error": "candidate report missing or unreadable",
+            }
+        reports.append(payload if isinstance(payload, dict) else {"success": False})
+    return reports
+
+
 def run_sn60_challenge(
     *,
     king_artifact_path: str,
@@ -107,35 +128,44 @@ def run_sn60_challenge(
 ) -> ChallengeSummary:
     if not project_keys:
         raise ValueError("SN60 challenge requires at least one screening project key.")
-    screening_started_at = datetime.now(UTC)
-    screening_timeout_seconds = resolve_sn60_screening_execution_timeout_seconds()
     sandbox_source = resolve_sn60_sandbox_source(
         sandbox_root=sandbox_root,
         benchmark_file=benchmark_file,
         sandbox_commit=sandbox_commit,
         scorer_version="ScaBenchScorerV2",
     )
+    # The candidate runs on every sampled project inside the duel, so we no longer
+    # spend a separate screening inference pass. The duel runs first; screening
+    # then validates the candidate's real duel reports (anti-cheat + well-formed
+    # findings), passing if any sampled project produced a valid findings report.
     update_live_status(
         {
-            "state": "screening",
-            "phase": "sn60-screening",
+            "state": "evaluating",
+            "phase": "sn60-duel",
             "lane_id": lane_id,
             "candidate_submission_id": candidate_submission_id,
             "project_keys": list(project_keys),
-            "screening_project_key": project_keys[0],
-            "screening_started_at": screening_started_at.isoformat(),
-            "screening_timeout_seconds": screening_timeout_seconds,
-            "screening_timeout_at": (
-                screening_started_at + timedelta(seconds=screening_timeout_seconds)
-            ).isoformat(),
+            "replicas_per_project": replicas_per_project,
         }
+    )
+    duel_summary = run_sn60_bitsec_duel(
+        king_artifact_path=king_artifact_path,
+        candidate_artifact_path=candidate_artifact_path,
+        project_keys=project_keys,
+        output_root=output_root,
+        replicas_per_project=replicas_per_project,
+        sandbox_root=sandbox_source.sandbox_root,
+        benchmark_file=sandbox_source.benchmark_file,
+        sandbox_commit=sandbox_source.sandbox_commit,
+        execution_hook=execution_hook,
+        evaluation_hook=evaluation_hook,
     )
     screening = run_sn60_screening(
         candidate_artifact_path=candidate_artifact_path,
         project_key=project_keys[0],
         output_root=output_root or "runs",
         sandbox_source=sandbox_source,
-        execution_hook=screening_hook,
+        precomputed_reports=read_duel_candidate_reports(duel_summary),
     )
     effective_screening_result = screening_result_payload(screening)
     if screening_result:
@@ -175,28 +205,6 @@ def run_sn60_challenge(
         )
         return summary
 
-    update_live_status(
-        {
-            "state": "evaluating",
-            "phase": "sn60-duel",
-            "lane_id": lane_id,
-            "candidate_submission_id": candidate_submission_id,
-            "project_keys": list(project_keys),
-            "replicas_per_project": replicas_per_project,
-        }
-    )
-    duel_summary = run_sn60_bitsec_duel(
-        king_artifact_path=king_artifact_path,
-        candidate_artifact_path=candidate_artifact_path,
-        project_keys=project_keys,
-        output_root=output_root,
-        replicas_per_project=replicas_per_project,
-        sandbox_root=sandbox_source.sandbox_root,
-        benchmark_file=sandbox_source.benchmark_file,
-        sandbox_commit=sandbox_source.sandbox_commit,
-        execution_hook=execution_hook,
-        evaluation_hook=evaluation_hook,
-    )
     write_screening_result(Path(duel_summary.output_root) / "screening_result.json", screening)
     summary = sn60_duel_to_challenge_summary(
         duel_summary,

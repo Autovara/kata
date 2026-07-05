@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "candidate-20260705-01",
+  "created_at": "2026-07-05T00:00:00+00:00",
+  "author": "your-github-username",
+  "title": "Per-file high/critical smart-contract auditor",
+  "notes": "Self-contained agent: walks the mounted project, prioritizes money-logic files, and asks the pinned model for exploitable high/critical findings in the SN60 report shape."
+}

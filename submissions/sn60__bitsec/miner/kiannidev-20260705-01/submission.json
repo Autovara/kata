@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "kiannidev-20260705-01",
+  "created_at": "2026-07-06T04:03:06.525382+00:00",
+  "author": "kiannidev",
+  "title": "Multi-pass specialist depth-first Bitsec miner",
+  "notes": "Three specialist passes per ranked contract (access, value flow, oracle/math) with matcher-shaped findings. Extends the depth-first approach from merged PR #47 with concurrent targets and src/-aware discovery.",
+  "subnet_pack": "sn60__bitsec"
+}

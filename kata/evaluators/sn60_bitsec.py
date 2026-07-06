@@ -955,6 +955,15 @@ def extract_sn60_evaluation_payload(stdout: str) -> dict[str, object] | None:
     return None
 
 
+def report_finding_count(report_payload: dict[str, object]) -> int:
+    """Number of vulnerabilities in an agent report (`{report: {vulnerabilities}}`)."""
+    report = report_payload.get("report")
+    if isinstance(report, dict):
+        vulnerabilities = report.get("vulnerabilities")
+        return len(vulnerabilities) if isinstance(vulnerabilities, list) else 0
+    return 0
+
+
 def build_default_evaluation_hook(source: Sn60SandboxSource) -> Sn60EvaluationHook:
     def _evaluate(
         context: Sn60ReplicaContext,
@@ -962,6 +971,25 @@ def build_default_evaluation_hook(source: Sn60SandboxSource) -> Sn60EvaluationHo
     ) -> dict[str, object]:
         if not Path(context.report_path).exists():
             write_json(Path(context.report_path), report_payload)
+        # Cost/latency saver: a successful report with zero findings has zero true
+        # positives by definition, so there is nothing for the LLM judge to score.
+        # Skip the scorer call entirely and synthesize the deterministic empty
+        # result -- but keep the benchmark's expected count so a missed project
+        # still counts against the detection score (no accuracy change).
+        if bool(report_payload.get("success")) and report_finding_count(report_payload) == 0:
+            return {
+                "status": "success",
+                "result": {
+                    "project": context.project_key,
+                    "detection_rate": 0.0,
+                    "true_positives": 0,
+                    "total_expected": sn60_benchmark_expected_count(source, context.project_key),
+                    "total_found": 0,
+                    "precision": 0.0,
+                    "f1_score": 0.0,
+                    "result": "no findings reported; LLM scoring skipped",
+                },
+            }
         try:
             completed = subprocess.run(
                 build_bitsec_evaluation_command(context),

@@ -471,7 +471,10 @@ def test_default_evaluation_hook_points_validator_dir_at_recorded_benchmark(
     monkeypatch.setenv("CHUTES_API_KEY", "scoring-key")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    build_default_evaluation_hook(source)(context, {"success": True})
+    # A report WITH a finding exercises the scorer subprocess (empty reports skip it).
+    build_default_evaluation_hook(source)(
+        context, {"success": True, "report": {"vulnerabilities": [{"title": "x"}]}}
+    )
 
     assert captured["env"]["VALIDATOR_DIR"] == str(benchmark_path.parent)
     # The scorer joins VALIDATOR_DIR + the hardcoded filename, so that must be
@@ -479,6 +482,43 @@ def test_default_evaluation_hook_points_validator_dir_at_recorded_benchmark(
     assert (
         Path(captured["env"]["VALIDATOR_DIR"]) / "curated-highs-only-2025-08-08.json"
     ) == benchmark_path
+
+
+def test_default_evaluation_hook_skips_scorer_on_empty_findings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from kata.evaluators.sn60_bitsec import build_default_evaluation_hook
+
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    context = _make_context(tmp_path, source)
+    Path(context.report_path).parent.mkdir(parents=True, exist_ok=True)
+
+    called = {"scorer": False}
+
+    def fake_run(cmd, *args, **kwargs):
+        called["scorer"] = True
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    payload = build_default_evaluation_hook(source)(
+        context, {"success": True, "report": {"vulnerabilities": []}}
+    )
+
+    # The LLM judge is NOT invoked for an empty report, but the result is a valid
+    # zero-true-positive success that still carries the benchmark's expected count.
+    assert called["scorer"] is False
+    assert payload["status"] == "success"
+    assert payload["result"]["true_positives"] == 0
+    assert payload["result"]["total_found"] == 0
+    assert payload["result"]["total_expected"] >= 0
 
 
 def test_default_evaluation_hook_ignores_agent_writable_evaluation_json(
@@ -519,7 +559,9 @@ def test_default_evaluation_hook_ignores_agent_writable_evaluation_json(
         ),
     )
 
-    payload = build_default_evaluation_hook(source)(context, {"success": True})
+    payload = build_default_evaluation_hook(source)(
+        context, {"success": True, "report": {"vulnerabilities": [{"title": "x"}]}}
+    )
 
     assert payload["status"] == "error"
     assert "scorer failed" in payload["error"]

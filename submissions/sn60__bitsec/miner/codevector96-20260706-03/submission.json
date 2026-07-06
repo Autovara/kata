@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "codevector96-20260706-03",
+  "created_at": "2026-07-06T14:11:41.401828+00:00",
+  "author": "codevector96",
+  "title": "High-precision auditor with wider coverage and an additive recall sweep",
+  "notes": "Keeps the proven depth-first, matcher-shaped, high-precision per-contract audit but adds two recall levers the king lacks: triage-guided coverage of a few more contracts than the king's top-4, and an additive recall sweep on the top contracts that finds more distinct issues without ever dropping found ones. Concurrent so the extra work fits the sandbox budget."
+}

@@ -1,27 +1,21 @@
 """SN60 / Bitsec miner agent: ranked file scope + heuristic multi-tool scan + merge.
 
 Adapted from a larger multi-model agentic pipeline the same author built and ran
-independently against Bitsec's own platform, trimmed to fit Kata's SN60 sandbox
+independently against Bitsec's own platform, trimmed to Kata's SN60 sandbox
 contract: one self-contained file, stdlib only, one pinned model reachable only
-through `inference_api`, no internet, no helper files. The parts that depended on
-an unrestricted environment (multi-model routing, LLM-driven refinement rounds,
-an LLM merge pass) are replaced with pure-Python equivalents; the parts that are
-already pure Python (import-graph file ranking, parent-class inclusion, keyword
-based tool selection, similarity-based dedup, rule-based scoring) are ported
-directly.
+through `inference_api`, no internet, no helper files.
 
 Pipeline:
   Phase 1 -- rank files by import-graph centrality + entry-point density, then
-             pull in parent contracts / shared-infra files referenced by the
-             top-ranked files (pure Python, no LLM).
-  Phase 2 -- for each in-scope file, pick a subset of specialist prompts via
-             cheap keyword heuristics (pure Python), instead of running every
-             prompt on every file or paying for an LLM router call.
+             pull in parent/shared-infra files referenced by the top files.
+  Phase 2 -- pick a subset of specialist prompts per file via cheap keyword
+             heuristics, instead of running every prompt on every file or
+             paying for an LLM router call.
   Phase 3 -- run the picked (file, prompt) pairs concurrently against the
              single pinned inference endpoint under a hard wall-clock budget.
-  Phase 4 -- cluster near-duplicate findings (Jaccard token similarity) and
-             merge each cluster into one finding, then rank with a rule-based
-             scorer tuned against known true/false-positive patterns, and cap.
+  Phase 4 -- cluster + merge near-duplicate findings (Jaccard similarity),
+             run a second adversarial "skeptic" pass that tries to refute each
+             merged finding, then rank with a rule-based scorer and cap.
 """
 
 from __future__ import annotations
@@ -36,7 +30,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# ============================== CONFIG ==============================
+# ---- CONFIG ----
 CONTRACT_SUFFIXES = (".sol", ".vy", ".rs", ".move", ".cairo", ".fe")
 SKIP_DIR_NAMES = {
     "node_modules", "lib", "libs", "vendor", "test", "tests",
@@ -56,11 +50,22 @@ TIME_BUDGET_SECONDS = 1200.0
 REQUEST_TIMEOUT_SECONDS = 120
 MAX_WORKERS = 10
 
+# Skeptic review: adversarial second pass, carved from remaining time budget.
+# Fails open on any failure (timeout/bad reply/no budget) -- never loses work.
+SKEPTIC_TIME_BUDGET_SECONDS = 240.0
+SKEPTIC_MIN_BUDGET_SECONDS = 20.0
+SKEPTIC_MAX_WORKERS = 8
+SKEPTIC_REQUEST_TIMEOUT_SECONDS = 90
+SKEPTIC_MAX_TOKENS = 4000
+
 FORMAT_INSTRUCTIONS = (
     "Return ONLY raw JSON in exactly this shape:\n"
     '{"vulnerabilities": [{"title": "...", "description": "...", '
     '"vulnerability_type": "...", "severity": "high"|"critical", '
-    '"confidence": <0-1 float>, "location": "..."}]}\n'
+    '"confidence": <0-1 float>, "location": "...", '
+    '"line": <int line number in the file, or null if unknown>, '
+    '"vulnerable_code_snippet": "the exact vulnerable line(s) of code, verbatim from the file, '
+    'or empty string if not applicable"}]}\n'
     'If nothing meets the bar above, return {"vulnerabilities": []}.'
 )
 
@@ -70,47 +75,22 @@ _DO_NOT_REPORT = """
 <do_not_report>
 Do NOT report findings in these categories -- they are consistently false positives:
 
-1. ADMIN/ROLE-GATED FUNCTIONS: Do not flag functions protected by onlyRole(), onlyOwner(),
-   onlyAdmin, requiresAuth, or similar access control as "missing access control" or
-   "permissionless". If a function requires a privileged role, assume the role is correctly
-   assigned unless you can prove the role assignment itself is broken.
-
-2. DECIMAL SCALING: Do not report decimal mismatches (e.g. 18 vs 8 decimals) if the code
-   contains explicit conversion functions. Intentional scaling between different precision
-   representations is by design.
-
-3. GAS DoS / UNBOUNDED LOOPS: Do not report gas DoS on loops unless ALL of these are true:
-   (a) loop bounds are controlled by untrusted external users,
-   (b) no practical cap exists on array size, and
-   (c) realistic usage can exceed block gas limits.
-
-4. GENERIC REENTRANCY: Do not report reentrancy unless you can demonstrate:
-   (a) state is modified AFTER an external call,
-   (b) no reentrancy guard exists, AND
-   (c) a concrete exploit path with profit for the attacker.
-
-5. ERC20 PERMIT FRONTRUNNING: Never report ERC20 permit frontrunning.
-
-6. UNSAFE INTEGER CASTING: Do not report uint256 downcasts in Solidity >=0.8 unless
-   the value realistically exceeds the target type bounds.
-
-7. UNCHECKED RETURN VALUES: Do not report unchecked return values on Solidity calls
-   that revert on failure by default, or on SafeERC20 transfers.
-
-8. RECEIVE/FALLBACK FUND MIXING: Do not report receive() or fallback() accepting ETH
-   unless funds can be concretely stolen or permanently locked.
-
-9. ORACLE STALENESS: Do not report oracle staleness or replay attacks unless they
-   bypass existing staleness/freshness checks in the code.
-
-10. SLIPPAGE ON EVERY SWAP: Do not report missing slippage protection if the function
-    accepts slippage parameters or the caller controls these values.
-
-11. PAUSE MECHANISM ISSUES: Do not report PauserRegistry or pause/unpause logic
-    vulnerabilities unless you can demonstrate a concrete bypass without admin keys.
-
-12. TOKEN APPROVAL PERSISTENCE: Do not report leftover token approvals unless there
-    is a specific drain path via remaining allowance.
+1. ADMIN/ROLE-GATED FUNCTIONS: functions behind onlyRole()/onlyOwner()/onlyAdmin/requiresAuth
+   are not "missing access control" -- assume the role assignment is correct unless you can
+   prove otherwise.
+2. DECIMAL SCALING: not a bug if the code has explicit conversion functions for it.
+3. GAS DoS / UNBOUNDED LOOPS: only if the bound is attacker-controlled, uncapped, AND realistic
+   usage exceeds block gas limits.
+4. GENERIC REENTRANCY: only with a state write AFTER an external call, no guard, AND a concrete
+   profit path.
+5. ERC20 PERMIT FRONTRUNNING: never report.
+6. UNSAFE INTEGER CASTING: only if a realistic input value exceeds the target type's bounds.
+7. UNCHECKED RETURN VALUES: not a bug on calls that revert by default, or SafeERC20 transfers.
+8. RECEIVE/FALLBACK FUND MIXING: only if funds can be concretely stolen or permanently locked.
+9. ORACLE STALENESS: only if it bypasses an existing staleness/freshness check in the code.
+10. SLIPPAGE: not missing if the function accepts slippage parameters the caller controls.
+11. PAUSE MECHANISM: only with a concrete bypass that doesn't require admin keys.
+12. TOKEN APPROVAL PERSISTENCE: only with a specific drain path via the remaining allowance.
 </do_not_report>
 """
 
@@ -132,13 +112,6 @@ staking, factory, exchange, pool, strategy, library, token) and focus your analy
 """
 
 _FUND_FLOW_TAIL = """
-<methodology>
-1) Identify the contract's role and its core value flows.
-2) Trace inputs -> execution -> storage writes -> outputs for each value-moving
-   function relevant to this pass's focus.
-3) Verify the specific invariant assigned to this pass and report concrete findings.
-</methodology>
-
 <dedup>
 Before reporting, check if you are reporting the same root cause from different angles.
 Report each unique root cause ONLY ONCE. Combine related symptoms into a single finding.
@@ -272,24 +245,15 @@ do something on someone else's behalf. For every external entry-point determine 
 and verify the contract enforces it; for every signature-gated entry-point check whether the
 submitter is bound by the signed digest, not only the signer.
 
-Build this check as an explicit enumeration: list every externally-callable function that writes any
-storage variable, and beside each list the access-control mechanism that gates it. Any function whose
+Build this as an explicit enumeration: list every externally-callable function that writes any
+storage variable, and beside each note the access-control mechanism gating it. A function whose
 access-control column reads NONE and that writes a storage variable downstream code uses for
-authorisation, accounting, or value-routing is a finding regardless of how textbook or obvious the
-omission looks. For helpers that forward execution to a (target, calldata) supplied by the caller,
-check whether target is whitelisted / restricted.
+authorisation, accounting, or value-routing is a finding regardless of how obvious the omission
+looks. For helpers forwarding execution to a (target, calldata) supplied by the caller, check
+whether target is whitelisted / restricted.
 
 Report concrete exploit sequences with direct economic impact.
 </primary_targets>
-
-<methodology>
-1) Enumerate external entry-points and determine the correct caller for each.
-2) For signature-gated entry-points, check whether the submitter is bound in the signed digest or
-   only the signer is.
-3) For any entry point that accepts a target / calldata / token / recipient argument supplied by the
-   caller, verify the protocol validates or restricts what those inputs can be.
-4) Report findings with concrete impact.
-</methodology>
 
 <dedup>
 Report each unique root cause ONLY ONCE. If the same missing access control affects multiple
@@ -344,13 +308,6 @@ shared lookup using the same recipe, the recipe must include something unique to
 Report concrete numerical proofs.
 </primary_targets>
 
-<methodology>
-1) Identify the contract's role.
-2) For every cross-contract boundary, verify the unit / decimal / encoding contract actually matches
-   the consumer's assumption.
-3) Report concrete findings.
-</methodology>
-
 <dedup>
 If multiple functions share the same unit mismatch root cause, report once and list all affected
 functions. Report at most 8 findings per analysis.
@@ -402,13 +359,6 @@ members' identifiers, the loop's terminating bound can fall out of sync with the
 Report concrete inputs producing the wrong output.
 </primary_targets>
 
-<methodology>
-1) Identify what type of contract this is -- math library, enumeration, reward system, etc.
-2) For math: test edge cases mentally -- what happens with input 0? Negative? Max uint?
-3) For iteration: trace the loop bounds -- are they from a counter that can have gaps?
-4) For casting: find every explicit cast and check if the source value can exceed target range.
-</methodology>
-
 <dedup>
 If the same root cause manifests in multiple callers, report once and list affected callers.
 Report at most 8 findings per analysis.
@@ -432,67 +382,6 @@ Below 0.70: Do not report as HIGH/CRITICAL. For HIGH/CRITICAL severity: confiden
 <output>
 IMPORTANT: Each finding's "description" field MUST be at most 800 characters. State the root cause,
 the EXACT affected function name (including internal helpers), and the impact in <=800 chars.
-""" + FORMAT_INSTRUCTIONS + "\n</output>\n"
-
-SYSTEM_E = """
-<role>
-You are a world-class Smart Contract Security Auditor specializing in execution-context
-manipulation, resource-control attacks, and cross-language EVM vulnerability patterns.
-You produce only high-confidence, exploit-ready findings with concrete proof.
-</role>
-
-<scope>
-Audit ONLY the provided file. Use related files only when explicitly referenced (imports,
-inheritance, delegatecall, cross-contract calls). First identify the contract language
-and type, then apply execution-context analysis accordingly.
-</scope>
-
-<primary_targets>
-Look for execution-context and resource-control bugs: gas griefing, partial-execution failure
-handling, variable-lifecycle issues, and ordering mistakes. For every entry-point that orchestrates
-one or more sub-calls AND consumes a signature, nonce, or other one-shot credential in the same
-transaction, model the case where the outer caller chose the gas limit to leave the sub-call
-starved (the EVM's 63/64 gas-forwarding rule caps gas forwarded to a sub-call). If the outer call
-does not propagate the sub-call's failure as a top-level revert and instead treats it as a
-recoverable partial-success, the user's credential is burnt and their intent did not execute.
-
-Verify that resource handles (allowances, flags, nonces) are reset on every exit path -- including
-the path where the subcall consumed only part of the granted resource. When the contract declares
-its own local interface for an external target (rather than importing the target's official
-interface), compare each declared function against the actual shape on every supported deployment;
-any divergence is a concrete integration mismatch.
-
-Report concrete exploit paths with impact.
-</primary_targets>
-
-<methodology>
-1) Identify the contract's role and language.
-2) Apply the primary_targets checklist; report concrete findings.
-</methodology>
-
-<dedup>
-Report each unique root cause ONLY ONCE. Report at most 8 findings per analysis.
-</dedup>
-
-<evidence_requirements>
-- Exact function name(s), the specific state consumed, and the failing subcall
-- Step-by-step attack/failure path showing how the attacker controls the outcome
-- Direct impact: what state is permanently corrupted, who loses funds
-If you cannot show the concrete path with specific variables and values, DO NOT report.
-</evidence_requirements>
-
-<confidence>
-Very High (0.95-1.0): Provable state consumption before unguarded subcall; concrete variable
-lifecycle mismatch with arithmetic proof showing fund leak.
-High (0.85-0.94): Gas-controlled failure with specific state at risk.
-Medium-High (0.75-0.84): Cross-language pattern requiring specific deployment configuration.
-Below 0.70: Do not report as HIGH/CRITICAL. For HIGH/CRITICAL severity: confidence >= 0.70 required.
-</confidence>
-""" + _DO_NOT_REPORT + """
-<output>
-IMPORTANT: Each finding's "description" field MUST be at most 800 characters. State (1) root cause
-and EXACT affected function name, (2) victim impact, (3) whether an attacker can permanently block
-a legitimate operation (DoS).
 """ + FORMAT_INSTRUCTIONS + "\n</output>\n"
 
 SYSTEM_SV = """
@@ -556,25 +445,19 @@ Analyse ONLY the provided file.
 </scope>
 
 <method>
-CHECK 1 -- STATE TRANSITION GUARDS:
-  For each resource with a defined lifecycle (orders, positions, loans, locks, claims,
-  migrations, pools): verify every function checks the required precondition state before
-  acting and correctly transitions the resource afterward. When the lifecycle has a TERMINAL
-  state (cancelled, closed, settled, claimed, refunded), check EVERY mutator -- not just
-  execute / fill -- including any modify / update / edit / resize / reschedule entry. A modify
-  path that skips the terminal-state guard lets the owner re-touch a resource whose value was
-  already released, replaying the release.
+CHECK 1 -- STATE TRANSITION GUARDS: for each resource with a defined lifecycle (orders,
+  positions, loans, locks, claims, migrations, pools), verify every function checks the
+  required precondition state before acting. When the lifecycle has a TERMINAL state
+  (cancelled, closed, settled, claimed, refunded), check EVERY mutator -- not just execute /
+  fill, but modify / update / edit / resize / reschedule too. Build this as an explicit
+  per-resource enumeration: (a) the storage field recording terminal status, (b) every
+  external/public function writing ANY storage of an existing instance, (c) whether that
+  field is read BEFORE the first storage write in each. An absent read with a reachable
+  storage write is a finding regardless of what else the function validates first.
 
-  Build this check as an explicit per-resource enumeration. For each resource type that has a
-  terminal state, list: (a) the storage field that records terminal status, (b) every external /
-  public function that writes ANY storage of an existing instance of that resource, (c) for each
-  function in (b), whether the terminal-status field is read BEFORE the first storage write. If
-  that read is absent and the function reaches the storage write on any path, the function is a
-  finding regardless of what other validations it performs first.
-
-CHECK 2 -- OPERATION ORDERING:
-  For functions that both update state AND validate post-conditions: verify that security-critical
-  checks read pre-mutation values, not the already-updated state.
+CHECK 2 -- OPERATION ORDERING: for functions that both update state AND validate
+  post-conditions, verify security-critical checks read pre-mutation values, not the
+  already-updated state.
 </method>
 
 <do_not_report>
@@ -603,31 +486,21 @@ Analyse ONLY the provided file.
 </scope>
 
 <method>
-CHECK 1 -- CALLER-NAMED SOURCE OF FUNDS:
-  For every value-moving call whose argument list contains a "from" / "owner" / "source" /
-  "holder" field (transferFrom, safeTransferFrom, permit2.transferFrom, pullToken, pushToken,
-  take, withdrawOnBehalf): verify the named source is either msg.sender, OR has explicitly
-  authorised THIS specific operation (a signed permit whose digest binds to the exact call, or a
-  single-use per-operation approval recorded in storage). A pre-existing ERC20 allowance is NOT
-  per-operation authorisation. A persistent unbounded allowance the contract leaves outstanding
-  toward another in-protocol component is reachable by every entry point of that component that
-  takes a caller-supplied owner argument.
+CHECK 1 -- CALLER-NAMED SOURCE OF FUNDS: for calls with a "from"/"owner"/"source"/"holder"
+  argument (transferFrom, permit2.transferFrom, pullToken, withdrawOnBehalf), verify the named
+  source is msg.sender OR has authorised THIS specific operation (digest-bound permit or
+  single-use approval). A pre-existing ERC20 allowance is NOT per-operation authorisation.
 
-CHECK 2 -- CALLER-NAMED BENEFICIARY OF STATE:
-  For every state-mutating function that lets the caller name an account other than themselves
-  AND lets the caller also wire a downstream attribute attached to that account (delegation
-  target, validator, operator, owner of a freshly-minted token): verify the caller is the named
-  account or has explicit consent from it.
+CHECK 2 -- CALLER-NAMED BENEFICIARY OF STATE: for functions letting the caller name another
+  account AND wire a downstream attribute onto it (delegate, operator, minted-token owner),
+  verify the caller is that account or has its explicit consent.
 
-CHECK 3 -- COMMAND-DISPATCH SOURCE BINDING:
-  When the contract exposes a single execute()/dispatch()/multicall entry that interprets a
-  sequence of caller-supplied commands, and one of those commands moves tokens with an explicit
-  source field, verify the source is bound to the outer caller before the command executes.
+CHECK 3 -- COMMAND-DISPATCH SOURCE BINDING: for execute()/dispatch()/multicall entries whose
+  subcommands move tokens with an explicit source field, verify the source is bound to the
+  outer caller before the subcommand executes.
 
-CHECK 4 -- PERMISSIONLESS FEE / ACCOUNTING ROLLOVER:
-  Functions that fold accumulated state into a fee, mint, payout, or yield bookkeeping step often
-  have no caller-binding because "anyone can trigger a no-op-or-payout". Check whether the trigger
-  has timing-controllable side effects on accounting.
+CHECK 4 -- PERMISSIONLESS FEE / ACCOUNTING ROLLOVER: for anyone-can-trigger fee/mint/payout
+  bookkeeping steps, check whether the trigger has timing-controllable accounting side effects.
 </method>
 
 <do_not_report>
@@ -655,7 +528,6 @@ TOOL_PROMPTS = {
     "SYSTEM_B": (SYSTEM_B, 8),
     "SYSTEM_C": (SYSTEM_C, 8),
     "SYSTEM_D": (SYSTEM_D, 8),
-    "SYSTEM_E": (SYSTEM_E, 8),
     "SYSTEM_SV": (SYSTEM_SV, 8),
     "PROMPT_LIFECYCLE": (PROMPT_LIFECYCLE, 4),
     "PROMPT_AUTHORIZED_SOURCE": (PROMPT_AUTHORIZED_SOURCE, 4),
@@ -685,14 +557,14 @@ def _heuristic_picks(source: str) -> list[str]:
     if any(k in low for k in (" for(", " for ", "while(", "uint128(", "uint64(", "int128(", "downcast")):
         picks.add("SYSTEM_D")
     if any(k in low for k in ("delegatecall", "fallback(", "proxy", "implementation", "invoke(")):
-        picks.add("SYSTEM_E")
+        picks.add("SYSTEM_B")
     if any(k in low for k in ("oracle", "price", "getprice", "latestanswer")):
         picks.add("SYSTEM_C")
     if any(k in low for k in ("initialize", "claim", "redeem", "finalize")):
         picks.update({"PROMPT_LIFECYCLE", "SYSTEM_A4"})
     if any(k in low for k in ("factory", "create2", "clone", "deploy(")):
         picks.add("PROMPT_AUTHORIZED_SOURCE")
-    default_pad = ("SYSTEM_A1", "SYSTEM_A2", "SYSTEM_B", "SYSTEM_C", "SYSTEM_D", "SYSTEM_E")
+    default_pad = ("SYSTEM_A1", "SYSTEM_A2", "SYSTEM_B", "SYSTEM_C", "SYSTEM_D")
     for tool in default_pad:
         if len(picks) >= MIN_PICKS_PER_FILE:
             break
@@ -700,7 +572,175 @@ def _heuristic_picks(source: str) -> list[str]:
     return sorted(picks)
 
 
-# ==================== Phase 1: file discovery + ranking ====================
+# ---- Phase 4c: adversarial skeptic review ----
+# A fresh prompt whose only job is disproving a claim catches more of its own
+# generating prompt's mistakes than that prompt reviewing itself would.
+
+SYSTEM_SKEPTIC = """
+<role>
+You are an adversarial second-opinion security reviewer. You did not write the candidate
+findings below -- another reviewer did, and you do not trust their work by default. Your
+ONLY job is to try to REFUTE each candidate: find the concrete reason it is NOT a real,
+exploitable vulnerability, if one exists.
+</role>
+
+<scope>
+You get the full source of one file and a numbered list of candidate findings another
+reviewer flagged in it. Re-examine each independently against the actual code -- do not
+just trust the candidate's own description.
+</scope>
+
+<method>
+For each candidate, check: (1) does the cited code actually exist and do what's claimed?
+(2) is there a guard/modifier/role-check elsewhere in the file the candidate missed?
+(3) is the impact reachable by an unprivileged caller, or does it need a privileged role
+or a precondition that never holds? (4) is it generic/hypothetical rather than a specific,
+provable exploit in this file's actual logic?
+
+Only mark REFUTED if you can point to the specific code, guard, or missing precondition
+that makes the claim false. If you cannot find a concrete reason, mark CONFIRMED -- do
+not refute on vague suspicion alone.
+</method>
+
+<output>
+Return ONLY raw JSON: {"verdicts": [{"index": <int>, "verdict": "confirmed"|"refuted",
+"reason": "one sentence"}]}. Exactly one verdict per candidate index, same index numbers.
+</output>
+"""
+
+
+def _build_skeptic_user_prompt(file_label: str, source: str, candidates: list[dict]) -> str:
+    lines = [f"File: {file_label}", "", "```", source, "```", "", "Candidate findings:"]
+    for index, finding in enumerate(candidates):
+        lines.append(
+            f"[{index}] title={finding.get('title', '')!r} "
+            f"severity={finding.get('severity', '')} "
+            f"line={finding.get('line')} location={finding.get('location', '')!r}\n"
+            f"    description: {finding.get('description', '')}\n"
+            f"    snippet: {finding.get('vulnerable_code_snippet', '')!r}"
+        )
+    return "\n".join(lines)
+
+
+def _extract_json_object(raw_reply: str | None) -> dict | None:
+    if not isinstance(raw_reply, str):
+        return None
+    text = raw_reply.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        newline = text.find("\n")
+        if newline != -1:
+            text = text[newline + 1 :]
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if payload is None:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                payload = json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+        else:
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_skeptic_verdicts(raw_reply: str, num_candidates: int) -> list[bool]:
+    """True = keep, False = drop. Fails open (keeps everything) on any parse
+    problem -- this pass is a refinement, never a hard gate."""
+    keep = [True] * num_candidates
+    payload = _extract_json_object(raw_reply)
+    if payload is None:
+        return keep
+    verdicts = payload.get("verdicts")
+    if not isinstance(verdicts, list):
+        return keep
+    for entry in verdicts:
+        if not isinstance(entry, dict):
+            continue
+        index = entry.get("index")
+        if not isinstance(index, int) or not (0 <= index < num_candidates):
+            continue
+        if str(entry.get("verdict") or "").strip().lower() == "refuted":
+            keep[index] = False
+    return keep
+
+
+def _skeptic_review_all(
+    merged: list[dict],
+    sources: dict[str, str],
+    *,
+    endpoint: str,
+    api_key: str,
+    deadline: float,
+) -> list[dict]:
+    if not merged:
+        return merged
+    remaining = deadline - time.monotonic()
+    if remaining < SKEPTIC_MIN_BUDGET_SECONDS:
+        return merged
+
+    by_file: dict[str, list[dict]] = defaultdict(list)
+    for finding in merged:
+        by_file[finding.get("file", "")].append(finding)
+
+    reviewed: list[dict] = []
+    processed_files: set[str] = set()
+    executor = ThreadPoolExecutor(max_workers=SKEPTIC_MAX_WORKERS)
+    try:
+        futures: dict = {}
+        for file_label, candidates in by_file.items():
+            source = sources.get(file_label, "")
+            if not source:
+                reviewed.extend(candidates)
+                processed_files.add(file_label)
+                continue
+            future = executor.submit(
+                _ask_model,
+                endpoint=endpoint,
+                api_key=api_key,
+                system_prompt=SYSTEM_SKEPTIC,
+                user_prompt=_build_skeptic_user_prompt(file_label, source, candidates),
+                timeout=SKEPTIC_REQUEST_TIMEOUT_SECONDS,
+                max_tokens=SKEPTIC_MAX_TOKENS,
+            )
+            futures[future] = (file_label, candidates)
+        wait_seconds = min(remaining, SKEPTIC_TIME_BUDGET_SECONDS)
+        try:
+            for future in as_completed(futures, timeout=max(wait_seconds, 0.0)):
+                file_label, candidates = futures[future]
+                processed_files.add(file_label)
+                try:
+                    raw_reply = future.result()
+                except (
+                    urllib.error.URLError,
+                    TimeoutError,
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    IndexError,
+                    TypeError,
+                ):
+                    reviewed.extend(candidates)  # fail open
+                    continue
+                keep_flags = _parse_skeptic_verdicts(raw_reply, len(candidates))
+                reviewed.extend(c for c, keep in zip(candidates, keep_flags) if keep)
+        except TimeoutError:
+            pass
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    # Any file whose skeptic call never completed (budget ran out first) keeps
+    # its pre-review findings rather than losing them silently.
+    for file_label, candidates in by_file.items():
+        if file_label not in processed_files:
+            reviewed.extend(candidates)
+    return reviewed
+
+
+# ---- Phase 1: file discovery + ranking ----
 
 def _iter_contract_files(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
@@ -748,7 +788,14 @@ def _rank_files_by_signal(files: list[Path]) -> list[Path]:
             target = m.group(1) or m.group(2) or m.group(3) or ""
             if not target:
                 continue
-            tail = re.split(r"[/:.]", target.strip())[-1]
+            tail = target.strip()
+            # Strip a file extension first so ".sol" isn't split into "sol" as
+            # the (wrong) stem -- most import targets here end in one.
+            for suffix in CONTRACT_SUFFIXES:
+                if tail.endswith(suffix):
+                    tail = tail[: -len(suffix)]
+                    break
+            tail = re.split(r"[/:.]", tail)[-1]
             if tail and tail in stems and stems[tail] != f:
                 imports_out[f].add(stems[tail])
                 imports_in[stems[tail]] += 1
@@ -910,21 +957,24 @@ def _resolve_parent_classes(selected_files: list[Path], all_files: list[Path]) -
     return added
 
 
-# ================================ agent_main ================================
+# ---- agent_main ----
 
 def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict:
     findings: list[dict] = []
+    sources: dict[str, str] = {}
+    endpoint = ""
+    api_key = ""
+    deadline = time.monotonic() + TIME_BUDGET_SECONDS
     try:
         root = _resolve_project_dir(project_dir)
         if root is not None:
             endpoint = _resolve_inference_endpoint(inference_api)
             api_key = os.environ.get("INFERENCE_API_KEY", "")
-            deadline = time.monotonic() + TIME_BUDGET_SECONDS
 
             all_files = list(_iter_contract_files(root))
             ranked = _rank_files_by_signal(all_files)[:MAX_FILES_CONSIDERED]
             selected = ranked[:MAX_FILES_ANALYZED]
-            parents = _resolve_parent_classes(selected, ranked)
+            parents = _resolve_parent_classes(selected, all_files)
             scope_files = selected + [p for p in parents if p not in selected]
 
             sources: dict[str, str] = {}
@@ -947,8 +997,7 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
                             endpoint=endpoint,
                             api_key=api_key,
                             system_prompt=system_prompt,
-                            file_label=relative_path,
-                            source=source,
+                            user_prompt=f"File: {relative_path}\n\n```\n{source}\n```",
                         )
                         futures[future] = (relative_path, per_call_cap)
                 remaining = deadline - time.monotonic()
@@ -980,7 +1029,20 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
         # problem, it does not invalidate the submission.
         pass
 
-    return {"vulnerabilities": _finalize_findings(findings, MAX_FINDINGS)}
+    merged = _cluster_and_merge(findings)
+    reviewed = merged
+    if endpoint:
+        try:
+            reviewed = _skeptic_review_all(
+                merged, sources, endpoint=endpoint, api_key=api_key, deadline=deadline
+            )
+        except Exception:
+            # The skeptic pass is a refinement, never a hard gate: any failure
+            # here falls back to the pre-review merged findings rather than
+            # losing them.
+            reviewed = merged
+
+    return {"vulnerabilities": _rank_and_cap(reviewed, MAX_FINDINGS)}
 
 
 def _resolve_project_dir(project_dir: str | None) -> Path | None:
@@ -1008,16 +1070,21 @@ def _relative_path(path: Path, root: Path) -> str:
 
 
 def _ask_model(
-    *, endpoint: str, api_key: str, system_prompt: str, file_label: str, source: str
+    *,
+    endpoint: str,
+    api_key: str,
+    system_prompt: str,
+    user_prompt: str,
+    timeout: float = REQUEST_TIMEOUT_SECONDS,
+    max_tokens: int = 8000,
 ) -> str:
-    user_prompt = f"File: {file_label}\n\n```\n{source}\n```"
     body = json.dumps(
         {
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "max_tokens": 4000,
+            "max_tokens": max_tokens,
         }
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -1029,7 +1096,7 @@ def _ask_model(
             "x-inference-api-key": api_key,
         },
     )
-    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return payload["choices"][0]["message"]["content"]
 
@@ -1040,6 +1107,17 @@ def _parse_confidence(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return min(1.0, max(0.0, confidence))
+
+
+MAX_CODE_SNIPPET_CHARS = 400
+
+
+def _parse_line(value: object) -> int | None:
+    try:
+        line = int(value)
+    except (TypeError, ValueError):
+        return None
+    return line if line > 0 else None
 
 
 def _parse_findings(raw_reply: str, max_items: int) -> list[dict]:
@@ -1078,13 +1156,22 @@ def _parse_findings(raw_reply: str, max_items: int) -> list[dict]:
                 "severity": severity,
                 "confidence": confidence,
                 "location": str(item.get("location") or "").strip(),
+                "line": _parse_line(item.get("line")),
+                "vulnerable_code_snippet": str(
+                    item.get("vulnerable_code_snippet") or ""
+                ).strip()[:MAX_CODE_SNIPPET_CHARS],
                 "file": "",
             }
         )
     return cleaned
 
 
-def _extract_json_array(raw_reply: str) -> list | None:
+def _extract_json_array(raw_reply: str | None) -> list | None:
+    # A reasoning model can exhaust its token budget thinking and return a
+    # null/non-string content field with finish_reason "length" -- never let
+    # that crash the caller, it's just an empty result for this one call.
+    if not isinstance(raw_reply, str):
+        return None
     text = raw_reply.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -1111,7 +1198,7 @@ def _extract_json_array(raw_reply: str) -> list | None:
     return None
 
 
-# ==================== Phase 4a: similarity-based merge/dedup ====================
+# ---- Phase 4a: similarity-based merge/dedup ----
 
 _STOPWORDS = {
     "the", "and", "for", "that", "this", "with", "from", "are", "was", "can",
@@ -1140,6 +1227,12 @@ def _jaccard_similarity(set_a: set, set_b: set) -> float:
 
 def _findings_similar(a: dict, b: dict) -> bool:
     same_file = a.get("file") == b.get("file")
+    # Same/adjacent line in the same file is almost always the same bug, even
+    # when two passes word it completely differently.
+    if same_file:
+        line_a, line_b = a.get("line"), b.get("line")
+        if line_a is not None and line_b is not None and abs(line_a - line_b) <= 1:
+            return True
     title_sim = _jaccard_similarity(_token_set(a.get("title", "")), _token_set(b.get("title", "")))
     desc_sim = _jaccard_similarity(
         _token_set(a.get("description", "")), _token_set(b.get("description", ""))
@@ -1187,6 +1280,13 @@ def _merge_group(group: list[dict]) -> dict:
             locations.append(loc)
             seen_loc.add(loc_norm)
     combined_location = "; ".join(locations[:3])
+    # Prefer the highest-confidence member's line/snippet; fall back to the
+    # first group member that actually has one (a specialist pass with a
+    # weaker prompt for this data may have left it blank).
+    best_line = next((v.get("line") for v in group if v.get("line") is not None), None)
+    best_snippet = next(
+        (v.get("vulnerable_code_snippet") for v in group if v.get("vulnerable_code_snippet")), ""
+    )
     all_sentences: list[str] = []
     seen_sentences: set = set()
     for v in group:
@@ -1223,6 +1323,8 @@ def _merge_group(group: list[dict]) -> dict:
         "severity": best_severity,
         "confidence": best_confidence,
         "location": combined_location,
+        "line": best_line,
+        "vulnerable_code_snippet": best_snippet,
         "file": best.get("file", ""),
     }
 
@@ -1248,7 +1350,7 @@ def _cluster_findings(vulns: list[dict]) -> list[list[dict]]:
     return clusters
 
 
-# ==================== Phase 4b: rule-based scoring + final cap ====================
+# ---- Phase 4b: rule-based scoring + final cap ----
 
 FP_TYPE_PATTERNS = [
     ("resource exhaustion", -2.0), ("token ordering / direction", -1.5), ("cross-language evm", -1.0),
@@ -1275,31 +1377,25 @@ FP_TITLE_KEYWORDS = [
     ("onlyrole", -2.0), ("privileged function", -2.0), ("governance attack", -2.0),
     ("timelock bypass", -2.0), ("pauseregistry", -4.0), ("pauser role", -3.0), ("theoretical", -3.0),
     ("hypothetical", -3.0), ("could potentially", -2.0), ("might allow", -1.5),
-    ("may result in", -1.0), ("if the value exceeds", -1.5), ("potential overflow", -1.5),
-    ("could overflow", -1.5), ("could truncate", -1.5), ("generic reentrancy", -2.0),
-    ("standard reentrancy", -2.0), ("well-known pattern", -1.5), ("common vulnerability", -1.0),
-    ("best practice", -1.0),
+    ("may result in", -1.0), ("potential overflow", -1.5), ("could overflow", -1.5),
+    ("generic reentrancy", -2.0), ("standard reentrancy", -2.0), ("well-known pattern", -1.5),
+    ("common vulnerability", -1.0), ("best practice", -1.0),
 ]
 TP_TITLE_KEYWORDS = [
     ("drain", 3.0), ("steal", 3.0), ("theft", 3.0), ("fund loss", 3.0), ("loss of funds", 3.0),
     ("extract value", 2.5), ("permissionless", 2.0), ("callable by anyone", 2.0), ("front-run", 2.0),
     ("double count", 2.0), ("missing update", 2.0), ("state not updated", 2.0),
-    ("silent failure", 1.5), ("wrong variable", 2.0), ("missing reentrancy guard", 2.0),
-    ("permanently lost", 2.0), ("locked in contract", 2.0), ("not zeroed", 2.0),
-    ("not decremented", 2.0), ("not reset", 2.0), ("wrong recipient", 2.0), ("id collision", 2.0),
-    ("anyone can call", 2.0), ("avoid paying", 2.0), ("unvalidated", 2.0), ("not validated", 1.5),
-    ("stale rate", 1.5), ("stale snapshot", 1.5), ("unconsumed approval", 2.0),
-    ("leftover spender", 2.0), ("stuck native", 2.0), ("missing receive", 2.0), ("fee skipped", 2.0),
-    ("fee bypass", 2.0), ("delegated payout", 2.0), ("integration mismatch", 1.5),
-    ("downstream consumer", 1.5), ("from any address", 2.0), ("arbitrary from", 2.0),
-    ("refund mismatch", 2.0), ("refund without receipt", 2.0), ("missing modifier", 2.0),
-    ("public state mutation", 1.5), ("manipulable return", 2.0), ("trusts external view", 1.5),
+    ("silent failure", 1.5), ("missing reentrancy guard", 2.0), ("permanently lost", 2.0),
+    ("locked in contract", 2.0), ("not zeroed", 2.0), ("not decremented", 2.0), ("not reset", 2.0),
+    ("wrong recipient", 2.0), ("id collision", 2.0), ("anyone can call", 2.0),
+    ("unvalidated", 2.0), ("not validated", 1.5), ("stale snapshot", 1.5),
+    ("unconsumed approval", 2.0), ("missing receive", 2.0), ("fee bypass", 2.0),
+    ("delegated payout", 2.0), ("integration mismatch", 1.5), ("arbitrary from", 2.0),
+    ("refund mismatch", 2.0), ("missing modifier", 2.0), ("manipulable return", 2.0),
     ("initialization default", 1.5), ("init grants", 1.5), ("no slippage", 2.0),
-    ("no slippage protection", 2.0), ("missing precondition", 2.0), ("stale cache", 1.5),
-    ("uncleared cache", 1.5), ("max approval", 1.5), ("unbounded allowance", 1.5),
-    ("flash-loan spike", 1.5), ("price spike", 1.5), ("init grants max", 1.5),
-    ("stale pointer", 1.5), ("uninitialized loop", 1.5), ("unvalidated token", 1.5),
-    ("address(0) transfer", 1.5), ("zero target", 1.5), ("partial-fill remainder", 1.5),
+    ("missing precondition", 2.0), ("stale cache", 1.5), ("max approval", 1.5),
+    ("unbounded allowance", 1.5), ("price spike", 1.5),
+    ("uninitialized loop", 1.5), ("zero target", 1.5),
 ]
 
 
@@ -1369,6 +1465,13 @@ def _rule_score(finding: dict) -> float:
         score -= 2.0
     elif wc > 80:
         score += 0.5
+
+    # A concrete line number and a quoted code snippet are stronger location
+    # evidence than prose alone -- reward findings that actually have them.
+    if finding.get("line") is not None:
+        score += 0.3
+    if finding.get("vulnerable_code_snippet"):
+        score += 0.3
 
     if re.search(r"\b(function|fn)\s+\w+\(", text):
         score += 0.3
@@ -1444,11 +1547,17 @@ def _rule_score_final(finding: dict) -> float:
     return _rule_score(finding)
 
 
-def _finalize_findings(findings: list[dict], limit: int) -> list[dict]:
+def _cluster_and_merge(findings: list[dict]) -> list[dict]:
     if not findings:
         return []
     clusters = _cluster_findings(findings)
-    merged = [_merge_group(cluster) for cluster in clusters]
+    return [_merge_group(cluster) for cluster in clusters]
+
+
+def _rank_and_cap(findings: list[dict], limit: int) -> list[dict]:
+    if not findings:
+        return []
+    merged = list(findings)
     _post_rank_dampener(merged)
     merged.sort(
         key=lambda v: (-_rule_score_final(v), -len(v.get("description", "")), v.get("title", ""))

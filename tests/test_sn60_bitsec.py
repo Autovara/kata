@@ -1067,7 +1067,9 @@ def test_duel_ignores_legacy_early_stop_env_and_runs_full_grid(tmp_path, monkeyp
     assert not (Path(summary.output_root) / "early_stop.json").exists()
 
 
-def test_duel_runs_candidate_then_king_per_project(tmp_path: Path) -> None:
+def test_duel_scores_candidate_variant_fully_then_king_variant(tmp_path: Path) -> None:
+    # Each variant is scored over all projects as one phase (candidate fully, then
+    # king fully), which keeps the king phase separable so it can be cached.
     keys = ["project-alpha", "project-beta"]
     executed: list[tuple[str, str, int]] = []
 
@@ -1110,10 +1112,10 @@ def test_duel_runs_candidate_then_king_per_project(tmp_path: Path) -> None:
     assert executed == [
         ("candidate", "project-alpha", 1),
         ("candidate", "project-alpha", 2),
-        ("king", "project-alpha", 1),
-        ("king", "project-alpha", 2),
         ("candidate", "project-beta", 1),
         ("candidate", "project-beta", 2),
+        ("king", "project-alpha", 1),
+        ("king", "project-alpha", 2),
         ("king", "project-beta", 1),
         ("king", "project-beta", 2),
     ]
@@ -1145,3 +1147,139 @@ def test_extract_sn60_evaluation_payload_returns_none_without_result() -> None:
     assert extract_sn60_evaluation_payload("just some logs\nno json here") is None
     # a JSON object without a status field is not the scorer result
     assert extract_sn60_evaluation_payload('{"foo": 1}') is None
+
+
+def _counting_duel_hooks():
+    """Hooks that record every execution so tests can assert what actually ran."""
+    calls: list[tuple[str, str, int]] = []
+
+    def execute(context: Sn60ReplicaContext) -> dict[str, object]:
+        calls.append((context.variant_name, context.project_key, context.replica_index))
+        return {
+            "success": True,
+            "report": {"project": context.project_key, "vulnerabilities": [{"title": "v"}]},
+        }
+
+    def evaluate(_context: Sn60ReplicaContext, _report: dict[str, object]) -> dict[str, object]:
+        return {
+            "status": "success",
+            "result": {
+                "result": "PASS",
+                "detection_rate": 1.0,
+                "true_positives": 1,
+                "total_expected": 1,
+                "total_found": 1,
+            },
+        }
+
+    return calls, execute, evaluate
+
+
+def _run_cached_duel(
+    *, tmp_path, king_root, candidate_root, benchmark_path, keys, scoreboard, hooks
+):
+    _calls, execute, evaluate = hooks
+    return run_sn60_bitsec_duel(
+        king_artifact_path=str(king_root),
+        candidate_artifact_path=str(candidate_root),
+        project_keys=keys,
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(benchmark_path.parents[1]),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="cache-commit",
+        execution_hook=execute,
+        evaluation_hook=evaluate,
+        king_scoreboard_path=str(scoreboard),
+    )
+
+
+def test_duel_caches_king_and_skips_rerun_on_second_duel(tmp_path: Path) -> None:
+    keys = ["project-alpha", "project-beta"]
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = _make_multi_project_benchmark(sandbox_root, keys)
+    king_root = tmp_path / "king"
+    candidate_root = tmp_path / "candidate"
+    write_bundle(king_root, agent_source="def agent_main():\n    return {}\n")
+    write_bundle(candidate_root, agent_source="def agent_main():\n    return {}\n")
+    scoreboard = tmp_path / "king_scoreboard.json"
+
+    hooks = _counting_duel_hooks()
+    calls = hooks[0]
+    first = _run_cached_duel(
+        tmp_path=tmp_path, king_root=king_root, candidate_root=candidate_root,
+        benchmark_path=benchmark_path, keys=keys, scoreboard=scoreboard, hooks=hooks,
+    )
+    # First duel: the king is uncached, so it runs on every project.
+    assert {project for variant, project, _ in calls if variant == "king"} == set(keys)
+    assert scoreboard.exists()
+
+    calls.clear()
+    second = _run_cached_duel(
+        tmp_path=tmp_path, king_root=king_root, candidate_root=candidate_root,
+        benchmark_path=benchmark_path, keys=keys, scoreboard=scoreboard, hooks=hooks,
+    )
+    # Second duel: the king is served from cache (not re-run); the candidate still runs.
+    assert [c for c in calls if c[0] == "king"] == []
+    assert {project for variant, project, _ in calls if variant == "candidate"} == set(keys)
+    # The cached king score is identical to the freshly-computed one.
+    assert second.king.aggregated_score == first.king.aggregated_score
+    assert second.king.true_positives == first.king.true_positives
+    assert second.king.total_expected == first.king.total_expected
+
+
+def test_duel_king_cache_recomputes_when_king_changes(tmp_path: Path) -> None:
+    keys = ["project-alpha"]
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = _make_multi_project_benchmark(sandbox_root, keys)
+    king_root = tmp_path / "king"
+    candidate_root = tmp_path / "candidate"
+    write_bundle(king_root, agent_source="def agent_main():\n    return {}\n")
+    write_bundle(candidate_root, agent_source="def agent_main():\n    return {}\n")
+    scoreboard = tmp_path / "king_scoreboard.json"
+
+    hooks = _counting_duel_hooks()
+    calls = hooks[0]
+    _run_cached_duel(
+        tmp_path=tmp_path, king_root=king_root, candidate_root=candidate_root,
+        benchmark_path=benchmark_path, keys=keys, scoreboard=scoreboard, hooks=hooks,
+    )
+
+    # A new king (different bundle hash) must not reuse the old king's cached score.
+    write_bundle(king_root, agent_source="def agent_main():\n    return {'changed': True}\n")
+    calls.clear()
+    _run_cached_duel(
+        tmp_path=tmp_path, king_root=king_root, candidate_root=candidate_root,
+        benchmark_path=benchmark_path, keys=keys, scoreboard=scoreboard, hooks=hooks,
+    )
+    assert {project for variant, project, _ in calls if variant == "king"} == set(keys)
+
+
+def test_duel_king_cache_recomputes_when_benchmark_changes(tmp_path: Path) -> None:
+    keys = ["project-alpha"]
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = _make_multi_project_benchmark(sandbox_root, keys)
+    king_root = tmp_path / "king"
+    candidate_root = tmp_path / "candidate"
+    write_bundle(king_root, agent_source="def agent_main():\n    return {}\n")
+    write_bundle(candidate_root, agent_source="def agent_main():\n    return {}\n")
+    scoreboard = tmp_path / "king_scoreboard.json"
+
+    hooks = _counting_duel_hooks()
+    calls = hooks[0]
+    _run_cached_duel(
+        tmp_path=tmp_path, king_root=king_root, candidate_root=candidate_root,
+        benchmark_path=benchmark_path, keys=keys, scoreboard=scoreboard, hooks=hooks,
+    )
+
+    # An edited benchmark (different content hash) must force the king to recompute.
+    benchmark_path.write_text(
+        json.dumps([{"project_id": "project-alpha", "vulnerabilities": [{"title": "new"}]}]) + "\n",
+        encoding="utf-8",
+    )
+    calls.clear()
+    _run_cached_duel(
+        tmp_path=tmp_path, king_root=king_root, candidate_root=candidate_root,
+        benchmark_path=benchmark_path, keys=keys, scoreboard=scoreboard, hooks=hooks,
+    )
+    assert {project for variant, project, _ in calls if variant == "king"} == set(keys)

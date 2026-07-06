@@ -14,6 +14,12 @@ from statistics import fmean
 from typing import Callable, NamedTuple, TypedDict
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files, write_bundle_files
+from kata.evaluators.king_cache import (
+    KingScoreboard,
+    benchmark_version_key,
+    load_king_scoreboard,
+    save_king_scoreboard,
+)
 from kata.provenance import sha256_directory
 from kata.util import write_json
 
@@ -213,6 +219,7 @@ def run_sn60_bitsec_duel(
     eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
     execution_hook: Sn60ExecutionHook | None = None,
     evaluation_hook: Sn60EvaluationHook | None = None,
+    king_scoreboard_path: str | None = None,
 ) -> Sn60DuelSummary:
     if not project_keys:
         raise ValueError("SN60 duel requires at least one project key.")
@@ -244,34 +251,45 @@ def run_sn60_bitsec_duel(
     king_hash = hash_bundle_root(king_root)
     candidate_hash = hash_bundle_root(candidate_root)
 
-    def _run_phase(
-        keys: list[str],
-        variant_name: str,
-        artifact_root: Path,
-    ) -> list[Sn60ReplicaResult]:
-        return run_variant_replicas(
-            run_id=run_id,
-            run_root=run_root,
-            variant_name=variant_name,
-            artifact_root=artifact_root,
-            project_keys=keys,
-            replicas_per_project=replicas_per_project,
-            sandbox_source=source,
-            execution_hook=resolved_execution_hook,
-            evaluation_hook=resolved_evaluation_hook,
-            eval_max_vulns=eval_max_vulns,
+    # The king's score is stable for a fixed king + benchmark, so route it through
+    # the per-project cache when a scoreboard is configured: an uncached project
+    # runs the king once and stores it; a cached project reuses it without paying
+    # for inference. The candidate always runs fresh.
+    king_execution_hook = resolved_execution_hook
+    king_evaluation_hook = resolved_evaluation_hook
+    if king_scoreboard_path:
+        king_execution_hook, king_evaluation_hook = build_cached_king_hooks(
+            scoreboard_path=king_scoreboard_path,
+            king_hash=king_hash,
+            benchmark_version=benchmark_version_key(source.scorer_version, source.benchmark_sha256),
+            base_execution_hook=resolved_execution_hook,
+            base_evaluation_hook=resolved_evaluation_hook,
         )
 
-    candidate_results: list[Sn60ReplicaResult] = []
-    king_results: list[Sn60ReplicaResult] = []
-    for project_key in project_keys:
-        project_candidate_results = _run_phase(
-            [project_key],
-            "candidate",
-            candidate_root,
-        )
-        candidate_results.extend(project_candidate_results)
-        king_results.extend(_run_phase([project_key], "king", king_root))
+    candidate_results = score_variant_on_projects(
+        run_id=run_id,
+        run_root=run_root,
+        variant_name="candidate",
+        artifact_root=candidate_root,
+        project_keys=project_keys,
+        replicas_per_project=replicas_per_project,
+        sandbox_source=source,
+        execution_hook=resolved_execution_hook,
+        evaluation_hook=resolved_evaluation_hook,
+        eval_max_vulns=eval_max_vulns,
+    )
+    king_results = score_variant_on_projects(
+        run_id=run_id,
+        run_root=run_root,
+        variant_name="king",
+        artifact_root=king_root,
+        project_keys=project_keys,
+        replicas_per_project=replicas_per_project,
+        sandbox_source=source,
+        execution_hook=king_execution_hook,
+        evaluation_hook=king_evaluation_hook,
+        eval_max_vulns=eval_max_vulns,
+    )
     ordered_executed_keys = list(project_keys)
 
     king_summary = summarize_variant(
@@ -302,7 +320,7 @@ def run_sn60_bitsec_duel(
     return summary
 
 
-def run_variant_replicas(
+def score_variant_on_projects(
     *,
     run_id: str,
     run_root: Path,
@@ -314,12 +332,11 @@ def run_variant_replicas(
     execution_hook: Sn60ExecutionHook,
     evaluation_hook: Sn60EvaluationHook,
     eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
-    stop_on_invalid: bool = False,
 ) -> list[Sn60ReplicaResult]:
     """Run every replica for one variant over the given projects.
 
-    Returns the flat replica results (unsummarized) so callers can run projects in
-    phases and summarize the combined set once.
+    Returns the flat replica results (unsummarized) so callers can score king and
+    candidate independently and summarize each set once.
     """
     variant_root = run_root / variant_name
     replica_results: list[Sn60ReplicaResult] = []
@@ -350,43 +367,55 @@ def run_variant_replicas(
             write_json(Path(context.evaluation_path), evaluation_payload)
             replica_result = build_replica_result(context, report_payload, evaluation_payload)
             replica_results.append(replica_result)
-            if stop_on_invalid and replica_result.evaluation_status != "success":
-                return replica_results
 
     return replica_results
 
 
-def evaluate_variant(
+def build_cached_king_hooks(
     *,
-    run_id: str,
-    run_root: Path,
-    variant_name: str,
-    artifact_root: Path,
-    project_keys: list[str],
-    replicas_per_project: int,
-    sandbox_source: Sn60SandboxSource,
-    execution_hook: Sn60ExecutionHook,
-    evaluation_hook: Sn60EvaluationHook,
-    eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
-) -> Sn60VariantSummary:
-    replica_results = run_variant_replicas(
-        run_id=run_id,
-        run_root=run_root,
-        variant_name=variant_name,
-        artifact_root=artifact_root,
-        project_keys=project_keys,
-        replicas_per_project=replicas_per_project,
-        sandbox_source=sandbox_source,
-        execution_hook=execution_hook,
-        evaluation_hook=evaluation_hook,
-        eval_max_vulns=eval_max_vulns,
+    scoreboard_path: str | Path,
+    king_hash: str,
+    benchmark_version: str,
+    base_execution_hook: Sn60ExecutionHook,
+    base_evaluation_hook: Sn60EvaluationHook,
+) -> tuple[Sn60ExecutionHook, Sn60EvaluationHook]:
+    """Wrap the king's hooks so cached projects skip inference entirely.
+
+    On a cache hit both hooks return the stored payloads (no Docker exec, no
+    scorer call); the surrounding scoring path still materializes identical
+    ``report.json`` / ``evaluation.json`` artifacts in the run. On a miss the
+    base hooks run and the payloads are recorded for future rounds.
+    """
+    board: KingScoreboard = load_king_scoreboard(
+        scoreboard_path,
+        king_hash=king_hash,
+        benchmark_version=benchmark_version,
     )
-    return summarize_variant(
-        variant_name=variant_name,
-        artifact_root=artifact_root,
-        artifact_hash=hash_bundle_root(artifact_root),
-        replica_results=replica_results,
-    )
+
+    def execution_hook(context: Sn60ReplicaContext) -> dict[str, object]:
+        cached = board.cached_run(context.project_key, context.replica_index)
+        if cached is not None:
+            return dict(cached["report"])  # type: ignore[arg-type]
+        return base_execution_hook(context)
+
+    def evaluation_hook(
+        context: Sn60ReplicaContext,
+        report_payload: dict[str, object],
+    ) -> dict[str, object]:
+        cached = board.cached_run(context.project_key, context.replica_index)
+        if cached is not None:
+            return dict(cached["evaluation"])  # type: ignore[arg-type]
+        evaluation_payload = base_evaluation_hook(context, report_payload)
+        board.record_run(
+            context.project_key,
+            context.replica_index,
+            report_payload,
+            evaluation_payload,
+        )
+        save_king_scoreboard(scoreboard_path, board)
+        return evaluation_payload
+
+    return execution_hook, evaluation_hook
 
 
 def resolve_sn60_sandbox_source(

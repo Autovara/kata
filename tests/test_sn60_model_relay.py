@@ -221,6 +221,28 @@ def _post(url: str, body: bytes, headers: dict[str, str] | None = None):
         )
 
 
+def test_inference_budget_refuses_agent_after_call_limit(relay_and_upstream, monkeypatch) -> None:
+    from kata.sn60_model_relay import AGENT_BUDGET
+
+    base, upstream = relay_and_upstream
+    AGENT_BUDGET.reset()
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "2")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")  # isolate the call-count cap
+    body = json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode()
+
+    for _ in range(2):
+        status, _, _ = _post(base + "/inference", body)
+        assert status == 200
+
+    seen = len(upstream.records)
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/inference", body)
+    assert excinfo.value.code == 429
+    # The refused call never reached upstream, so it cost nothing.
+    assert len(upstream.records) == seen
+    AGENT_BUDGET.reset()
+
+
 def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) -> None:
     base, upstream = relay_and_upstream
     body = json.dumps(

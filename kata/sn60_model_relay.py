@@ -56,6 +56,17 @@ DEFAULT_PRICE_OUTPUT_PER_M = 1.00
 # stops at finish_reason=stop long before it, so cost tracks actual usage.
 DEFAULT_MAX_OUTPUT_TOKENS = 32000
 
+# Per-agent inference budget. The validator funds every token, and candidates
+# submit arbitrary agents, so each agent run gets a hard cap: once it exhausts
+# its output-token OR call budget for the current problem it is refused further
+# inference and must finalize with what it found. This bounds cost per agent and
+# blocks a greedy/looping agent from draining the validator's funds. Runs are
+# serial (one agent container at a time), so the budget window is keyed by the
+# calling container's address and reset whenever a new container starts calling.
+# 0 disables a limit. Override with KATA_RELAY_AGENT_TOKEN_BUDGET / _CALL_BUDGET.
+DEFAULT_AGENT_TOKEN_BUDGET = 60000
+DEFAULT_AGENT_CALL_BUDGET = 8
+
 # Only this path carries a model to overwrite; everything else is forwarded as-is.
 INFERENCE_PATH = "/inference"
 # Answered by the relay itself so operators can prove the process is up without
@@ -134,6 +145,27 @@ def resolve_max_output_tokens() -> int:
     except ValueError:
         return DEFAULT_MAX_OUTPUT_TOKENS
     return parsed if parsed >= 0 else DEFAULT_MAX_OUTPUT_TOKENS
+
+
+def _resolve_budget(env_var: str, default: int) -> int:
+    value = os.environ.get(env_var)
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def resolve_agent_token_budget() -> int:
+    """Max output tokens one agent may generate per problem (0 = unlimited)."""
+    return _resolve_budget("KATA_RELAY_AGENT_TOKEN_BUDGET", DEFAULT_AGENT_TOKEN_BUDGET)
+
+
+def resolve_agent_call_budget() -> int:
+    """Max inference calls one agent may make per problem (0 = unlimited)."""
+    return _resolve_budget("KATA_RELAY_AGENT_CALL_BUDGET", DEFAULT_AGENT_CALL_BUDGET)
 
 
 def resolve_timeout() -> float:
@@ -260,6 +292,51 @@ class CostMeter:
 COST_METER = CostMeter()
 
 
+class AgentBudget:
+    """Per-agent inference budget, keyed by the calling container's address.
+
+    Scoring is serial (one agent container runs at a time), and each problem is a
+    fresh container, so a change of source address marks a new agent/problem and
+    resets the window. Enforcement fails safe: it can only ever cap *more* spend
+    (e.g. if two runs share an address), never less.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._source: str | None = None
+        self._tokens = 0
+        self._calls = 0
+
+    def allow(self, source: str) -> tuple[bool, str | None]:
+        with self._lock:
+            if source != self._source:
+                self._source = source
+                self._tokens = 0
+                self._calls = 0
+            max_calls = resolve_agent_call_budget()
+            max_tokens = resolve_agent_token_budget()
+            if max_calls and self._calls >= max_calls:
+                return False, f"inference call budget ({max_calls}) exhausted for this problem"
+            if max_tokens and self._tokens >= max_tokens:
+                return False, f"output-token budget ({max_tokens}) exhausted for this problem"
+            return True, None
+
+    def record(self, source: str, output_tokens: int) -> None:
+        with self._lock:
+            if source == self._source:
+                self._tokens += output_tokens
+                self._calls += 1
+
+    def reset(self) -> None:
+        with self._lock:
+            self._source = None
+            self._tokens = 0
+            self._calls = 0
+
+
+AGENT_BUDGET = AgentBudget()
+
+
 def pin_model_in_body(body: bytes, model: str, max_output_tokens: int = 0) -> bytes:
     """Force the OpenAI-compatible request body onto ``model``.
 
@@ -322,6 +399,14 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+
+        # Enforce the per-agent inference budget before spending upstream tokens.
+        source = self.client_address[0] if self.client_address else "?"
+        allowed, reason = AGENT_BUDGET.allow(source)
+        if not allowed:
+            self._send_json(429, {"status": "error", "detail": f"inference budget: {reason}"})
+            return
+
         body = pin_model_in_body(body, resolve_pinned_model(), resolve_max_output_tokens())
 
         headers = {
@@ -340,7 +425,9 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
             with urlopen(request, timeout=resolve_timeout()) as response:
                 response_body = response.read()
                 if is_inference and 200 <= response.status < 300:
+                    _, output_tokens, _ = extract_usage(response_body)
                     self._meter(response_body)
+                    AGENT_BUDGET.record(source, output_tokens)
                 self._relay_response(response.status, response.headers.items(), response_body)
         except HTTPError as error:
             # Upstream returned a real HTTP error (4xx/5xx); pass it through verbatim.

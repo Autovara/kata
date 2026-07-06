@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "statxc-20260706-01",
+  "created_at": "2026-07-06T16:00:58.140986+00:00",
+  "author": "statxc",
+  "title": "Multi-pass triage with cross-file context, similarity dedup, and skeptical verification",
+  "notes": "Follow-up to statxc-20260705-01 (closed kata:losing, 0/31 true positives). Adds a scorer-informed prompt fix (explicitly names the exact file and function in title/description text, since the real matcher extracts FileHints/FunctionHints from that text via regex, not from the structured file/function JSON keys) and a second-pass verifier that re-examines each surviving finding against the real source before output, demoting (not deleting) weak ones so detection score is not sacrificed for precision. Also excludes interfaces/ directories from primary scanning (confirmed by live verification-pass testing that findings reported against pure interface files are never real, and independently converged upon by the current king's own design).",
+  "subnet_pack": "sn60__bitsec"
+}

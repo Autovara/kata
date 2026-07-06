@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "jaso0n0818-20260706-01",
+  "created_at": "2026-07-06T15:30:00+00:00",
+  "author": "jaso0n0818",
+  "title": "Multi-language depth-first matcher miner (Solidity + Rust + Move + Cairo + Go)",
+  "notes": "Extends the king's proven matcher-shaped depth-first design with per-language file discovery, allocation and prompting so CosmWasm/Rust, Move, and Cairo projects in the curated benchmark are no longer structurally invisible to a Solidity-only scanner, plus threaded concurrency and a higher finding ceiling to use more of the platform's recall budget."
+}

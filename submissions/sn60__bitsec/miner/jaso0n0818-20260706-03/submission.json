@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "jaso0n0818-20260706-03",
+  "created_at": "2026-07-06T20:00:00+00:00",
+  "author": "jaso0n0818",
+  "title": "King-superset reliability-first multi-language matcher miner",
+  "notes": "Iteration on jaso0n0818-20260706-02 (PR #68), which lost the round on the recall/true-positive signal. The comparator (kata/challenge.py::sn60_variant_rank) reduces to more-true-positives-wins, then higher-precision on a tie, so this version is a strict SUPERSET of the king: it locks in the king's exact top-4-Solidity depth-first floor first, then spends only the remaining wall-clock budget on the king's structural blind spots (non-EVM Rust/Move/Cairo files, where the king scores a guaranteed zero, ahead of 5th+ Solidity files). It runs strictly sequentially with a per-call deadline guard instead of the prior thread pool, whose concurrent requests to the slow shared inference proxy on a 0.25-CPU container risked timeouts that silently dropped even the Solidity findings the king reliably banks. Per-file findings stay at the king's tight cap of 2 to protect the precision tiebreak, while the total ceiling stays generous so a real extra true positive is never truncated."
+}

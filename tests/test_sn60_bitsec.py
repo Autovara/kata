@@ -938,7 +938,9 @@ def test_default_execution_hook_asserts_internal_network_and_uses_endpoint(
     # The internal-network guarantee runs before the agent container starts.
     assert any(cmd[:3] == ["docker", "network", "inspect"] for cmd in calls)
     docker_run = next(cmd for cmd in calls if cmd[:2] == ["docker", "run"])
-    assert "INFERENCE_API=http://secret-proxy:9000" in docker_run
+    # INFERENCE_API carries the per-problem budget token: <base>/j/<token>
+    inference_env = next(a for a in docker_run if a.startswith("INFERENCE_API="))
+    assert inference_env.startswith("INFERENCE_API=http://secret-proxy:9000/j/")
 
 
 def test_default_execution_hook_refuses_non_internal_network(

@@ -244,6 +244,32 @@ def test_inference_budget_refuses_agent_after_call_limit(relay_and_upstream, mon
     AGENT_BUDGET.reset()
 
 
+def test_inference_budget_is_per_problem_token_not_global(relay_and_upstream, monkeypatch) -> None:
+    # The bug this guards against: a shared source address made the budget cap the
+    # whole round. Keying on the per-problem token, each problem gets its own budget.
+    base, upstream = relay_and_upstream
+    AGENT_BUDGET.reset()
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "2")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")
+    body = json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode()
+
+    # Problem token AAA: 2 calls served, 3rd refused.
+    for _ in range(2):
+        status, _, _ = _post(base + "/j/AAA/inference", body)
+        assert status == 200
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/j/AAA/inference", body)
+    assert excinfo.value.code == 429
+
+    # A DIFFERENT problem token (BBB) gets its own fresh budget — first call served.
+    status, _, _ = _post(base + "/j/BBB/inference", body)
+    assert status == 200
+
+    # Upstream sees /inference (token stripped), never /j/<token>/inference.
+    assert upstream.records and all(r["path"] == "/inference" for r in upstream.records)
+    AGENT_BUDGET.reset()
+
+
 def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) -> None:
     base, upstream = relay_and_upstream
     body = json.dumps(

@@ -64,13 +64,11 @@ DEFAULT_MAX_OUTPUT_TOKENS = 32000
 # serial (one agent container at a time), so the budget window is keyed by the
 # calling container's address and reset whenever a new container starts calling.
 # 0 disables a limit. Override with KATA_RELAY_AGENT_TOKEN_BUDGET / _CALL_BUDGET.
-# NOTE: the per-agent budget is keyed by the caller's source address, but agents
-# reach the relay across a gateway so they all share one source — which made the
-# budget cap the WHOLE round instead of per-problem. Disabled (0 = off) until it
-# is re-keyed per problem (e.g. a per-problem token in the request path). The
-# per-call max_tokens clamp still bounds each call.
-DEFAULT_AGENT_TOKEN_BUDGET = 0
-DEFAULT_AGENT_CALL_BUDGET = 0
+# Per-agent budget, keyed per problem via the `/j/<token>/inference` path Kata
+# sets (see AgentBudget). Each agent may make at most this many calls / output
+# tokens per problem before the relay refuses further calls (HTTP 429).
+DEFAULT_AGENT_TOKEN_BUDGET = 24000
+DEFAULT_AGENT_CALL_BUDGET = 3
 
 # Only this path carries a model to overwrite; everything else is forwarded as-is.
 INFERENCE_PATH = "/inference"
@@ -298,24 +296,25 @@ COST_METER = CostMeter()
 
 
 class AgentBudget:
-    """Per-agent inference budget, keyed by the calling container's address.
+    """Per-agent inference budget, keyed by the per-problem token Kata embeds in
+    the inference URL (``/j/<token>/inference``).
 
-    Scoring is serial (one agent container runs at a time), and each problem is a
-    fresh container, so a change of source address marks a new agent/problem and
-    resets the window. Enforcement fails safe: it can only ever cap *more* spend
-    (e.g. if two runs share an address), never less.
+    Scoring is serial (one agent container runs at a time) and each problem gets a
+    distinct token, so a change of token marks a new agent/problem and resets the
+    window. Keying on the token (not the network source) is what makes this correct
+    even though every agent reaches the relay from the same gateway address.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._source: str | None = None
+        self._key: str | None = None
         self._tokens = 0
         self._calls = 0
 
-    def allow(self, source: str) -> tuple[bool, str | None]:
+    def allow(self, key: str) -> tuple[bool, str | None]:
         with self._lock:
-            if source != self._source:
-                self._source = source
+            if key != self._key:
+                self._key = key
                 self._tokens = 0
                 self._calls = 0
             max_calls = resolve_agent_call_budget()
@@ -326,15 +325,15 @@ class AgentBudget:
                 return False, f"output-token budget ({max_tokens}) exhausted for this problem"
             return True, None
 
-    def record(self, source: str, output_tokens: int) -> None:
+    def record(self, key: str, output_tokens: int) -> None:
         with self._lock:
-            if source == self._source:
+            if key == self._key:
                 self._tokens += output_tokens
                 self._calls += 1
 
     def reset(self) -> None:
         with self._lock:
-            self._source = None
+            self._key = None
             self._tokens = 0
             self._calls = 0
 
@@ -395,7 +394,19 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
     # -- forwarding -----------------------------------------------------------
     def _forward(self, method: str) -> None:
         body = self._read_body()
-        is_inference = method == "POST" and self._path_without_query() == INFERENCE_PATH
+        path = self._path_without_query()
+        query = self.path[len(path):]
+        # Agents call `<INFERENCE_API>/inference`, and Kata sets INFERENCE_API to
+        # `.../j/<token>` so each problem carries its own budget key. Accept both
+        # the tokenized path and a bare /inference (which shares a "default" key).
+        budget_key = "default"
+        upstream_path = self.path
+        if method == "POST" and path.startswith("/j/") and path.endswith(INFERENCE_PATH):
+            budget_key = path[len("/j/") : -len(INFERENCE_PATH)].strip("/") or "default"
+            upstream_path = INFERENCE_PATH + query
+            is_inference = True
+        else:
+            is_inference = method == "POST" and path == INFERENCE_PATH
         if not is_inference:
             self._send_json(
                 404,
@@ -406,9 +417,9 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
             )
             return
 
-        # Enforce the per-agent inference budget before spending upstream tokens.
-        source = self.client_address[0] if self.client_address else "?"
-        allowed, reason = AGENT_BUDGET.allow(source)
+        # Enforce the per-agent (per-problem) inference budget before spending
+        # upstream tokens.
+        allowed, reason = AGENT_BUDGET.allow(budget_key)
         if not allowed:
             self._send_json(429, {"status": "error", "detail": f"inference budget: {reason}"})
             return
@@ -420,7 +431,7 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
             for key, value in self.headers.items()
             if key.lower() not in _SKIP_REQUEST_HEADERS
         }
-        url = resolve_upstream() + self.path
+        url = resolve_upstream() + upstream_path
         request = Request(
             url,
             data=body if body else None,
@@ -433,7 +444,7 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
                 if is_inference and 200 <= response.status < 300:
                     _, output_tokens, _ = extract_usage(response_body)
                     self._meter(response_body)
-                    AGENT_BUDGET.record(source, output_tokens)
+                    AGENT_BUDGET.record(budget_key, output_tokens)
                 self._relay_response(response.status, response.headers.items(), response_body)
         except HTTPError as error:
             # Upstream returned a real HTTP error (4xx/5xx); pass it through verbatim.

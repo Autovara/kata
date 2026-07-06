@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "codevector96-20260706-02",
+  "created_at": "2026-07-06T08:43:01.395938+00:00",
+  "author": "codevector96",
+  "title": "Depth-first self-critiquing bitsec auditor",
+  "notes": "Deep two-pass auditor: on the highest-value contracts it runs a detect pass then a self-critique pass that confirms real exploitable issues and hunts for missed ones, concurrently across targets. Maximizes both recall and precision on the contracts curated issues actually live in. Findings are normalized to the semantic matcher shape (file, contract, function, mechanism, impact)."
+}

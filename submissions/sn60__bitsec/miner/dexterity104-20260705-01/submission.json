@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "dexterity104-20260705-01",
+  "created_at": "2026-07-05T00:00:00+00:00",
+  "author": "Dexterity104",
+  "title": "Breadth-then-depth whole-contract audit with cross-contract context",
+  "notes": "Covers many more contracts than the incumbent (breadth-first over ranked files, then depth on large ones), feeds each analysis richer imported-contract context, and emits a small set of precise matcher-shaped findings per contract localized to exact contract.function with mechanism + impact."
+}

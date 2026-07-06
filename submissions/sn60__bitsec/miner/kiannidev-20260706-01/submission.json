@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "kiannidev-20260706-01",
+  "created_at": "2026-07-06T14:15:48.384369+00:00",
+  "author": "kiannidev",
+  "title": "Two-pass self-critiquing depth-first bitsec miner",
+  "notes": "Detect then critique on top contracts concurrently. Extends merged PR #47 matcher shape with recall-focused second pass, src/-aware discovery, and cross-file inheritance context.",
+  "subnet_pack": "sn60__bitsec"
+}

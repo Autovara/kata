@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "codevector96-20260706-01",
+  "created_at": "2026-07-06T08:16:37.324589+00:00",
+  "author": "codevector96",
+  "title": "Wide-coverage triage-ranked bitsec auditor",
+  "notes": "Two-phase auditor: model-guided triage re-ranks suspicious contracts, then concurrent whole-contract deep audits cover far more code than a sequential agent within the sandbox budget. Findings are normalized to the semantic matcher shape (file, contract, function, mechanism, impact)."
+}

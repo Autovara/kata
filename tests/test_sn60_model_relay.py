@@ -192,6 +192,10 @@ class _RecordingUpstream(BaseHTTPRequestHandler):
 def relay_and_upstream(monkeypatch):
     COST_METER.reset()  # process-wide meter; keep each test independent
     AGENT_BUDGET.reset()  # process-wide per-agent budget; isolate each test
+    # Default the budget off so it doesn't interfere with non-budget tests; the
+    # budget tests set their own limits explicitly.
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "0")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
     upstream.records = []  # type: ignore[attr-defined]
     upstream.daemon_threads = True

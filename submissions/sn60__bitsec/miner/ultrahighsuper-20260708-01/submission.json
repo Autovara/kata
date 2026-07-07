@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "ultrahighsuper-20260708-01",
+  "created_at": "2026-07-08T00:00:00+00:00",
+  "author": "ultrahighsuper",
+  "title": "Category-guided triage with function-validated deep audit",
+  "notes": "Risk-ranks the project's own contracts, runs a taxonomy-guided triage call plus up to two line-numbered deep-audit calls within the 3-call/24k-token budget, and normalizes findings against real parsed symbols for precision. Non-empty by construction."
+}

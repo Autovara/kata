@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "davion-knight-20260707-02",
+  "created_at": "2026-07-07T16:39:38.315512+00:00",
+  "author": "davion-knight",
+  "title": "Hybrid depth-then-breadth miner",
+  "notes": "Self-contained stdlib agent. Spends 2 of its 3 inference calls on full-depth audits of the top-ranked contracts (whole-file context, no truncation) and 1 call on a batched breadth pass over the next tier, staying inside the 3-call/24k-token per-problem budget. Emits matcher-shaped high/critical findings; degrades gracefully on 429/errors.",
+  "subnet_pack": "sn60__bitsec"
+}

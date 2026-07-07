@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "dexterity104-20260706-02",
+  "created_at": "2026-07-06T00:00:00+00:00",
+  "author": "Dexterity104",
+  "title": "Budget-aware batched audit: whole-codebase coverage in 3 calls",
+  "notes": "Designed for the per-problem inference budget (3 calls / 24k output tokens). Packs several ranked contracts into each of the 3 calls so it covers far more of the codebase than a one-contract-per-call agent, audits each batch against a high/critical checklist, stops cleanly on HTTP 429, and emits a few confidence-ranked, matcher-shaped findings."
+}

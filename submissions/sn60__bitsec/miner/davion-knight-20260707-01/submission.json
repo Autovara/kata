@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "davion-knight-20260707-01",
+  "created_at": "2026-07-07T13:01:05.880267+00:00",
+  "author": "davion-knight",
+  "title": "Budget-aware batched breadth miner",
+  "notes": "Self-contained stdlib agent. Ranks Solidity/Vyper sources by risk, then audits them in up to 3 batched inference calls (respecting the 3-call/24k-token per-problem budget) to cover more contracts per problem. Emits matcher-shaped high/critical findings; degrades gracefully on 429/errors.",
+  "subnet_pack": "sn60__bitsec"
+}

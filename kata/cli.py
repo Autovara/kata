@@ -5,8 +5,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from kata.challenge import (
+    DEFAULT_REPLICAS_PER_PROJECT,
+    hash_bundle_root,
     load_challenge_summary,
     render_challenge_summary,
+    run_sn60_round,
 )
 from kata.lane_state import (
     LANE_METADATA_SCHEMA_VERSION,
@@ -30,6 +33,7 @@ from kata.submissions import (
     render_submission_json,
     render_submission_validation,
     render_submission_verification,
+    resolve_sn60_project_keys,
     validate_submission,
     verify_submission_result,
 )
@@ -356,6 +360,58 @@ def build_parser() -> argparse.ArgumentParser:
     )
     submission_decide.set_defaults(handler=handle_submission_decide)
 
+    round_cmd = subparsers.add_parser(
+        "round",
+        help="Score the king against several candidates on the same projects and rank them.",
+    )
+    round_cmd.add_argument(
+        "--king-path",
+        required=True,
+        help="Path to the current lane king artifact.",
+    )
+    round_cmd.add_argument(
+        "--candidate",
+        action="append",
+        required=True,
+        metavar="ID=PATH",
+        help="A competing candidate as '<submission-id>=<artifact-path>'. Repeat per entrant.",
+    )
+    round_cmd.add_argument(
+        "--sn60-project-key",
+        action="append",
+        default=None,
+        help=(
+            "SN60 project key to score every entrant on. Repeat per project. When "
+            "omitted, the round secretly samples this round's problems from the "
+            "benchmark (KATA_SN60_PROJECT_SAMPLE_SIZE / _SECRET)."
+        ),
+    )
+    round_cmd.add_argument(
+        "--king-scoreboard",
+        default=None,
+        help="Optional path to the persistent per-project king score cache.",
+    )
+    round_cmd.add_argument(
+        "--output-root",
+        default=None,
+        help="Optional base directory for round artifacts. Defaults to ./runs.",
+    )
+    round_cmd.add_argument(
+        "--round-progress-path",
+        default=None,
+        help="Optional path to publish a live per-candidate progress snapshot for the dashboard.",
+    )
+    round_cmd.add_argument("--sn60-replicas-per-project", type=int, default=None)
+    round_cmd.add_argument("--sn60-sandbox-root", default=None)
+    round_cmd.add_argument("--sn60-benchmark-file", default=None)
+    round_cmd.add_argument("--sn60-sandbox-commit", default=None)
+    round_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of text.",
+    )
+    round_cmd.set_defaults(handler=handle_round)
+
     return parser
 
 
@@ -494,6 +550,111 @@ def handle_submission_decide(args: argparse.Namespace) -> int:
         else render_submission_decision(result)
     )
     return 0 if result.action == "merge" else 2
+
+
+def parse_round_candidate(spec: str) -> tuple[str, str]:
+    submission_id, separator, artifact_path = spec.partition("=")
+    if not separator or not submission_id.strip() or not artifact_path.strip():
+        raise SystemExit(f"--candidate must be '<submission-id>=<path>', got: {spec!r}")
+    return submission_id.strip(), artifact_path.strip()
+
+
+def handle_round(args: argparse.Namespace) -> int:
+    candidates = [parse_round_candidate(spec) for spec in args.candidate]
+    project_keys = args.sn60_project_key or resolve_sn60_project_keys(
+        configured_keys=None,
+        sandbox_root=args.sn60_sandbox_root,
+        benchmark_file=args.sn60_benchmark_file,
+        sandbox_commit=args.sn60_sandbox_commit,
+        king_artifact_hash=hash_bundle_root(Path(args.king_path).expanduser().resolve()),
+    )
+    result = run_sn60_round(
+        king_artifact_path=args.king_path,
+        candidates=candidates,
+        project_keys=project_keys,
+        output_root=args.output_root,
+        replicas_per_project=args.sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
+        sandbox_root=args.sn60_sandbox_root,
+        benchmark_file=args.sn60_benchmark_file,
+        sandbox_commit=args.sn60_sandbox_commit,
+        king_scoreboard_path=args.king_scoreboard,
+        progress_path=args.round_progress_path,
+    )
+    if args.json:
+        print_json(
+            {
+                "run_id": result.run_id,
+                "round_summary_path": str(
+                    (Path(result.output_root) / "round_summary.json").resolve()
+                ),
+                "winner_submission_id": result.winner_submission_id,
+                "winner_challenge_summary_path": result.winner_challenge_summary_path,
+                "promotion_ready": result.promotion_ready,
+                "promotion_reason": result.promotion_reason,
+                "king": _sn60_variant_detail(result.king),
+                "entries": [
+                    {
+                        "submission_id": entry.submission_id,
+                        "beats_king": entry.beats_king,
+                        "duel_run_id": entry.duel_run_id,
+                        **_sn60_variant_detail(entry.candidate),
+                    }
+                    for entry in result.entries
+                ],
+            }
+        )
+    else:
+        print(render_round_result(result))
+    return 0
+
+
+def _sn60_variant_detail(variant) -> dict:  # type: ignore[no-untyped-def]
+    """Serialize a variant summary (king or candidate) with its per-project
+    breakdown so the dashboard can render a detailed per-PR duel view."""
+    return {
+        "aggregated_score": variant.aggregated_score,
+        "average_detection_rate": variant.average_detection_rate,
+        "true_positives": variant.true_positives,
+        "total_expected": variant.total_expected,
+        "total_found": variant.total_found,
+        "precision": variant.precision,
+        "f1_score": variant.f1_score,
+        "invalid_runs": variant.invalid_runs,
+        "codebase_pass_count": variant.codebase_pass_count,
+        "projects": [
+            {
+                "project_key": project.project_key,
+                "passed": project.passed,
+                "detection_rate": project.average_detection_rate,
+                "true_positives": project.true_positives,
+                "total_expected": project.total_expected,
+                "total_found": project.total_found,
+                "precision": project.precision,
+                "f1_score": project.f1_score,
+            }
+            for project in variant.project_summaries
+        ],
+    }
+
+
+def render_round_result(result) -> str:  # type: ignore[no-untyped-def]
+    lines = [
+        f"SN60 round {result.run_id}",
+        f"king detection {result.king.aggregated_score:.3f} "
+        f"(tp {result.king.true_positives}/{result.king.total_expected})",
+        "ranking (best first):",
+    ]
+    for position, entry in enumerate(result.entries, start=1):
+        marker = "WINNER" if entry.submission_id == result.winner_submission_id else (
+            "beats-king" if entry.beats_king else "-"
+        )
+        lines.append(
+            f"  {position}. {entry.submission_id} "
+            f"detection {entry.candidate.aggregated_score:.3f} "
+            f"(tp {entry.candidate.true_positives}) {marker}"
+        )
+    lines.append(result.promotion_reason)
+    return "\n".join(lines)
 
 
 def handle_lane_init(args: argparse.Namespace) -> int:

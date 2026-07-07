@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -11,6 +13,8 @@ from kata.evaluators.sn60_bitsec import (
     Sn60DuelSummary,
     Sn60EvaluationHook,
     Sn60ExecutionHook,
+    Sn60ReplicaContext,
+    Sn60ReplicaResult,
     Sn60SandboxSource,
     Sn60VariantSummary,
     bitsec_project_image,
@@ -32,7 +36,6 @@ from kata.lane_state import (
 from kata.live_progress import update_live_status
 from kata.provenance import short_hash
 from kata.screening import (
-    Sn60ScreeningHook,
     Sn60ScreeningResult,
     build_sn60_execution_note_result,
     build_sn60_screening_id,
@@ -137,7 +140,6 @@ def run_sn60_challenge(
     sandbox_commit: str | None = None,
     screening_result: dict[str, object] | None = None,
     public_root: str | None = None,
-    screening_hook: Sn60ScreeningHook | None = None,
     execution_hook: Sn60ExecutionHook | None = None,
     evaluation_hook: Sn60EvaluationHook | None = None,
 ) -> ChallengeSummary:
@@ -422,6 +424,311 @@ def sn60_variant_rank(summary: Sn60VariantSummary) -> tuple[float, int, float, f
         round(summary.f1_score, 8),
         -summary.invalid_runs,
     )
+
+
+DEFAULT_SN60_ROUND_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True)
+class Sn60RoundEntry:
+    submission_id: str
+    artifact_path: str
+    artifact_hash: str
+    beats_king: bool
+    duel_run_id: str
+    candidate: Sn60VariantSummary
+
+
+@dataclass(frozen=True)
+class Sn60RoundResult:
+    schema_version: int
+    run_id: str
+    created_at: str
+    output_root: str
+    project_keys: list[str]
+    replicas_per_project: int
+    sandbox_source: Sn60SandboxSource
+    king: Sn60VariantSummary
+    entries: list[Sn60RoundEntry]
+    winner_submission_id: str | None
+    promotion_ready: bool
+    promotion_reason: str
+    winner_challenge_summary_path: str | None = None
+
+
+def build_sn60_round_id() -> str:
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"sn60-round-{timestamp}-{secrets.token_hex(3)}"
+
+
+def write_sn60_round_summary(path: Path, result: Sn60RoundResult) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(asdict(result), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _sn60_variant_progress(summary: Sn60VariantSummary) -> dict[str, object]:
+    """Full per-variant result (scores + per-problem breakdown) for the live
+    progress feed, so the dashboard detail page can show a finished PR's — and the
+    cached king's — complete duel result the moment it lands."""
+    return {
+        "aggregated_score": summary.aggregated_score,
+        "true_positives": summary.true_positives,
+        "total_expected": summary.total_expected,
+        "total_found": summary.total_found,
+        "precision": summary.precision,
+        "f1_score": summary.f1_score,
+        "invalid_runs": summary.invalid_runs,
+        "codebase_pass_count": summary.codebase_pass_count,
+        "projects": [
+            {
+                "project_key": project.project_key,
+                "passed": project.passed,
+                "detection_rate": project.average_detection_rate,
+                "true_positives": project.true_positives,
+                "total_expected": project.total_expected,
+                "total_found": project.total_found,
+                "precision": project.precision,
+                "f1_score": project.f1_score,
+            }
+            for project in summary.project_summaries
+        ],
+    }
+
+
+def run_sn60_round(
+    *,
+    king_artifact_path: str,
+    candidates: list[tuple[str, str]],
+    project_keys: list[str],
+    output_root: str | None = None,
+    replicas_per_project: int = DEFAULT_REPLICAS_PER_PROJECT,
+    sandbox_root: str | None = None,
+    benchmark_file: str | None = None,
+    sandbox_commit: str | None = None,
+    king_scoreboard_path: str | None = None,
+    screening_result: dict[str, object] | None = None,
+    execution_hook: Sn60ExecutionHook | None = None,
+    evaluation_hook: Sn60EvaluationHook | None = None,
+    progress_path: str | None = None,
+) -> Sn60RoundResult:
+    """Score the king once (from cache) against every candidate on the same
+    projects, then rank the candidates and pick the strict winner.
+
+    Each candidate is scored by one cached duel: the king is served from the
+    shared scoreboard, so across the whole round it runs at most once per project
+    regardless of how many candidates compete. The winner is the highest-ranked
+    candidate that strictly beats the king; ties keep the king (no winner).
+    """
+    if not candidates:
+        raise ValueError("SN60 round requires at least one candidate.")
+    seen_ids: set[str] = set()
+    for submission_id, _ in candidates:
+        if submission_id in seen_ids:
+            raise ValueError(f"Duplicate submission id in SN60 round: {submission_id}")
+        seen_ids.add(submission_id)
+
+    output_base = (
+        Path(output_root).expanduser().resolve() if output_root else Path("runs").resolve()
+    )
+    run_id = build_sn60_round_id()
+    round_root = output_base / run_id
+    round_root.mkdir(parents=True, exist_ok=False)
+
+    king_summary: Sn60VariantSummary | None = None
+    sandbox_source: Sn60SandboxSource | None = None
+    entries: list[Sn60RoundEntry] = []
+    duel_summaries: dict[str, Sn60DuelSummary] = {}
+
+    # Live progress: publish a per-candidate snapshot so the dashboard can show
+    # the round advancing in real time instead of appearing frozen until it ends.
+    per_variant_total = len(project_keys) * replicas_per_project
+    progress = {
+        "schema_version": DEFAULT_SN60_ROUND_SCHEMA_VERSION,
+        "state": "executing",
+        "run_id": run_id,
+        # The full sampled problem list, so the dashboard can show all problems up
+        # front (pending ones included) rather than only completed ones.
+        "project_keys": list(project_keys),
+        # The king is scored first (all problems), then each candidate one by one.
+        "king": {"done": 0, "total": per_variant_total, "state": "scoring"},
+        "candidates": [
+            {"submission_id": sid, "done": 0, "total": per_variant_total, "state": "queued"}
+            for sid, _ in candidates
+        ],
+    }
+
+    def emit_progress() -> None:
+        if not progress_path:
+            return
+        progress["updated_at"] = datetime.now(UTC).isoformat()
+        path = Path(progress_path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write atomically: the dashboard polls this file, and problems now finish
+        # in bursts, so a plain write could be read half-serialized. Write to a temp
+        # sibling and rename (atomic on the same filesystem).
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(
+            json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(tmp_path, path)
+
+    # Accumulate running detection/precision/F1 and a growing per-problem list for
+    # whichever variant is scoring, so the dashboard detail pages (king AND each
+    # candidate) fill their metric bars and problem rows live, not only at the end.
+    def apply_running(
+        target: dict[str, object], acc: dict, replica_result: Sn60ReplicaResult
+    ) -> None:
+        acc["tp"] += replica_result.true_positives
+        acc["expected"] += replica_result.total_expected
+        acc["found"] += replica_result.total_found
+        if replica_result.evaluation_status != "success":
+            acc["invalid"] += 1
+        acc["projects"].append(
+            {
+                "project_key": replica_result.project_key,
+                "passed": replica_result.result == "PASS",
+                "detection_rate": replica_result.detection_rate,
+                "true_positives": replica_result.true_positives,
+                "total_expected": replica_result.total_expected,
+                "total_found": replica_result.total_found,
+                "precision": replica_result.precision,
+                "f1_score": replica_result.f1_score,
+            }
+        )
+        detection = acc["tp"] / acc["expected"] if acc["expected"] else 0.0
+        precision = acc["tp"] / acc["found"] if acc["found"] else 0.0
+        f1 = (
+            2 * precision * detection / (precision + detection)
+            if (precision + detection)
+            else 0.0
+        )
+        target["aggregated_score"] = detection
+        target["precision"] = precision
+        target["f1_score"] = f1
+        target["true_positives"] = acc["tp"]
+        target["total_expected"] = acc["expected"]
+        target["total_found"] = acc["found"]
+        target["invalid_runs"] = acc["invalid"]
+        target["projects"] = list(acc["projects"])
+
+    king_acc = {"tp": 0, "expected": 0, "found": 0, "invalid": 0, "projects": []}
+
+    def make_progress_callback(candidate_entry: dict[str, object]):
+        cand_acc = {"tp": 0, "expected": 0, "found": 0, "invalid": 0, "projects": []}
+
+        def callback(context: Sn60ReplicaContext, replica_result: Sn60ReplicaResult) -> None:
+            if context.variant_name == "king":
+                king = progress["king"]
+                if king["done"] < king["total"]:
+                    king["done"] += 1
+                    apply_running(king, king_acc, replica_result)
+                if king["done"] >= king["total"]:
+                    king["state"] = "done"
+                    # The king is finished (or already cached) -> the candidate whose
+                    # duel is running is now up. Show it "scoring" immediately instead
+                    # of leaving it "queued" until its first problem completes.
+                    if candidate_entry["state"] == "queued":
+                        candidate_entry["state"] = "scoring"
+            elif candidate_entry["done"] < candidate_entry["total"]:
+                candidate_entry["state"] = "scoring"
+                candidate_entry["done"] += 1
+                apply_running(candidate_entry, cand_acc, replica_result)
+            emit_progress()
+
+        return callback
+
+    emit_progress()
+    for submission_id, candidate_artifact_path in candidates:
+        candidate_entry = next(
+            entry for entry in progress["candidates"] if entry["submission_id"] == submission_id
+        )
+        duel_summary = run_sn60_bitsec_duel(
+            king_artifact_path=king_artifact_path,
+            candidate_artifact_path=candidate_artifact_path,
+            project_keys=project_keys,
+            output_root=str(round_root),
+            replicas_per_project=replicas_per_project,
+            sandbox_root=sandbox_root,
+            benchmark_file=benchmark_file,
+            sandbox_commit=sandbox_commit,
+            execution_hook=execution_hook,
+            evaluation_hook=evaluation_hook,
+            king_scoreboard_path=king_scoreboard_path,
+            progress_callback=make_progress_callback(candidate_entry),
+        )
+        duel_summaries[submission_id] = duel_summary
+        king_summary = duel_summary.king
+        sandbox_source = duel_summary.sandbox_source
+        decision = evaluate_sn60_promotion(
+            king=duel_summary.king,
+            candidate=duel_summary.candidate,
+            screening_result=screening_result,
+        )
+        # Publish this candidate's FINAL result and the king's (scored on the first
+        # duel, cached after) so the dashboard detail page shows full per-PR and
+        # per-problem detail the moment a PR finishes -- not only at round end.
+        candidate_entry["state"] = "done"
+        candidate_entry["beats_king"] = decision.promotion_ready
+        candidate_entry.update(_sn60_variant_progress(duel_summary.candidate))
+        progress["king"]["done"] = progress["king"]["total"]
+        progress["king"]["state"] = "done"
+        progress["king"].update(_sn60_variant_progress(duel_summary.king))
+        emit_progress()
+        entries.append(
+            Sn60RoundEntry(
+                submission_id=submission_id,
+                artifact_path=str(Path(candidate_artifact_path).expanduser().resolve()),
+                artifact_hash=duel_summary.candidate.artifact_hash,
+                beats_king=decision.promotion_ready,
+                duel_run_id=duel_summary.run_id,
+                candidate=duel_summary.candidate,
+            )
+        )
+
+    assert king_summary is not None and sandbox_source is not None
+    ranked = sorted(entries, key=lambda entry: sn60_variant_rank(entry.candidate), reverse=True)
+    winner = next((entry for entry in ranked if entry.beats_king), None)
+    # Persist the winner's promotion artifact from the duel it already ran, so the
+    # king is promoted from this round's result -- no second (redundant) duel at
+    # merge time.
+    winner_challenge_summary_path: str | None = None
+    if winner is not None:
+        winner_duel = duel_summaries[winner.submission_id]
+        winner_summary = sn60_duel_to_challenge_summary(
+            winner_duel,
+            lane_id=SN60_MINER_LANE_ID,
+            screening_result=screening_result,
+        )
+        winner_summary_path = Path(winner_duel.output_root) / "challenge_summary.json"
+        write_challenge_summary(winner_summary_path, winner_summary)
+        winner_challenge_summary_path = str(winner_summary_path)
+    result = Sn60RoundResult(
+        schema_version=DEFAULT_SN60_ROUND_SCHEMA_VERSION,
+        run_id=run_id,
+        created_at=datetime.now(UTC).isoformat(),
+        output_root=str(round_root),
+        project_keys=list(project_keys),
+        replicas_per_project=replicas_per_project,
+        sandbox_source=sandbox_source,
+        king=king_summary,
+        entries=ranked,
+        winner_submission_id=winner.submission_id if winner else None,
+        promotion_ready=winner is not None,
+        promotion_reason=(
+            f"{winner.submission_id} beat the current SN60 king"
+            if winner
+            else "no candidate beat the current SN60 king"
+        ),
+        winner_challenge_summary_path=winner_challenge_summary_path,
+    )
+    progress["state"] = "completed"
+    progress["winner_submission_id"] = result.winner_submission_id
+    emit_progress()
+    write_sn60_round_summary(round_root / "round_summary.json", result)
+    return result
 
 
 def record_sn60_lane_provenance(

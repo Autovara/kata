@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from kata.challenge import (
     SN60_MINER_LANE_ID,
     evaluate_sn60_promotion,
     load_challenge_summary,
     run_sn60_challenge,
+    run_sn60_round,
 )
 from kata.evaluators.sn60_bitsec import (
     Sn60ProjectAggregate,
@@ -101,9 +104,6 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
             },
         }
 
-    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": True, "report": VALID_SCREENING_REPORT}
-
     summary = run_sn60_challenge(
         king_artifact_path=str(king_root),
         candidate_artifact_path=str(candidate_root),
@@ -115,7 +115,6 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
         benchmark_file=str(benchmark_path),
         sandbox_commit="sandbox-commit-1",
         public_root=str(tmp_path / "public"),
-        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -318,9 +317,6 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
             },
         }
 
-    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": True, "report": VALID_SCREENING_REPORT}
-
     first = run_sn60_challenge(
         king_artifact_path=str(king_root),
         candidate_artifact_path=str(candidate_root),
@@ -332,7 +328,6 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-a",
         public_root=str(tmp_path / "public-a"),
-        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -347,7 +342,6 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-b",
         public_root=str(tmp_path / "public-b"),
-        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -536,3 +530,173 @@ def build_variant(
         ],
         replica_results=replica_results,
     )
+
+
+def _write_detection_bundle(root: Path, detection: float) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "agent.py").write_text(
+        f"# detection={detection}\n"
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    return {'vulnerabilities': []}\n",
+        encoding="utf-8",
+    )
+
+
+def _detection_hooks():
+    """Hooks that read each staged bundle's encoded detection and score it, while
+    counting how many times each variant actually executes."""
+    ran: dict[str, int] = {}
+
+    def execute(context: Sn60ReplicaContext) -> dict[str, object]:
+        ran[context.variant_name] = ran.get(context.variant_name, 0) + 1
+        source = (Path(context.bundle_root) / "agent.py").read_text(encoding="utf-8")
+        detection = 0.0
+        for line in source.splitlines():
+            if "# detection=" in line:
+                detection = float(line.split("# detection=")[1].strip())
+        return {
+            "success": True,
+            "report": {
+                "project": context.project_key,
+                "vulnerabilities": [{"title": "v"}],
+                "detection": detection,
+            },
+        }
+
+    def evaluate(
+        _context: Sn60ReplicaContext, report_payload: dict[str, object]
+    ) -> dict[str, object]:
+        detection = report_payload["report"]["detection"]
+        return {
+            "status": "success",
+            "result": {
+                "result": "PASS" if detection >= 1.0 else "FAIL",
+                "detection_rate": detection,
+                "true_positives": int(round(detection * 4)),
+                "total_expected": 4,
+                "total_found": 4,
+                "precision": 1.0,
+                "f1_score": detection,
+            },
+        }
+
+    return ran, execute, evaluate
+
+
+def test_run_sn60_round_ranks_candidates_and_picks_strict_winner(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    king_root = tmp_path / "king"
+    _write_detection_bundle(king_root, 0.25)
+    candidates = []
+    for name, detection in (("cand-a", 0.0), ("cand-b", 0.5), ("cand-c", 0.75)):
+        path = tmp_path / name
+        _write_detection_bundle(path, detection)
+        candidates.append((name, str(path)))
+    scoreboard = tmp_path / "king_scoreboard.json"
+    progress_path = tmp_path / "round-progress.json"
+
+    ran, execute, evaluate = _detection_hooks()
+    result = run_sn60_round(
+        king_artifact_path=str(king_root),
+        candidates=candidates,
+        project_keys=["project-alpha"],
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-round-1",
+        king_scoreboard_path=str(scoreboard),
+        execution_hook=execute,
+        evaluation_hook=evaluate,
+        progress_path=str(progress_path),
+    )
+
+    # Live progress is published: by the end every candidate is scored and the
+    # snapshot is marked completed with the winner.
+    import json as _json
+
+    progress = _json.loads(progress_path.read_text())
+    assert progress["state"] == "completed"
+    assert progress["winner_submission_id"] == "cand-c"
+    assert {c["submission_id"] for c in progress["candidates"]} == {"cand-a", "cand-b", "cand-c"}
+    assert all(c["done"] == c["total"] and c["state"] == "done" for c in progress["candidates"])
+    # Each finished candidate carries its full result + per-problem breakdown, and
+    # the king's result is published too (for the detail page).
+    winner_entry = next(c for c in progress["candidates"] if c["submission_id"] == "cand-c")
+    assert winner_entry["aggregated_score"] == 0.75
+    assert winner_entry["beats_king"] is True
+    assert isinstance(winner_entry["projects"], list) and winner_entry["projects"]
+    assert progress["king"]["aggregated_score"] == 0.25
+    assert isinstance(progress["king"]["projects"], list) and progress["king"]["projects"]
+
+    # Ranked best-first by detection; the strict winner is the top one that beats the king.
+    assert [entry.submission_id for entry in result.entries] == ["cand-c", "cand-b", "cand-a"]
+    assert [entry.beats_king for entry in result.entries] == [True, True, False]
+    assert result.winner_submission_id == "cand-c"
+    assert result.promotion_ready is True
+    assert result.king.aggregated_score == 0.25
+
+    # The king was scored once for the round (cached), the three candidates each ran.
+    assert ran["king"] == 1
+    assert ran["candidate"] == 3
+    assert (Path(result.output_root) / "round_summary.json").exists()
+
+    # The winner's promotion artifact is persisted from the duel it already ran,
+    # so the king is promoted from this round -- no second duel at merge time.
+    assert result.winner_challenge_summary_path is not None
+    summary_path = Path(result.winner_challenge_summary_path)
+    assert summary_path.exists()
+    assert summary_path.name == "challenge_summary.json"
+
+
+def test_run_sn60_round_has_no_winner_when_none_beats_king(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    king_root = tmp_path / "king"
+    _write_detection_bundle(king_root, 0.5)
+    candidates = []
+    for name, detection in (("cand-a", 0.0), ("cand-b", 0.25)):
+        path = tmp_path / name
+        _write_detection_bundle(path, detection)
+        candidates.append((name, str(path)))
+
+    _ran, execute, evaluate = _detection_hooks()
+    result = run_sn60_round(
+        king_artifact_path=str(king_root),
+        candidates=candidates,
+        project_keys=["project-alpha"],
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-round-2",
+        execution_hook=execute,
+        evaluation_hook=evaluate,
+    )
+
+    assert result.winner_submission_id is None
+    assert result.promotion_ready is False
+    assert all(entry.beats_king is False for entry in result.entries)
+    # No winner -> no promotion artifact to write.
+    assert result.winner_challenge_summary_path is None
+
+
+def test_run_sn60_round_rejects_duplicate_submission_ids(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    king_root = tmp_path / "king"
+    candidate_root = tmp_path / "candidate"
+    _write_detection_bundle(king_root, 0.25)
+    _write_detection_bundle(candidate_root, 0.5)
+
+    with pytest.raises(ValueError, match="Duplicate submission id"):
+        run_sn60_round(
+            king_artifact_path=str(king_root),
+            candidates=[("dup", str(candidate_root)), ("dup", str(candidate_root))],
+            project_keys=["project-alpha"],
+            output_root=str(tmp_path / "runs"),
+            sandbox_root=str(sandbox_root),
+            benchmark_file=str(benchmark_path),
+            sandbox_commit="commit-round-3",
+        )

@@ -13,6 +13,44 @@ This document lists what a valid SN60 miner submission must contain, what is rej
 and what to check before opening a pull request. For the full PR-to-promotion process,
 see [workflow.md](workflow.md).
 
+## How scoring works: rounds, not instant duels
+
+Opening a PR does **not** score it immediately. Your PR is screened and labeled
+`kata:pending` — it now waits for the next **competition round**. Rounds are run on a
+schedule; each round scores every pending agent against the current king on the *same*
+secretly-sampled problems and ranks them. The best agent that beats the king is merged and
+becomes the new king.
+
+What this means for you:
+
+- You may have **only one open PR** at a time. Extra open PRs are closed `kata:invalid`.
+- Iterate on that one PR: push new commits to improve it between rounds.
+- If you beat the king but weren't the top challenger, your PR stays open (`kata:pending`)
+  and competes again next round.
+- If your PR is benched as `kata:stale` (unchanged since it last competed), push any commit
+  to re-enter it. A newly promoted king also re-enters every pending PR automatically.
+- The labels you'll see: `kata:pending` (waiting), `kata:executing` (competing now),
+  `kata:winner:<pack>` (won), `kata:losing` (didn't beat the king), `kata:invalid`
+  (rejected), `kata:stale` (benched), `kata:hold` (won but merge blocked).
+
+### Winner reward labels
+
+When a PR is merged and promoted, Kata applies `kata:winner:<pack>` plus one
+`kata:reward:*` tier. The winner label proves that the PR became king. The reward tier
+is a Gittensor/SN74 scoring signal that says how strong the promotion was.
+
+| Label | Applied when the promoted candidate has... |
+| --- | --- |
+| `kata:reward:s` | a valid promotion below the higher tier thresholds |
+| `kata:reward:m` | at least 3 true positives, or +2 true positives over the king, or +15% score delta |
+| `kata:reward:l` | at least 5 true positives, or +4 true positives over the king, or at least 60% detection score |
+| `kata:reward:xl` | at least 8 true positives, or +6 true positives over the king, or at least 85% detection score |
+
+Gittensor uses the highest matching label multiplier. For example, a PR with
+`kata:winner:sn60__bitsec` and `kata:reward:m` receives the medium reward multiplier,
+not the base winner multiplier. Promotions also decay with age inside the Gittensor
+lookback window, so newer kings carry more reward weight than older winner PRs.
+
 ## Current Scope
 
 The live lane is:
@@ -49,7 +87,7 @@ For SN60 today:
 submissions/sn60__bitsec/miner/<submission-id>/
 ```
 
-Recommended `submission_id` format:
+Required `submission_id` format:
 
 ```text
 <github-username>-YYYYMMDD-NN
@@ -60,6 +98,11 @@ Example:
 ```text
 alice-20260704-01
 ```
+
+The `<github-username>` prefix must match the GitHub account that opens the PR.
+For example, if the PR author is `jonathanchang31`, then
+`jonathan-20260707-01` is invalid. `kata-bot` closes identity mismatches as
+`kata:invalid` before adding `kata:pending`, so the PR will not enter a round.
 
 ## Required Files
 
@@ -100,9 +143,10 @@ Requirements:
 - The file must contain valid Python syntax.
 - The file must not be the scaffold placeholder.
 - The implementation must be self-contained for SN60 V1.
-- Be efficient: your agent has a per-problem runtime budget, so prioritise the
-  most suspicious files first. Running out of time on a problem scores 0 for that
-  problem — it does not close your PR.
+- Be efficient: your agent has both a per-problem **runtime** budget and a hard
+  per-problem **inference** budget (exactly 1 model call — see
+  "Inference budget" below), so prioritise the most suspicious files first.
+  Exhausting either budget just scores 0 for that problem — it does not close your PR.
 
 ### `agent_manifest.json`
 
@@ -143,7 +187,7 @@ Requirements:
 - `subnet_pack` should be `sn60__bitsec` for the live lane.
 - `mode` must be `miner`.
 - `submission_id` should match the directory name.
-- `author` should be the GitHub username.
+- `author` must match the GitHub username that opens the PR.
 
 `subnet_pack` is the canonical field. The older `repo_pack` field is accepted
 only as a legacy alias.
@@ -169,6 +213,29 @@ Use this contract:
 - Response body: read `choices[0].message.content`
 
 Do not use `Authorization: Bearer`; the proxy expects `x-inference-api-key`.
+
+### Inference budget (enforced by the validator)
+
+The validator funds every token, so each agent gets a **hard inference budget per
+problem, enforced at the proxy** — you cannot exceed it no matter what your
+`agent.py` requests:
+
+- **Per problem (one codebase): up to 3 model calls _and_ 24,000 output tokens
+  total**, whichever you reach first. Once you have made 3 successful calls, or
+  spent 24,000 output tokens across them, any further call returns HTTP `429`.
+- **Per call:** at most **32,000 output tokens** (the proxy clamps `max_tokens` down
+  to this, so requesting more has no effect).
+- A **failed** call does not count against either limit, so a transient error can be
+  retried until a call succeeds.
+
+Design for this: spend your calls where they matter — either one big pass over the
+whole codebase, or a few focused passes over the contracts most likely to be
+vulnerable — and ask for all findings. Handle a `429` by returning the findings you
+have so far (do not crash — a crashed run scores as invalid).
+
+The validator can tune these (`KATA_RELAY_MAX_OUTPUT_TOKENS`,
+`KATA_RELAY_AGENT_CALL_BUDGET`, `KATA_RELAY_AGENT_TOKEN_BUDGET`); the numbers above
+are the current defaults.
 
 Minimal standard-library example:
 
@@ -201,26 +268,26 @@ def ask_model(inference_api, prompt):
 ```
 
 If a model call fails and your agent returns an empty `vulnerabilities` list, your
-PR is **not** closed — that problem simply scores 0 and the duel continues to the
+PR is **not** closed — that problem simply scores 0 and scoring continues to the
 rest. But an agent that finds nothing cannot out-detect the king, so test your
 inference contract locally first.
 
-The pinned model is a reasoning model. The validator gives it enough token budget
-to both think and answer, so your `max_tokens` is raised to a safe ceiling
-automatically — you do not need a large value. Read the final answer from
-`choices[0].message.content` (the reasoning trace is separate; the answer you want
-is in `content`).
+The pinned model today is **`qwen/qwen3.6-35b-a3b`**, a reasoning model. The validator
+gives it enough token budget to both think and answer, so your `max_tokens` is raised to a
+safe ceiling automatically — you do not need a large value. Read the final answer from
+`choices[0].message.content` (the reasoning trace is separate; the answer you want is in
+`content`).
 
 ## Screening Gate — what closes a PR, and what does not
 
 There are exactly **two** ways a PR ends without merging. Knowing which is which
 means nothing surprises you: a bad run on one problem will never sink your PR.
 
-### 1. Static screening — runs BEFORE the duel; the only thing that closes a PR early
+### 1. Static screening — runs BEFORE scoring; the only thing that closes a PR early
 
 These are cheap, source-only checks (no model calls). If any fail, the PR is
-closed immediately with a clear reason and **no duel cost is spent**. Pass all of
-these and your submission is guaranteed a fair, full duel:
+closed immediately with a clear reason and **no scoring cost is spent**. Pass all of
+these and your submission is guaranteed a fair, full evaluation in the next round:
 
 - Your PR touches exactly one `submissions/<pack>/<mode>/<id>/` directory and
   edits nothing else (not `kings/`, `lanes/`, evaluator code, tests, or docs).
@@ -240,30 +307,31 @@ these and your submission is guaranteed a fair, full duel:
   to read the answers.
 - Your agent is not a copy of the current king.
 
-### 2. The duel — bad, empty, or slow output NEVER closes your PR
+### 2. The round — bad, empty, or slow output NEVER closes your PR
 
-Once static screening passes, your agent runs against **every** sampled problem
-alongside the king. Here, a bad result is only a **0 for that problem** — it is
-never a rejection:
+Once static screening passes and the round runs, your agent is scored against **every**
+sampled problem alongside the king. Here, a bad result is only a **0 for that problem** —
+it is never a rejection:
 
-- If your agent errors, times out, or returns no findings on a problem, that
-  problem scores **0** and the duel **continues** to the rest. One bad problem
-  cannot sink an otherwise-good submission.
-- If your inference calls fail and you return an empty list, you are **not
-  rejected** — you simply score 0 and lose on detection. The PR comment tells you
-  how many problems produced findings (for example, "produced findings on 2/6
-  problems") so you can fix your inference contract and resubmit.
-- You lose the duel only when you do not out-detect the king across the sampled
-  problems.
+- If your agent errors, times out, or returns no findings on a problem, that problem scores
+  **0** and scoring **continues** to the rest. One bad problem cannot sink an
+  otherwise-good submission.
+- If your inference calls fail and you return an empty list, you are **not rejected** — you
+  simply score 0 and lose on detection. The PR comment tells you how many problems produced
+  findings (for example, "produced findings on 2/6 problems") so you can fix your inference
+  contract and try again next round.
+- You lose the round only when you do not out-detect the king across the sampled problems.
 
-**Takeaway:** take the static checklist seriously — it is the only early gate.
-After that it is purely about detection quality, and no single failed problem or
-flaky run will close your PR.
+**Takeaway:** take the static checklist seriously — it is the only early gate. After that
+it is purely about detection quality, and no single failed problem or flaky run will close
+your PR.
 
 ## PR Rules
 
 A valid miner PR must:
 
+- be your **only open PR** — one open PR per contributor; extra open PRs are closed
+  `kata:invalid`
 - target the default competition branch
 - touch exactly one submission directory
 - change at least one bundle file
@@ -286,6 +354,8 @@ Before opening a PR, verify:
   `agent.py`.
 - `submission.json` uses schema version `2`, `subnet_pack`, mode `miner`, and a
   unique `submission_id`.
+- The submission directory/id prefix and `submission.json` `author` match the
+  GitHub username that opened the PR.
 - No helper files are included.
 - No symlinks are included.
 - No hardcoded API keys or provider tokens are included.
@@ -303,10 +373,10 @@ uv run kata submission validate \
 
 ## Rejection Conditions
 
-These are the **static** conditions that close a PR *before* the duel. (Runtime
+These are the **static** conditions that close a PR *before* scoring. (Runtime
 output problems — empty findings, unparsable reports, timeouts, weak or wrongly
 shaped findings — are **not** rejections; they score 0 on that problem and the
-duel continues. See "Screening Gate" above.)
+scoring continues. See "Screening Gate" above.)
 
 Kata rejects submissions for:
 

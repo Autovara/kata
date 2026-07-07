@@ -33,12 +33,17 @@ import json
 import os
 import sys
 import threading
+from collections import OrderedDict
+from dataclasses import dataclass
+from hmac import compare_digest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 DEFAULT_UPSTREAM = "http://bitsec_proxy:8000"
 DEFAULT_PINNED_MODEL = "qwen/qwen3.6-35b-a3b"
+DEFAULT_DIRECT_PINNED_MODEL = "Qwen/Qwen3.6-35B-A3B"
+DEFAULT_DIRECT_UPSTREAM = "https://api.akashml.com/v1/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 900
 
 # Default qwen/qwen3.6-35b-a3b prices (USD per 1M tokens); override via env.
@@ -56,14 +61,42 @@ DEFAULT_PRICE_OUTPUT_PER_M = 1.00
 # stops at finish_reason=stop long before it, so cost tracks actual usage.
 DEFAULT_MAX_OUTPUT_TOKENS = 32000
 
+# Per-agent inference budget. The validator funds every token, and candidates
+# submit arbitrary agents, so each agent run gets a hard cap: once it exhausts
+# its output-token OR call budget for the current problem it is refused further
+# inference and must finalize with what it found. This bounds cost per agent and
+# blocks a greedy/looping agent from draining the validator's funds. Runs are
+# serial (one agent container at a time), so the budget window is keyed by the
+# calling container's address and reset whenever a new container starts calling.
+# 0 disables a limit. Override with KATA_RELAY_AGENT_TOKEN_BUDGET / _CALL_BUDGET.
+# Per-agent budget, keyed per problem via the `/j/<token>/inference` path Kata
+# sets (see AgentBudget). Each agent may make up to CALL_BUDGET successful model
+# calls per problem, and at most TOKEN_BUDGET output tokens across them, whichever
+# is reached first (further calls -> HTTP 429). Failed calls are not counted, so a
+# transient failure can be retried. Individual calls are also clamped to
+# KATA_RELAY_MAX_OUTPUT_TOKENS.
+DEFAULT_AGENT_TOKEN_BUDGET = 24000
+DEFAULT_AGENT_CALL_BUDGET = 3
+
 # Only this path carries a model to overwrite; everything else is forwarded as-is.
 INFERENCE_PATH = "/inference"
 # Answered by the relay itself so operators can prove the process is up without
 # depending on the upstream proxy.
 HEALTH_PATH = "/healthz"
+# Actively probes the upstream model provider with one tiny pinned request so a
+# caller can tell whether inference genuinely works (e.g. the OpenRouter key is
+# not exhausted) BEFORE spending a round's worth of tokens. Unlike /inference it
+# does not force max_tokens up, so the probe is cheap and fast.
+UPSTREAM_CHECK_PATH = "/healthz/upstream"
+# Output-token ceiling for the upstream probe. Big enough that the reasoning model
+# finishes a trivial reply (so a healthy provider returns 200), small enough to be
+# cheap and fast (~2s).
+HEALTHCHECK_MAX_TOKENS = 2000
 # Relay-local cost accounting: read the running total, or zero it before a PR.
 COST_PATH = "/costs"
 COST_RESET_PATH = "/costs/reset"
+ADMIN_TOKEN_ENV = "KATA_RELAY_ADMIN_TOKEN"
+ADMIN_TOKEN_HEADER = "x-kata-relay-admin-token"
 FORBIDDEN_SAMPLING_FIELDS = {
     "temperature",
     "top_p",
@@ -105,6 +138,99 @@ _SKIP_RESPONSE_HEADERS = {
     "content-length",
 }
 
+PROXY_KEY_PREFIXES = ("sk-or-", "cpk_")
+DEFAULT_DIRECT_KEY_PREFIXES = ("akml-", "akml_")
+DEFAULT_DIRECT_AUTH_HEADER = "Authorization"
+DEFAULT_DIRECT_AUTH_VALUE_TEMPLATE = "Bearer {api_key}"
+
+
+class RelayConfigurationError(Exception):
+    """Operator-controlled relay configuration is incomplete or invalid."""
+
+
+@dataclass(frozen=True)
+class DirectProviderConfig:
+    upstream: str
+    model: str
+    auth_header: str = DEFAULT_DIRECT_AUTH_HEADER
+    auth_value_template: str = DEFAULT_DIRECT_AUTH_VALUE_TEMPLATE
+
+
+def is_akash_api_key(api_key: str | None) -> bool:
+    """Return true when the inference key belongs to AkashML."""
+    return _api_key_matches_prefixes(api_key, DEFAULT_DIRECT_KEY_PREFIXES)
+
+
+def is_proxy_api_key(api_key: str | None) -> bool:
+    """Return true for providers already supported by the sandbox proxy."""
+    return _api_key_matches_prefixes(api_key, PROXY_KEY_PREFIXES)
+
+
+def _api_key_matches_prefixes(api_key: str | None, prefixes: tuple[str, ...] | list[str]) -> bool:
+    if not api_key:
+        return False
+    value = api_key.strip()
+    return any(prefix == "*" or value.startswith(prefix) for prefix in prefixes)
+
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _direct_env_config() -> DirectProviderConfig:
+    upstream = os.environ.get("KATA_RELAY_DIRECT_UPSTREAM", "").strip()
+    model = os.environ.get("KATA_RELAY_DIRECT_MODEL", "").strip()
+    if not upstream or not model:
+        raise RelayConfigurationError(
+            "direct provider routing requires KATA_RELAY_DIRECT_UPSTREAM and "
+            "KATA_RELAY_DIRECT_MODEL"
+        )
+    return DirectProviderConfig(
+        upstream=upstream,
+        model=model,
+        auth_header=os.environ.get("KATA_RELAY_DIRECT_AUTH_HEADER", "").strip()
+        or DEFAULT_DIRECT_AUTH_HEADER,
+        auth_value_template=os.environ.get("KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE", "").strip()
+        or DEFAULT_DIRECT_AUTH_VALUE_TEMPLATE,
+    )
+
+
+def resolve_direct_provider(api_key: str | None) -> DirectProviderConfig | None:
+    """Resolve a direct OpenAI-compatible provider for keys the proxy cannot route.
+
+    OpenRouter and Chutes keep their existing sandbox-proxy route. AkashML is the
+    built-in direct provider. Future providers can be enabled without code changes:
+
+      KATA_RELAY_DIRECT_KEY_PREFIXES=abc-,xyz_
+      KATA_RELAY_DIRECT_UPSTREAM=https://provider.example/v1/chat/completions
+      KATA_RELAY_DIRECT_MODEL=Provider/Model
+
+    Use "*" as a prefix only when every non-proxy inference key should use the
+    configured direct provider.
+    """
+    if not api_key or is_proxy_api_key(api_key):
+        return None
+
+    custom_prefixes = _split_csv(os.environ.get("KATA_RELAY_DIRECT_KEY_PREFIXES"))
+    if custom_prefixes and _api_key_matches_prefixes(api_key, custom_prefixes):
+        return _direct_env_config()
+    if _env_truthy("KATA_RELAY_DIRECT_ALLOW_UNKNOWN"):
+        return _direct_env_config()
+    if is_akash_api_key(api_key):
+        return DirectProviderConfig(
+            upstream=os.environ.get("KATA_RELAY_AKASH_UPSTREAM", "").strip()
+            or DEFAULT_DIRECT_UPSTREAM,
+            model=os.environ.get("KATA_RELAY_AKASH_MODEL", "").strip()
+            or DEFAULT_DIRECT_PINNED_MODEL,
+        )
+    return None
+
 
 def resolve_upstream() -> str:
     """Base URL of the real inference proxy the relay forwards to."""
@@ -114,12 +240,25 @@ def resolve_upstream() -> str:
     return DEFAULT_UPSTREAM
 
 
-def resolve_pinned_model() -> str:
+def resolve_pinned_model(api_key: str | None = None) -> str:
     """The single model every inference request is forced onto."""
     value = os.environ.get("KATA_RELAY_PINNED_MODEL")
+    if value and value.strip() and value.strip() != DEFAULT_PINNED_MODEL:
+        return value.strip()
+    try:
+        direct_provider = resolve_direct_provider(api_key)
+    except RelayConfigurationError:
+        direct_provider = None
+    if direct_provider is not None:
+        return direct_provider.model
     if value and value.strip():
         return value.strip()
     return DEFAULT_PINNED_MODEL
+
+
+def resolve_akash_upstream() -> str:
+    """OpenAI-compatible AkashML chat-completions endpoint."""
+    return resolve_direct_provider("akml-test").upstream
 
 
 def resolve_max_output_tokens() -> int:
@@ -136,6 +275,27 @@ def resolve_max_output_tokens() -> int:
     return parsed if parsed >= 0 else DEFAULT_MAX_OUTPUT_TOKENS
 
 
+def _resolve_budget(env_var: str, default: int) -> int:
+    value = os.environ.get(env_var)
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def resolve_agent_token_budget() -> int:
+    """Max output tokens one agent may generate per problem (0 = unlimited)."""
+    return _resolve_budget("KATA_RELAY_AGENT_TOKEN_BUDGET", DEFAULT_AGENT_TOKEN_BUDGET)
+
+
+def resolve_agent_call_budget() -> int:
+    """Max inference calls one agent may make per problem (0 = unlimited)."""
+    return _resolve_budget("KATA_RELAY_AGENT_CALL_BUDGET", DEFAULT_AGENT_CALL_BUDGET)
+
+
 def resolve_timeout() -> float:
     """Upstream request timeout; kept high because agent inference can be slow."""
     value = os.environ.get("KATA_RELAY_TIMEOUT")
@@ -147,6 +307,16 @@ def resolve_timeout() -> float:
         if parsed > 0:
             return parsed
     return float(DEFAULT_TIMEOUT_SECONDS)
+
+
+def resolve_admin_token() -> str:
+    """Shared secret for relay operator endpoints.
+
+    The relay is reachable by untrusted agent containers, so endpoints that can
+    spend upstream tokens or mutate accounting must require an operator token.
+    When unset, those endpoints are disabled rather than left open.
+    """
+    return os.environ.get(ADMIN_TOKEN_ENV, "").strip()
 
 
 def _resolve_price(env_var: str, default: float) -> float:
@@ -260,6 +430,65 @@ class CostMeter:
 COST_METER = CostMeter()
 
 
+class AgentBudget:
+    """Per-agent inference budget, keyed by the per-problem token Kata embeds in
+    the inference URL (``/j/<token>/inference``).
+
+    Each key -- one agent working one problem -- accrues its own call count and
+    output-token total independently, so problems scored *concurrently* (each with
+    a distinct token) never disturb one another's budget. Keying on the token (not
+    the network source) is what makes this correct even though every agent reaches
+    the relay from the same gateway address.
+
+    The budget is a *cap*, never a quota: the relay only ever counts and refuses the
+    agent's own calls, it never issues one. An agent that calls the model once is
+    charged for one call; the limits only bite once the agent itself tries to exceed
+    them.
+    """
+
+    # Bound the number of tracked keys so a long-lived relay cannot leak memory
+    # across many rounds. Tokens are unique per problem and never reused, so
+    # evicting the oldest key is safe -- it will never be seen again.
+    MAX_TRACKED_KEYS = 8192
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._by_key: OrderedDict[str, dict[str, int]] = OrderedDict()
+
+    def _bucket(self, key: str) -> dict[str, int]:
+        bucket = self._by_key.get(key)
+        if bucket is None:
+            bucket = {"tokens": 0, "calls": 0}
+            self._by_key[key] = bucket
+            while len(self._by_key) > self.MAX_TRACKED_KEYS:
+                self._by_key.popitem(last=False)
+        return bucket
+
+    def allow(self, key: str) -> tuple[bool, str | None]:
+        with self._lock:
+            bucket = self._bucket(key)
+            max_calls = resolve_agent_call_budget()
+            max_tokens = resolve_agent_token_budget()
+            if max_calls and bucket["calls"] >= max_calls:
+                return False, f"inference call budget ({max_calls}) exhausted for this problem"
+            if max_tokens and bucket["tokens"] >= max_tokens:
+                return False, f"output-token budget ({max_tokens}) exhausted for this problem"
+            return True, None
+
+    def record(self, key: str, output_tokens: int) -> None:
+        with self._lock:
+            bucket = self._bucket(key)
+            bucket["tokens"] += output_tokens
+            bucket["calls"] += 1
+
+    def reset(self) -> None:
+        with self._lock:
+            self._by_key.clear()
+
+
+AGENT_BUDGET = AgentBudget()
+
+
 def pin_model_in_body(body: bytes, model: str, max_output_tokens: int = 0) -> bytes:
     """Force the OpenAI-compatible request body onto ``model``.
 
@@ -281,9 +510,10 @@ def pin_model_in_body(body: bytes, model: str, max_output_tokens: int = 0) -> by
     for field in FORBIDDEN_SAMPLING_FIELDS:
         payload.pop(field, None)
     if max_output_tokens > 0:
-        requested = payload.get("max_tokens")
-        if not isinstance(requested, int) or requested < max_output_tokens:
-            payload["max_tokens"] = max_output_tokens
+        # Force max_tokens to exactly the ceiling: raise a too-small request so the
+        # reasoning model has room to think AND answer, and clamp a too-large one
+        # so a single call can't run away (agents were observed requesting ~82k).
+        payload["max_tokens"] = max_output_tokens
     return json.dumps(payload).encode("utf-8")
 
 
@@ -302,17 +532,88 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         self._forward("GET")
 
     def do_POST(self) -> None:
-        if self._path_without_query() == COST_RESET_PATH:
+        path = self._path_without_query()
+        if path == COST_RESET_PATH:
             self._read_body()  # drain any body so the connection stays consistent
+            if not self._admin_authorized():
+                self._send_json(403, {"status": "error", "detail": "admin token required"})
+                return
             COST_METER.reset()
             self._send_json(200, {"status": "reset"})
             return
+        if path == UPSTREAM_CHECK_PATH:
+            if not self._admin_authorized():
+                self._read_body()
+                self._send_json(403, {"status": "error", "detail": "admin token required"})
+                return
+            self._handle_upstream_check()
+            return
         self._forward("POST")
+
+    def _handle_upstream_check(self) -> None:
+        """Send one tiny pinned request upstream and report whether it succeeded.
+
+        Returns 200 with ``{"ok": bool, "status": <upstream status>, "detail": ...}``
+        so a caller can decide whether inference is usable without parsing HTTP
+        errors. ``max_tokens`` is kept at 1 (not forced up) so this stays cheap.
+        """
+        self._read_body()  # drain any body the caller sent
+        # The pinned model reasons before answering, so a 1-token probe truncates and
+        # the proxy rejects it as unusable (a false failure). Give it enough room to
+        # finish a trivial reply; a healthy provider returns 200 in ~2s, an exhausted
+        # key still fails fast with 403.
+        api_key = self._inference_api_key()
+        pinned_model = resolve_pinned_model(api_key)
+        probe_body = json.dumps(
+            {
+                "model": pinned_model,
+                "messages": [{"role": "user", "content": "Reply with the single word OK."}],
+                "max_tokens": HEALTHCHECK_MAX_TOKENS,
+            }
+        ).encode()
+        try:
+            request = self._build_upstream_request(
+                api_key=api_key,
+                body=probe_body,
+                upstream_path=INFERENCE_PATH,
+                method="POST",
+            )
+        except RelayConfigurationError as error:
+            self._send_json(200, {"ok": False, "status": 0, "detail": str(error)})
+            return
+        try:
+            with urlopen(request, timeout=min(resolve_timeout(), 60.0)) as response:
+                self._send_json(
+                    200, {"ok": 200 <= response.status < 300, "status": response.status}
+                )
+        except HTTPError as error:
+            try:
+                detail = (error.read()[:300] or b"").decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 - detail is best-effort
+                detail = ""
+            self._send_json(200, {"ok": False, "status": error.code, "detail": detail})
+        except URLError as error:
+            self._send_json(
+                200,
+                {"ok": False, "status": 0, "detail": f"could not reach upstream: {error.reason}"},
+            )
 
     # -- forwarding -----------------------------------------------------------
     def _forward(self, method: str) -> None:
         body = self._read_body()
-        is_inference = method == "POST" and self._path_without_query() == INFERENCE_PATH
+        path = self._path_without_query()
+        query = self.path[len(path):]
+        # Agents call `<INFERENCE_API>/inference`, and Kata sets INFERENCE_API to
+        # `.../j/<token>` so each problem carries its own budget key. Accept both
+        # the tokenized path and a bare /inference (which shares a "default" key).
+        budget_key = "default"
+        upstream_path = self.path
+        if method == "POST" and path.startswith("/j/") and path.endswith(INFERENCE_PATH):
+            budget_key = path[len("/j/") : -len(INFERENCE_PATH)].strip("/") or "default"
+            upstream_path = INFERENCE_PATH + query
+            is_inference = True
+        else:
+            is_inference = method == "POST" and path == INFERENCE_PATH
         if not is_inference:
             self._send_json(
                 404,
@@ -322,25 +623,41 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        body = pin_model_in_body(body, resolve_pinned_model(), resolve_max_output_tokens())
+
+        # Enforce the per-agent (per-problem) inference budget before spending
+        # upstream tokens.
+        allowed, reason = AGENT_BUDGET.allow(budget_key)
+        if not allowed:
+            self._send_json(429, {"status": "error", "detail": f"inference budget: {reason}"})
+            return
+
+        api_key = self._inference_api_key()
+        pinned_model = resolve_pinned_model(api_key)
+        body = pin_model_in_body(body, pinned_model, resolve_max_output_tokens())
 
         headers = {
             key: value
             for key, value in self.headers.items()
             if key.lower() not in _SKIP_REQUEST_HEADERS
         }
-        url = resolve_upstream() + self.path
-        request = Request(
-            url,
-            data=body if body else None,
-            headers=headers,
-            method=method,
-        )
+        try:
+            request = self._build_upstream_request(
+                api_key=api_key,
+                body=body,
+                upstream_path=upstream_path,
+                method=method,
+                proxy_headers=headers,
+            )
+        except RelayConfigurationError as error:
+            self._send_json(502, {"detail": str(error)})
+            return
         try:
             with urlopen(request, timeout=resolve_timeout()) as response:
                 response_body = response.read()
                 if is_inference and 200 <= response.status < 300:
+                    _, output_tokens, _ = extract_usage(response_body)
                     self._meter(response_body)
+                    AGENT_BUDGET.record(budget_key, output_tokens)
                 self._relay_response(response.status, response.headers.items(), response_body)
         except HTTPError as error:
             # Upstream returned a real HTTP error (4xx/5xx); pass it through verbatim.
@@ -352,6 +669,52 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         input_tokens, output_tokens, cached_tokens = extract_usage(response_body)
         if input_tokens or output_tokens:
             COST_METER.add(input_tokens, output_tokens, cached_tokens)
+
+    def _build_upstream_request(
+        self,
+        *,
+        api_key: str,
+        body: bytes,
+        upstream_path: str,
+        method: str,
+        proxy_headers: dict[str, str] | None = None,
+    ) -> Request:
+        direct_provider = resolve_direct_provider(api_key)
+        if direct_provider is not None:
+            return Request(
+                direct_provider.upstream,
+                data=body if body else None,
+                headers={
+                    "Content-Type": "application/json",
+                    direct_provider.auth_header: self._render_direct_auth_value(
+                        direct_provider.auth_value_template,
+                        api_key,
+                    ),
+                },
+                method=method,
+            )
+
+        headers = proxy_headers or {"Content-Type": "application/json"}
+        if api_key:
+            headers["x-inference-api-key"] = api_key
+        return Request(
+            resolve_upstream() + upstream_path,
+            data=body if body else None,
+            headers=headers,
+            method=method,
+        )
+
+    def _render_direct_auth_value(self, template: str, api_key: str) -> str:
+        if "{api_key}" not in template:
+            raise RelayConfigurationError(
+                "KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE must include {api_key}"
+            )
+        try:
+            return template.format(api_key=api_key)
+        except (KeyError, IndexError, ValueError) as error:
+            raise RelayConfigurationError(
+                "KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE must use {api_key}"
+            ) from error
 
     def _relay_response(self, status: int, header_items, body: bytes) -> None:
         self.send_response(status)
@@ -372,6 +735,9 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
     def _path_without_query(self) -> str:
         return self.path.split("?", 1)[0]
 
+    def _inference_api_key(self) -> str:
+        return self.headers.get("x-inference-api-key", "").strip()
+
     def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -379,6 +745,13 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _admin_authorized(self) -> bool:
+        expected = resolve_admin_token()
+        if not expected:
+            return False
+        supplied = self.headers.get(ADMIN_TOKEN_HEADER, "")
+        return compare_digest(supplied, expected)
 
     def log_message(self, *_args) -> None:
         # Silence per-request logging; inference bodies could be large/noisy.

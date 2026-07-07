@@ -466,7 +466,6 @@ def run_registry_lane_sn60_duel(tmp_path: Path, monkeypatch, *, agent_source=VAL
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-a",
         public_root=str(public_root),
-        screening_hook=execute,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )

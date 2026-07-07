@@ -7,6 +7,7 @@ import re
 import secrets
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,12 @@ from statistics import fmean
 from typing import Callable, NamedTuple, TypedDict
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files, write_bundle_files
+from kata.evaluators.king_cache import (
+    KingScoreboard,
+    benchmark_version_key,
+    load_king_scoreboard,
+    save_king_scoreboard,
+)
 from kata.provenance import sha256_directory
 from kata.util import write_json
 
@@ -27,6 +34,12 @@ DEFAULT_REPLICAS_PER_PROJECT = 1
 DEFAULT_BENCHMARK_FILENAME = "curated-highs-only-2025-08-08.json"
 DEFAULT_EXECUTION_SUBPROCESS_TIMEOUT_SECONDS = 35 * 60
 DEFAULT_EVALUATION_SUBPROCESS_TIMEOUT_SECONDS = 60 * 60
+# The problems in one variant are independent codebases and each replica spends
+# almost all its wall-clock waiting on inference, so scoring them concurrently is
+# a near-free speedup. Kept conservative by default to keep peak load on the
+# inference proxy / OpenRouter modest; raise via KATA_SN60_PROJECT_CONCURRENCY.
+PROJECT_CONCURRENCY_ENV_NAME = "KATA_SN60_PROJECT_CONCURRENCY"
+DEFAULT_PROJECT_CONCURRENCY = 3
 
 
 @dataclass(frozen=True)
@@ -188,6 +201,23 @@ def _env_positive_float(name: str, default: float) -> float:
     return default
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value and value.strip():
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return default
+        if parsed > 0:
+            return parsed
+    return default
+
+
+def resolve_project_concurrency() -> int:
+    """How many problems of one variant to score at once (>= 1)."""
+    return _env_positive_int(PROJECT_CONCURRENCY_ENV_NAME, DEFAULT_PROJECT_CONCURRENCY)
+
+
 def sn60_codebase_pass_count(replica_results: list[Sn60ReplicaResult]) -> int:
     """Number of distinct projects that pass the configured replica threshold."""
     passes = 0
@@ -213,6 +243,8 @@ def run_sn60_bitsec_duel(
     eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
     execution_hook: Sn60ExecutionHook | None = None,
     evaluation_hook: Sn60EvaluationHook | None = None,
+    king_scoreboard_path: str | None = None,
+    progress_callback: Callable[[Sn60ReplicaContext, Sn60ReplicaResult], None] | None = None,
 ) -> Sn60DuelSummary:
     if not project_keys:
         raise ValueError("SN60 duel requires at least one project key.")
@@ -244,34 +276,50 @@ def run_sn60_bitsec_duel(
     king_hash = hash_bundle_root(king_root)
     candidate_hash = hash_bundle_root(candidate_root)
 
-    def _run_phase(
-        keys: list[str],
-        variant_name: str,
-        artifact_root: Path,
-    ) -> list[Sn60ReplicaResult]:
-        return run_variant_replicas(
-            run_id=run_id,
-            run_root=run_root,
-            variant_name=variant_name,
-            artifact_root=artifact_root,
-            project_keys=keys,
-            replicas_per_project=replicas_per_project,
-            sandbox_source=source,
-            execution_hook=resolved_execution_hook,
-            evaluation_hook=resolved_evaluation_hook,
-            eval_max_vulns=eval_max_vulns,
+    # The king's score is stable for a fixed king + benchmark, so route it through
+    # the per-project cache when a scoreboard is configured: an uncached project
+    # runs the king once and stores it; a cached project reuses it without paying
+    # for inference. The candidate always runs fresh.
+    king_execution_hook = resolved_execution_hook
+    king_evaluation_hook = resolved_evaluation_hook
+    if king_scoreboard_path:
+        king_execution_hook, king_evaluation_hook = build_cached_king_hooks(
+            scoreboard_path=king_scoreboard_path,
+            king_hash=king_hash,
+            benchmark_version=benchmark_version_key(source.scorer_version, source.benchmark_sha256),
+            base_execution_hook=resolved_execution_hook,
+            base_evaluation_hook=resolved_evaluation_hook,
         )
 
-    candidate_results: list[Sn60ReplicaResult] = []
-    king_results: list[Sn60ReplicaResult] = []
-    for project_key in project_keys:
-        project_candidate_results = _run_phase(
-            [project_key],
-            "candidate",
-            candidate_root,
-        )
-        candidate_results.extend(project_candidate_results)
-        king_results.extend(_run_phase([project_key], "king", king_root))
+    # Score the king first: on the first duel this fills the king's 6 problems and
+    # caches them; on every later duel the king is served from that cache (no
+    # inference), so the round is "king (all 6) -> candidate -> candidate -> ...".
+    king_results = score_variant_on_projects(
+        run_id=run_id,
+        run_root=run_root,
+        variant_name="king",
+        artifact_root=king_root,
+        project_keys=project_keys,
+        replicas_per_project=replicas_per_project,
+        sandbox_source=source,
+        execution_hook=king_execution_hook,
+        evaluation_hook=king_evaluation_hook,
+        eval_max_vulns=eval_max_vulns,
+        progress_callback=progress_callback,
+    )
+    candidate_results = score_variant_on_projects(
+        run_id=run_id,
+        run_root=run_root,
+        variant_name="candidate",
+        artifact_root=candidate_root,
+        project_keys=project_keys,
+        replicas_per_project=replicas_per_project,
+        sandbox_source=source,
+        execution_hook=resolved_execution_hook,
+        evaluation_hook=resolved_evaluation_hook,
+        eval_max_vulns=eval_max_vulns,
+        progress_callback=progress_callback,
+    )
     ordered_executed_keys = list(project_keys)
 
     king_summary = summarize_variant(
@@ -302,7 +350,7 @@ def run_sn60_bitsec_duel(
     return summary
 
 
-def run_variant_replicas(
+def score_variant_on_projects(
     *,
     run_id: str,
     run_root: Path,
@@ -314,79 +362,114 @@ def run_variant_replicas(
     execution_hook: Sn60ExecutionHook,
     evaluation_hook: Sn60EvaluationHook,
     eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
-    stop_on_invalid: bool = False,
+    progress_callback: Callable[[Sn60ReplicaContext, Sn60ReplicaResult], None] | None = None,
 ) -> list[Sn60ReplicaResult]:
     """Run every replica for one variant over the given projects.
 
-    Returns the flat replica results (unsummarized) so callers can run projects in
-    phases and summarize the combined set once.
+    Returns the flat replica results (unsummarized) so callers can score king and
+    candidate independently and summarize each set once. ``progress_callback`` is
+    invoked after each replica finishes so callers can publish live progress.
+
+    The replicas are independent -- disjoint bundles, reports and evaluation files,
+    and a distinct per-problem inference token each -- so they are scored
+    concurrently (up to ``resolve_project_concurrency()`` at a time). Only the
+    subprocess-heavy execution/evaluation runs on worker threads; the results are
+    collected and ``progress_callback`` is invoked from *this* thread as each unit
+    finishes, so the callback stays single-threaded and needs no locking.
     """
     variant_root = run_root / variant_name
-    replica_results: list[Sn60ReplicaResult] = []
 
+    contexts: list[Sn60ReplicaContext] = []
     for project_key in project_keys:
         for replica_index in range(1, replicas_per_project + 1):
             replica_root = variant_root / project_key / f"replica-{replica_index:02d}"
-            bundle_root = replica_root / "bundle"
             project_reports_root = replica_root / "reports" / project_key
-            project_reports_root.mkdir(parents=True, exist_ok=True)
-            stage_bundle(artifact_root, bundle_root)
-
-            context = Sn60ReplicaContext(
-                run_id=run_id,
-                variant_name=variant_name,
-                project_key=project_key,
-                replica_index=replica_index,
-                bundle_root=str(bundle_root),
-                reports_root=str(project_reports_root),
-                report_path=str(project_reports_root / "report.json"),
-                evaluation_path=str(project_reports_root / "evaluation.json"),
-                sandbox_source=sandbox_source,
-                eval_max_vulns=eval_max_vulns,
+            contexts.append(
+                Sn60ReplicaContext(
+                    run_id=run_id,
+                    variant_name=variant_name,
+                    project_key=project_key,
+                    replica_index=replica_index,
+                    bundle_root=str(replica_root / "bundle"),
+                    reports_root=str(project_reports_root),
+                    report_path=str(project_reports_root / "report.json"),
+                    evaluation_path=str(project_reports_root / "evaluation.json"),
+                    sandbox_source=sandbox_source,
+                    eval_max_vulns=eval_max_vulns,
+                )
             )
-            report_payload = execution_hook(context)
-            write_json(Path(context.report_path), report_payload)
-            evaluation_payload = evaluation_hook(context, report_payload)
-            write_json(Path(context.evaluation_path), evaluation_payload)
-            replica_result = build_replica_result(context, report_payload, evaluation_payload)
-            replica_results.append(replica_result)
-            if stop_on_invalid and replica_result.evaluation_status != "success":
-                return replica_results
 
+    def run_one(context: Sn60ReplicaContext) -> Sn60ReplicaResult:
+        Path(context.reports_root).mkdir(parents=True, exist_ok=True)
+        stage_bundle(artifact_root, Path(context.bundle_root))
+        report_payload = execution_hook(context)
+        write_json(Path(context.report_path), report_payload)
+        evaluation_payload = evaluation_hook(context, report_payload)
+        write_json(Path(context.evaluation_path), evaluation_payload)
+        return build_replica_result(context, report_payload, evaluation_payload)
+
+    max_workers = max(1, min(resolve_project_concurrency(), len(contexts)))
+    replica_results: list[Sn60ReplicaResult] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(run_one, context): context for context in contexts}
+        for future in as_completed(futures):
+            context = futures[future]
+            replica_result = future.result()
+            replica_results.append(replica_result)
+            if progress_callback is not None:
+                progress_callback(context, replica_result)
+
+    # Completion order is nondeterministic under concurrency; sort so callers that
+    # summarize or display the flat list see a stable (project, replica) order.
+    replica_results.sort(key=lambda r: (r.project_key, r.replica_index))
     return replica_results
 
 
-def evaluate_variant(
+def build_cached_king_hooks(
     *,
-    run_id: str,
-    run_root: Path,
-    variant_name: str,
-    artifact_root: Path,
-    project_keys: list[str],
-    replicas_per_project: int,
-    sandbox_source: Sn60SandboxSource,
-    execution_hook: Sn60ExecutionHook,
-    evaluation_hook: Sn60EvaluationHook,
-    eval_max_vulns: int = DEFAULT_EVAL_MAX_VULNS,
-) -> Sn60VariantSummary:
-    replica_results = run_variant_replicas(
-        run_id=run_id,
-        run_root=run_root,
-        variant_name=variant_name,
-        artifact_root=artifact_root,
-        project_keys=project_keys,
-        replicas_per_project=replicas_per_project,
-        sandbox_source=sandbox_source,
-        execution_hook=execution_hook,
-        evaluation_hook=evaluation_hook,
-        eval_max_vulns=eval_max_vulns,
+    scoreboard_path: str | Path,
+    king_hash: str,
+    benchmark_version: str,
+    base_execution_hook: Sn60ExecutionHook,
+    base_evaluation_hook: Sn60EvaluationHook,
+) -> tuple[Sn60ExecutionHook, Sn60EvaluationHook]:
+    """Wrap the king's hooks so cached projects skip inference entirely.
+
+    On a cache hit both hooks return the stored payloads (no Docker exec, no
+    scorer call); the surrounding scoring path still materializes identical
+    ``report.json`` / ``evaluation.json`` artifacts in the run. On a miss the
+    base hooks run and the payloads are recorded for future rounds.
+    """
+    board: KingScoreboard = load_king_scoreboard(
+        scoreboard_path,
+        king_hash=king_hash,
+        benchmark_version=benchmark_version,
     )
-    return summarize_variant(
-        variant_name=variant_name,
-        artifact_root=artifact_root,
-        artifact_hash=hash_bundle_root(artifact_root),
-        replica_results=replica_results,
-    )
+
+    def execution_hook(context: Sn60ReplicaContext) -> dict[str, object]:
+        cached = board.cached_run(context.project_key, context.replica_index)
+        if cached is not None:
+            return dict(cached["report"])  # type: ignore[arg-type]
+        return base_execution_hook(context)
+
+    def evaluation_hook(
+        context: Sn60ReplicaContext,
+        report_payload: dict[str, object],
+    ) -> dict[str, object]:
+        cached = board.cached_run(context.project_key, context.replica_index)
+        if cached is not None:
+            return dict(cached["evaluation"])  # type: ignore[arg-type]
+        evaluation_payload = base_evaluation_hook(context, report_payload)
+        board.record_run(
+            context.project_key,
+            context.replica_index,
+            report_payload,
+            evaluation_payload,
+        )
+        save_king_scoreboard(scoreboard_path, board)
+        return evaluation_payload
+
+    return execution_hook, evaluation_hook
 
 
 def resolve_sn60_sandbox_source(
@@ -807,7 +890,13 @@ def build_default_execution_hook(
 ) -> Sn60ExecutionHook:
     def _execute(context: Sn60ReplicaContext) -> dict[str, object]:
         proxy_network = resolve_sn60_proxy_network()
-        inference_api = resolve_sn60_inference_api()
+        # Scope the relay's per-agent inference budget to THIS problem: embed a
+        # unique token (per variant/project/replica) in the URL the agent calls.
+        # Agents append "/inference" to INFERENCE_API, so the relay reads the token
+        # from the path and meters each agent-run independently — regardless of the
+        # shared network source address.
+        budget_token = sn60_synthetic_ids(context).job_run_id
+        inference_api = f"{resolve_sn60_inference_api().rstrip('/')}/j/{budget_token}"
         # Untrusted miner code runs in this container; guarantee it can only
         # reach the proxy (never the public internet) before starting it.
         ensure_internal_agent_network(proxy_network)
@@ -919,6 +1008,15 @@ def extract_sn60_evaluation_payload(stdout: str) -> dict[str, object] | None:
     return None
 
 
+def report_finding_count(report_payload: dict[str, object]) -> int:
+    """Number of vulnerabilities in an agent report (`{report: {vulnerabilities}}`)."""
+    report = report_payload.get("report")
+    if isinstance(report, dict):
+        vulnerabilities = report.get("vulnerabilities")
+        return len(vulnerabilities) if isinstance(vulnerabilities, list) else 0
+    return 0
+
+
 def build_default_evaluation_hook(source: Sn60SandboxSource) -> Sn60EvaluationHook:
     def _evaluate(
         context: Sn60ReplicaContext,
@@ -926,6 +1024,25 @@ def build_default_evaluation_hook(source: Sn60SandboxSource) -> Sn60EvaluationHo
     ) -> dict[str, object]:
         if not Path(context.report_path).exists():
             write_json(Path(context.report_path), report_payload)
+        # Cost/latency saver: a successful report with zero findings has zero true
+        # positives by definition, so there is nothing for the LLM judge to score.
+        # Skip the scorer call entirely and synthesize the deterministic empty
+        # result -- but keep the benchmark's expected count so a missed project
+        # still counts against the detection score (no accuracy change).
+        if bool(report_payload.get("success")) and report_finding_count(report_payload) == 0:
+            return {
+                "status": "success",
+                "result": {
+                    "project": context.project_key,
+                    "detection_rate": 0.0,
+                    "true_positives": 0,
+                    "total_expected": sn60_benchmark_expected_count(source, context.project_key),
+                    "total_found": 0,
+                    "precision": 0.0,
+                    "f1_score": 0.0,
+                    "result": "no findings reported; LLM scoring skipped",
+                },
+            }
         try:
             completed = subprocess.run(
                 build_bitsec_evaluation_command(context),

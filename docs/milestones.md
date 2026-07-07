@@ -21,19 +21,25 @@ mine any supported subnet in one click."
 registered and active in `lanes/registry.json`, and it runs the full loop end-to-end in
 production. Working today:
 
-- **Full competition loop** — submit → screen → duel → decide → verify → promote —
-  driven through the pack registry.
+- **Round-based competition** — PR open = intake (screen + label `kata:pending`); a
+  scheduled round then locks the pending PRs, screens them, scores the **cached** king vs.
+  all candidates on the same secretly-sampled problems, ranks them, and promotes the best
+  that beats the king — driven through the pack registry.
 - **A real king** — the current best SN60 agent is always published under `kings/`.
 - **Isolated, fair execution** — agents run in an internet-blocked sandbox on one fixed
   model, so the king and every challenger are judged identically.
-- **Strict, objective promotion** — a challenger wins only by beating the king on
-  SN60-style metrics: detection score, true positives, precision, F1 score, then
-  fewer invalid/error evaluations.
-- **GitHub automation** — webhook intake, a durable PR queue, and a resident service
-  that runs the engine, comments results, and applies outcome labels.
-- **Reproducible provenance** — benchmark and artifact hashes on every duel, with a
-  freshness check that re-runs a stale result instead of merging it.
-- **Dashboard** — live evaluation status and current-king state.
+- **Strict, objective promotion** — a challenger wins only by strictly beating the king on
+  SN60-style metrics: detection score, true positives, precision, F1 score, then fewer
+  invalid/error evaluations.
+- **Anti-spam & fair iteration** — one open PR per contributor; a kept-open PR is re-scored
+  next round only if its commit or the king changed, so a promoted king re-enters every
+  pending challenger to face the new bar.
+- **GitHub automation** — intake labeling, the round runner, and a resident service that
+  merges + promotes a round winner, with color-coded outcome labels.
+- **Reproducible provenance** — benchmark and artifact hashes on every round, with a
+  freshness check that holds a stale or unmergeable winner instead of merging it.
+- **Dashboard** — a live current-round status list plus a round-history highlights feed
+  (achievements: new king, first true positive, record detection).
 
 ---
 

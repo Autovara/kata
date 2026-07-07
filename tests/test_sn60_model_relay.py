@@ -9,13 +9,20 @@ from urllib.request import Request, urlopen
 import pytest
 
 from kata.sn60_model_relay import (
+    ADMIN_TOKEN_HEADER,
+    AGENT_BUDGET,
     COST_METER,
+    DEFAULT_DIRECT_PINNED_MODEL,
+    DEFAULT_DIRECT_UPSTREAM,
     DEFAULT_PINNED_MODEL,
     DEFAULT_UPSTREAM,
     CostMeter,
     build_server,
     extract_usage,
+    is_akash_api_key,
+    is_proxy_api_key,
     pin_model_in_body,
+    resolve_direct_provider,
     resolve_max_output_tokens,
     resolve_pinned_model,
     resolve_timeout,
@@ -67,10 +74,11 @@ def test_pin_model_adds_max_tokens_when_absent() -> None:
     assert out["max_tokens"] == 32000
 
 
-def test_pin_model_keeps_larger_requested_max_tokens() -> None:
-    body = json.dumps({"model": "x", "messages": [], "max_tokens": 50000}).encode()
+def test_pin_model_clamps_larger_requested_max_tokens() -> None:
+    # A call asking for more than the ceiling is clamped down so it can't run away.
+    body = json.dumps({"model": "x", "messages": [], "max_tokens": 82000}).encode()
     out = json.loads(pin_model_in_body(body, "qwen/pinned", max_output_tokens=32000))
-    assert out["max_tokens"] == 50000
+    assert out["max_tokens"] == 32000
 
 
 def test_pin_model_leaves_max_tokens_untouched_when_override_zero() -> None:
@@ -107,9 +115,82 @@ def test_resolve_pinned_model_default(monkeypatch) -> None:
     assert resolve_pinned_model() == DEFAULT_PINNED_MODEL
 
 
+def test_resolve_pinned_model_uses_akash_default_for_akash_keys(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+    assert resolve_pinned_model("akml-test") == DEFAULT_DIRECT_PINNED_MODEL
+    assert resolve_pinned_model("akml_test") == DEFAULT_DIRECT_PINNED_MODEL
+
+
+def test_resolve_pinned_model_treats_standard_default_as_provider_default(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", DEFAULT_PINNED_MODEL)
+    assert resolve_pinned_model("akml-test") == DEFAULT_DIRECT_PINNED_MODEL
+    assert resolve_pinned_model("sk-or-test") == DEFAULT_PINNED_MODEL
+
+
 def test_resolve_pinned_model_override(monkeypatch) -> None:
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "vendor/model")
     assert resolve_pinned_model() == "vendor/model"
+    assert resolve_pinned_model("akml-test") == "vendor/model"
+
+
+def test_is_akash_api_key_detects_known_prefixes() -> None:
+    assert is_akash_api_key("akml-test")
+    assert is_akash_api_key("akml_test")
+    assert not is_akash_api_key("sk-or-test")
+    assert not is_akash_api_key("cpk_test")
+    assert not is_akash_api_key("")
+
+
+def test_is_proxy_api_key_detects_existing_proxy_router_prefixes() -> None:
+    assert is_proxy_api_key("sk-or-test")
+    assert is_proxy_api_key("cpk_test")
+    assert not is_proxy_api_key("akml-test")
+    assert not is_proxy_api_key("other-key")
+
+
+def test_resolve_direct_provider_uses_akash_defaults_and_overrides(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_AKASH_UPSTREAM", raising=False)
+    monkeypatch.delenv("KATA_RELAY_AKASH_MODEL", raising=False)
+    provider = resolve_direct_provider("akml-test")
+    assert provider is not None
+    assert provider.upstream == DEFAULT_DIRECT_UPSTREAM
+    assert provider.model == DEFAULT_DIRECT_PINNED_MODEL
+    monkeypatch.setenv("KATA_RELAY_AKASH_UPSTREAM", "http://akash.local/v1/chat/completions")
+    monkeypatch.setenv("KATA_RELAY_AKASH_MODEL", "Akash/Custom")
+    provider = resolve_direct_provider("akml-test")
+    assert provider is not None
+    assert provider.upstream == "http://akash.local/v1/chat/completions"
+    assert provider.model == "Akash/Custom"
+
+
+def test_resolve_direct_provider_supports_configured_provider(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_DIRECT_KEY_PREFIXES", "foo-,bar_")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_UPSTREAM", "https://provider.example/v1/chat/completions")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_MODEL", "Provider/Model")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_HEADER", "X-API-Key")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE", "Token {api_key}")
+
+    provider = resolve_direct_provider("foo-secret")
+
+    assert provider is not None
+    assert provider.upstream == "https://provider.example/v1/chat/completions"
+    assert provider.model == "Provider/Model"
+    assert provider.auth_header == "X-API-Key"
+    assert provider.auth_value_template == "Token {api_key}"
+    assert resolve_direct_provider("sk-or-test") is None
+    assert resolve_direct_provider("cpk_test") is None
+
+
+def test_resolve_direct_provider_can_allow_unknown_keys(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_DIRECT_ALLOW_UNKNOWN", "1")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_UPSTREAM", "https://provider.example/v1/chat/completions")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_MODEL", "Provider/Model")
+
+    provider = resolve_direct_provider("unknown-secret")
+
+    assert provider is not None
+    assert provider.model == "Provider/Model"
+    assert resolve_direct_provider("sk-or-test") is None
 
 
 def test_resolve_max_output_tokens_default(monkeypatch) -> None:
@@ -153,6 +234,13 @@ class _RecordingUpstream(BaseHTTPRequestHandler):
                 "body": body,
             }
         )
+        force_status = getattr(self.server, "force_status", None)
+        if force_status is not None:
+            self._reply(
+                force_status,
+                {"error": {"message": "Key limit exceeded (total limit)", "code": force_status}},
+            )
+            return
         if self.headers.get("X-Upstream-Boom") == "yes":
             self._reply(502, {"detail": "upstream boom"})
             return
@@ -189,6 +277,11 @@ class _RecordingUpstream(BaseHTTPRequestHandler):
 @pytest.fixture
 def relay_and_upstream(monkeypatch):
     COST_METER.reset()  # process-wide meter; keep each test independent
+    AGENT_BUDGET.reset()  # process-wide per-agent budget; isolate each test
+    # Default the budget off so it doesn't interfere with non-budget tests; the
+    # budget tests set their own limits explicitly.
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "0")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
     upstream.records = []  # type: ignore[attr-defined]
     upstream.daemon_threads = True
@@ -199,6 +292,7 @@ def relay_and_upstream(monkeypatch):
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "qwen/pinned-test")
     monkeypatch.setenv("KATA_RELAY_PRICE_INPUT_PER_M", "2")
     monkeypatch.setenv("KATA_RELAY_PRICE_OUTPUT_PER_M", "5")
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "test-admin")
 
     relay = build_server("127.0.0.1", 0)
     threading.Thread(target=relay.serve_forever, daemon=True).start()
@@ -211,6 +305,46 @@ def relay_and_upstream(monkeypatch):
         upstream.shutdown()
 
 
+@pytest.fixture
+def akash_upstream(monkeypatch):
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
+    upstream.records = []  # type: ignore[attr-defined]
+    upstream.daemon_threads = True
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    upstream_port = upstream.server_address[1]
+    monkeypatch.setenv(
+        "KATA_RELAY_AKASH_UPSTREAM",
+        f"http://127.0.0.1:{upstream_port}/v1/chat/completions",
+    )
+
+    try:
+        yield upstream
+    finally:
+        upstream.shutdown()
+
+
+@pytest.fixture
+def generic_direct_upstream(monkeypatch):
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
+    upstream.records = []  # type: ignore[attr-defined]
+    upstream.daemon_threads = True
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    upstream_port = upstream.server_address[1]
+    monkeypatch.setenv("KATA_RELAY_DIRECT_KEY_PREFIXES", "foo-")
+    monkeypatch.setenv(
+        "KATA_RELAY_DIRECT_UPSTREAM",
+        f"http://127.0.0.1:{upstream_port}/v1/chat/completions",
+    )
+    monkeypatch.setenv("KATA_RELAY_DIRECT_MODEL", "Provider/Model")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_HEADER", "X-API-Key")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE", "Token {api_key}")
+
+    try:
+        yield upstream
+    finally:
+        upstream.shutdown()
+
+
 def _post(url: str, body: bytes, headers: dict[str, str] | None = None):
     request = Request(url, data=body, method="POST", headers=headers or {})
     with urlopen(request, timeout=10) as response:
@@ -219,6 +353,154 @@ def _post(url: str, body: bytes, headers: dict[str, str] | None = None):
             response.read(),
             {k.lower(): v for k, v in response.headers.items()},
         )
+
+
+def _admin_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    return {ADMIN_TOKEN_HEADER: "test-admin", **(extra or {})}
+
+
+def test_inference_budget_refuses_agent_after_call_limit(relay_and_upstream, monkeypatch) -> None:
+    base, upstream = relay_and_upstream
+    AGENT_BUDGET.reset()
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "2")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")  # isolate the call-count cap
+    body = json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode()
+
+    for _ in range(2):
+        status, _, _ = _post(base + "/inference", body)
+        assert status == 200
+
+    seen = len(upstream.records)
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/inference", body)
+    assert excinfo.value.code == 429
+    # The refused call never reached upstream, so it cost nothing.
+    assert len(upstream.records) == seen
+    AGENT_BUDGET.reset()
+
+
+def test_inference_budget_is_per_problem_token_not_global(relay_and_upstream, monkeypatch) -> None:
+    # The bug this guards against: a shared source address made the budget cap the
+    # whole round. Keying on the per-problem token, each problem gets its own budget.
+    base, upstream = relay_and_upstream
+    AGENT_BUDGET.reset()
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "2")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")
+    body = json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode()
+
+    # Problem token AAA: 2 calls served, 3rd refused.
+    for _ in range(2):
+        status, _, _ = _post(base + "/j/AAA/inference", body)
+        assert status == 200
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/j/AAA/inference", body)
+    assert excinfo.value.code == 429
+
+    # A DIFFERENT problem token (BBB) gets its own fresh budget — first call served.
+    status, _, _ = _post(base + "/j/BBB/inference", body)
+    assert status == 200
+
+    # Upstream sees /inference (token stripped), never /j/<token>/inference.
+    assert upstream.records and all(r["path"] == "/inference" for r in upstream.records)
+    AGENT_BUDGET.reset()
+
+
+def test_inference_budget_survives_interleaved_problem_tokens(
+    relay_and_upstream, monkeypatch
+) -> None:
+    # Problems are scored concurrently, so their tokens arrive interleaved. Each
+    # token must keep its own running count -- a different token in between must not
+    # reset it. (The old single-key budget reset on every token change, which would
+    # have let interleaving bypass the cap.)
+    base, upstream = relay_and_upstream
+    AGENT_BUDGET.reset()
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "2")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")
+    body = json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode()
+
+    # Interleave AAA and BBB so each ends up with exactly 2 served calls.
+    for token in ("AAA", "BBB", "AAA", "BBB"):
+        status, _, _ = _post(base + f"/j/{token}/inference", body)
+        assert status == 200
+
+    # Both are now at their 2-call cap; the next call for each is refused.
+    for token in ("AAA", "BBB"):
+        with pytest.raises(HTTPError) as excinfo:
+            _post(base + f"/j/{token}/inference", body)
+        assert excinfo.value.code == 429
+    AGENT_BUDGET.reset()
+
+
+def test_upstream_check_reports_ok_when_reachable(relay_and_upstream) -> None:
+    base, upstream = relay_and_upstream
+    status, body, _ = _post(
+        base + "/healthz/upstream",
+        b"",
+        _admin_headers({"x-inference-api-key": "k"}),
+    )
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["ok"] is True
+    assert payload["status"] == 200
+    # The probe hits upstream /inference with a bounded max_tokens (not forced up to
+    # the 32k inference ceiling), so it stays cheap while giving the reasoning model
+    # room to return a usable reply.
+    last = upstream.records[-1]
+    assert last["path"] == "/inference"
+    assert json.loads(last["body"])["max_tokens"] == 2000
+
+
+def test_upstream_check_reports_failure_status(relay_and_upstream) -> None:
+    base, upstream = relay_and_upstream
+    upstream.force_status = 403  # simulate OpenRouter "Key limit exceeded"
+    try:
+        status, body, _ = _post(
+            base + "/healthz/upstream",
+            b"",
+            _admin_headers({"x-inference-api-key": "k"}),
+        )
+    finally:
+        upstream.force_status = None
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["ok"] is False
+    assert payload["status"] == 403
+    assert "limit" in str(payload.get("detail", "")).lower()
+
+
+def test_upstream_check_requires_admin_token(relay_and_upstream) -> None:
+    base, upstream = relay_and_upstream
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/healthz/upstream", b"", {"x-inference-api-key": "k"})
+    assert excinfo.value.code == 403
+    assert upstream.records == []
+
+
+def test_upstream_check_with_akash_key_probes_akash_directly(
+    relay_and_upstream, akash_upstream, monkeypatch
+) -> None:
+    base, bitsec_upstream = relay_and_upstream
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+
+    status, body, _ = _post(
+        base + "/healthz/upstream",
+        b"",
+        _admin_headers({"x-inference-api-key": "akml-test"}),
+    )
+
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["ok"] is True
+    assert payload["status"] == 200
+    assert bitsec_upstream.records == []
+    assert len(akash_upstream.records) == 1
+    record = akash_upstream.records[0]
+    assert record["path"] == "/v1/chat/completions"
+    assert record["headers"].get("authorization") == "Bearer akml-test"
+    assert "x-inference-api-key" not in record["headers"]
+    outbound = json.loads(record["body"])
+    assert outbound["model"] == DEFAULT_DIRECT_PINNED_MODEL
+    assert outbound["max_tokens"] == 2000
 
 
 def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) -> None:
@@ -249,6 +531,77 @@ def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) 
     assert "seed" not in outbound
     # The agent's inference key rides through untouched to the real proxy.
     assert record["headers"].get("x-inference-api-key") == "sk-or-abc"
+
+
+def test_akash_inference_uses_direct_endpoint_not_bitsec_proxy(
+    relay_and_upstream, akash_upstream, monkeypatch
+) -> None:
+    base, bitsec_upstream = relay_and_upstream
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+    body = json.dumps(
+        {
+            "model": "openrouter/other",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.9,
+            "max_tokens": 100,
+        }
+    ).encode()
+
+    status, _, _ = _post(
+        base + "/inference",
+        body,
+        {"Content-Type": "application/json", "x-inference-api-key": "akml-test"},
+    )
+
+    assert status == 200
+    assert bitsec_upstream.records == []
+    assert len(akash_upstream.records) == 1
+    record = akash_upstream.records[0]
+    assert record["path"] == "/v1/chat/completions"
+    assert record["headers"].get("authorization") == "Bearer akml-test"
+    assert "x-inference-api-key" not in record["headers"]
+    outbound = json.loads(record["body"])
+    assert outbound["model"] == DEFAULT_DIRECT_PINNED_MODEL
+    assert outbound["max_tokens"] == 32000
+    assert "temperature" not in outbound
+    costs = _get_json(base + "/costs")
+    assert costs["requests"] == 1
+    assert costs["input_tokens"] == 100
+    assert costs["output_tokens"] == 20
+
+
+def test_configured_direct_provider_uses_generic_direct_path(
+    relay_and_upstream, generic_direct_upstream, monkeypatch
+) -> None:
+    base, bitsec_upstream = relay_and_upstream
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+    body = json.dumps(
+        {
+            "model": "ignored/model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.9,
+            "max_tokens": 100,
+        }
+    ).encode()
+
+    status, _, _ = _post(
+        base + "/inference",
+        body,
+        {"Content-Type": "application/json", "x-inference-api-key": "foo-secret"},
+    )
+
+    assert status == 200
+    assert bitsec_upstream.records == []
+    assert len(generic_direct_upstream.records) == 1
+    record = generic_direct_upstream.records[0]
+    assert record["path"] == "/v1/chat/completions"
+    assert record["headers"].get("x-api-key") == "Token foo-secret"
+    assert "authorization" not in record["headers"]
+    assert "x-inference-api-key" not in record["headers"]
+    outbound = json.loads(record["body"])
+    assert outbound["model"] == "Provider/Model"
+    assert outbound["max_tokens"] == 32000
+    assert "temperature" not in outbound
 
 
 def test_inference_query_string_is_still_pinned(relay_and_upstream) -> None:
@@ -397,12 +750,25 @@ def test_costs_reset_zeroes_the_running_total(relay_and_upstream) -> None:
           {"Content-Type": "application/json"})
     assert _get_json(base + "/costs")["input_tokens"] == 100
 
-    _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+    _post(base + "/costs/reset", b"", _admin_headers({"Content-Type": "application/json"}))
 
     after = _get_json(base + "/costs")
     assert after["requests"] == 0
     assert after["input_tokens"] == 0
     assert after["usd_total"] == 0.0
+
+
+def test_costs_reset_requires_admin_token(relay_and_upstream) -> None:
+    base, _ = relay_and_upstream
+    _post(base + "/inference", json.dumps({"messages": []}).encode(),
+          {"Content-Type": "application/json"})
+    assert _get_json(base + "/costs")["requests"] == 1
+
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+
+    assert excinfo.value.code == 403
+    assert _get_json(base + "/costs")["requests"] == 1
 
 
 def test_scoring_style_traffic_is_not_metered(relay_and_upstream) -> None:

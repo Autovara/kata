@@ -42,6 +42,8 @@ contribution workflow, see `docs/workflow.md`.
 ## What belongs where
 
 - Engine changes: `kata/`
+- Round evaluation, ranking, and promotion: `kata/challenge.py` (`run_sn60_round`)
+- King score cache: `kata/evaluators/king_cache.py`
 - Lane and registry state schemas: `kata/lane_state.py`
 - Evaluator adapters: `kata/evaluators/`
 - Submission contract and validation: `kata/submissions.py`, `kata/screening.py`

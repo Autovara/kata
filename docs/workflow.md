@@ -13,34 +13,55 @@ For the exact miner bundle contract, see [submissions.md](submissions.md).
 
 ## System Roles
 
-- `kata` is the engine. It validates submissions, runs screening and duels,
-  records provenance, and promotes winners.
-- `kata-bot` is the GitHub automation layer. It receives PR events, queues jobs,
-  calls Kata commands, comments on PRs, closes losers, and merges winners.
-- `kata-board` is the dashboard. It reads live status, lane state, run artifacts,
-  and PR history.
+- `kata` is the engine. It validates submissions, runs screening, scores a round
+  (the cached king vs. all candidates on the same problems), ranks them, records
+  provenance, and promotes winners.
+- `kata-bot` is the GitHub automation layer. On a PR event it **intakes** the PR
+  (screen + label `kata:pending`). When a **round** is run, it locks the pending PRs,
+  gates and screens them, calls the engine to score them, applies the outcome labels,
+  and merges + promotes the winner. It publishes a live round status and history for
+  the dashboard.
+- `kata-board` is the dashboard. It reads live round status, lane state, run artifacts,
+  the round-history highlights feed, and PR history.
 - `sandbox` is the pinned SN60 Bitsec evaluator mirror. Kata reads and executes
   against it, but Kata changes must not modify upstream subnet code.
 
 ## Miner Submission Lifecycle
 
+Scoring happens in **scheduled rounds**, not on PR open. Opening a PR enters you as a
+pending entrant; a round scores every pending entrant against the king at once.
+
+**Intake — when you open or update a PR:**
+
 1. **Create a branch.** The miner works in the public Kata repo on a normal GitHub
    branch.
 2. **Add one bundle.** The PR adds exactly one directory under
-   `submissions/<subnet-pack>/<mode>/<submission-id>/`.
-3. **Validate locally.** The miner runs `kata submission validate` before opening
-   the PR.
-4. **Open PR.** The PR targets the default competition branch and only touches
-   the submission bundle.
-5. **Queue.** `kata-bot` receives the webhook and stores a durable queue job keyed
-   by repo, PR number, and head SHA.
-6. **Inspect.** Before trusting PR contents, the bot checks changed paths and
-   rejects off-scope edits.
-7. **Evaluate.** Kata evaluates the candidate against the current king.
-8. **Decide.** Kata reduces the result to one PR action.
-9. **Apply action.** The bot comments, labels, closes, reruns, holds, or merges.
-10. **Promote.** A verified winner is published as the new king and lane state is
-    updated.
+   `submissions/<subnet-pack>/<mode>/<submission-id>/`. A contributor may have only one
+   open PR at a time.
+3. **Validate locally.** The miner runs `kata submission validate` before opening the PR.
+4. **Open PR.** The PR targets the default competition branch and only touches the
+   submission bundle. The submission directory/id prefix and `submission.json`
+   `author` must match the GitHub account that opens the PR.
+5. **Intake.** `kata-bot` screens the PR (shape + cheap static anti-cheat) and labels it
+   `kata:pending` — it now waits for the next round. A failing or identity-mismatched
+   PR is closed `kata:invalid` before pending.
+   Pushing a commit to a benched (`kata:stale`) PR re-enters it as `kata:pending`.
+
+**Round — when a competition round is run (`kata-bot run-round-env`):**
+
+6. **Lock entrants.** The round snapshots the currently-open PRs at their commits, keeps
+   one PR per contributor (extras closed `kata:invalid`), and applies the re-entry rule —
+   a kept-open PR is re-scored only if its commit or the king changed since it last
+   competed.
+7. **Screen & mark.** Each entrant is screened again on its locked commit; survivors are
+   labeled `kata:executing`.
+8. **Score.** Kata scores the **cached** king and every candidate on the same
+   secretly-sampled problems, then ranks them.
+9. **Decide & apply.** The top candidate that strictly beats the king wins. The bot
+   applies outcome labels: winner → merge + promote; a runner-up that also beat the king →
+   kept open `kata:pending`; a candidate that didn't → closed `kata:losing`.
+10. **Promote.** The verified winner is merged, published as the new king under `kings/`,
+    and the lane state is updated.
 
 ## Evaluation Stages
 
@@ -89,31 +110,32 @@ There is therefore no separate screening sandbox run and no separate screening t
 each agent runs once per project inside the duel, under the normal duel execution
 timeout.
 
-### 3. Duel
+### 3. Round scoring
 
-If screening passes, Kata runs a king-vs-candidate duel.
+A round scores the king against **all** qualified candidates on the **same** problem set.
 
-Default production behavior:
+- **The king is cached.** Its per-project scores are stored keyed by the king artifact
+  and benchmark version, so the king is scored at most once per problem — not re-run for
+  every round or every candidate. It is recomputed only when the king or benchmark changes.
+- **One sampled problem set per round.** The round samples the round's problems once
+  (secret-seeded); every candidate faces that identical set, so results are directly
+  comparable. Different rounds sample different problems, which prevents overfitting.
+- Each selected project runs once per replica by default, matching the SN60 job-run style.
+- Scoring is **resilient** — every selected project is scored, and a bad or invalid result
+  on one project (scored 0 for that project) does not abort the rest.
+- The sandbox returns SN60 metrics for each project: true positives, total expected,
+  detection rate, precision, F1, and PASS/FAIL.
+- Each candidate's per-project scores are summarized, and candidates are ranked by the
+  promotion comparator below.
 
-- all projects from the resolved benchmark snapshot are eligible
-- candidate and king run the same selected project set
-- each selected project runs once per replica by default, matching the SN60 job-run style
-- execution is per project: candidate and king both run on a project, then Kata moves to
-  the next project
-- the duel is **resilient** — every selected project is scored, and a bad or invalid
-  result on one project (scored 0 for that project) does not abort the rest
-- the sandbox returns SN60 metrics for each project: true positives, total
-  expected, detection rate, precision, F1, and PASS/FAIL
+Sampling configuration (set on the validator):
 
-MVP cost-saving behavior:
+- `KATA_SN60_PROJECT_SAMPLE_SIZE` — how many problems each round samples (MVP: 6).
+- `KATA_SN60_PROJECT_SAMPLE_SECRET` — required when the sample size is smaller than the
+  full benchmark; keeps the per-round problem set private until results.
+- `KATA_SN60_PROJECT_KEYS` — an explicit override; normally left unset for production.
 
-- validators can set `KATA_SN60_PROJECT_SAMPLE_SIZE`
-- if the sample size is smaller than the full benchmark,
-  `KATA_SN60_PROJECT_SAMPLE_SECRET` is required
-- Kata samples a random-looking project subset per evaluation
-- the selected keys are recorded in the challenge summary and lane provenance
-- `KATA_SN60_PROJECT_KEYS` is an explicit override and should normally remain
-  unset for production
+The selected keys are recorded in the round/challenge summary and lane provenance.
 
 Example MVP settings:
 
@@ -159,18 +181,46 @@ Metric meanings:
 Sandbox `PASS` still means a project run found all expected vulnerabilities.
 PASS project count is useful context, but it is not the primary promotion score.
 
-## PR Decision Actions
+## Round Outcomes
 
-Kata returns one action:
+At the end of a round, each PR resolves to one outcome (and its label):
 
-- `merge` means the candidate beat the current king and passed freshness checks.
-- `close-losing` means the candidate evaluated correctly but did not beat the
-  king.
-- `close-invalid` means the bundle or PR shape is invalid.
-- `rerun-stale` means the king, benchmark, or submission changed during
-  evaluation.
-- `hold-merge` is used by the bot when GitHub mergeability blocks an otherwise
-  winning PR.
+- **Winner** (`kata:winner:<pack>`) — the top candidate that strictly beat the king; it is
+  merged and promoted. At most one per round. Winners also receive exactly one
+  `kata:reward:*` tier for Gittensor/SN74 reward weighting.
+- **Kept pending** (`kata:pending`) — a candidate that beat the king but was not the top
+  challenger; it stays open to compete again next round.
+- **Losing** (`kata:losing`) — a candidate that competed but did not beat the king; closed.
+- **Invalid** (`kata:invalid`) — failed screening, or an extra open PR beyond the
+  one-per-contributor limit; closed.
+- **Stale** (`kata:stale`) — a kept-open PR that was unchanged since it last competed (same
+  commit and same king), so it is skipped this round; a push re-enters it as pending.
+- **Hold** (`kata:hold`) — a winner whose merge is currently blocked (merge conflict, or a
+  pre-merge promotion check that would leave the king un-updated); held for attention rather
+  than merged into a broken state.
+
+Internally the engine still reduces a single candidate's result to one of `merge`,
+`close-losing`, `close-invalid`, or `rerun-stale`; the round applies these across the batch
+and maps them to the labels above.
+
+## Winner Reward Tiers
+
+The reward tier is separate from the promotion decision. A candidate must first win the
+round and pass the pre-merge promotion checks. Then Kata reads the verified challenge
+summary and applies one tier:
+
+| Label | Condition |
+| --- | --- |
+| `kata:reward:s` | valid promotion below the higher tier thresholds |
+| `kata:reward:m` | candidate true positives >= 3, or candidate beats king by >= 2 true positives, or score delta >= 15% |
+| `kata:reward:l` | candidate true positives >= 5, or candidate beats king by >= 4 true positives, or detection score >= 60% |
+| `kata:reward:xl` | candidate true positives >= 8, or candidate beats king by >= 6 true positives, or detection score >= 85% |
+
+Gittensor uses the highest matching label multiplier on the merged PR. A base winner label
+identifies the lane (`kata:winner:sn60__bitsec`), while the reward tier determines whether
+the promotion is scored as small, medium, large, or extra-large. Gittensor also applies
+time decay to merged winners, so a newer king has more reward weight than an older winner
+PR inside the lookback window.
 
 ## Freshness And Provenance
 
@@ -193,10 +243,11 @@ the king is still current, and the benchmark lane fingerprint has not changed.
 When the final action is `merge`, the production bot:
 
 1. labels the PR with the winning lane label
-2. merges the PR
-3. publishes the candidate bundle under `kings/<subnet-pack>/<mode>/`
-4. updates lane king state
-5. clears the merged submission directory from `main`
+2. labels the PR with the deterministic reward tier
+3. merges the PR
+4. publishes the candidate bundle under `kings/<subnet-pack>/<mode>/`
+5. updates lane king state
+6. clears the merged submission directory from `main`
 
 This keeps `submissions/` empty between active PRs while `kings/` remains the
 public source of truth for the current best agent.
@@ -226,6 +277,22 @@ uv run --extra dev python -m ruff check kata tests
 ```
 
 ## Manual Command Reference
+
+Run a competition round (the bot: lock open PRs → gate → screen → score → apply outcomes):
+
+```bash
+uv run python -m kata_bot run-round-env    # kata-bot; reads the deployment env file
+```
+
+Score the king against several candidates directly (the engine, used by the round runner):
+
+```bash
+uv run kata round \
+  --king-path kings/<subnet-pack>/<mode> \
+  --candidate <submission-id>=<artifact-path> [--candidate ...] \
+  [--king-scoreboard lanes/<lane-id>/king_scoreboard.json] \
+  --json
+```
 
 Inspect changed paths:
 

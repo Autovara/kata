@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "kiannidev-20260707-01",
+  "created_at": "2026-07-07T02:00:46.271821+00:00",
+  "author": "kiannidev",
+  "title": "Three-call budget-optimized depth-first matcher",
+  "notes": "Designed for 3 calls and 24k output tokens per problem. Spends calls on top-3 ranked contracts with matcher-shaped findings; recall pass on #1 when thin.",
+  "subnet_pack": "sn60__bitsec"
+}

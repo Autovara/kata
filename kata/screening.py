@@ -56,6 +56,20 @@ BENCHMARK_LEAK_TOKENS = (
     "scabench",
     "hardsteer",
 )
+FORBIDDEN_SAMPLING_NAMES = {
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "top_a",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "seed",
+    "logit_bias",
+    "logprobs",
+    "top_logprobs",
+}
 
 # Screener security checks: submitted agents must never reference validator
 # scoring secrets or ship hardcoded provider keys.
@@ -329,6 +343,7 @@ def validate_sn60_static_screening(candidate_root: str | Path) -> list[str]:
             "SN60 screening rejected a no-op agent: agent_main returns an empty "
             "`vulnerabilities` list without doing any analysis."
         )
+    reasons.extend(validate_sn60_sampling_policy(tree, AGENT_ENTRY_FILENAME))
 
     lowered_source = agent_source.lower()
     for token in BENCHMARK_LEAK_TOKENS:
@@ -338,6 +353,47 @@ def validate_sn60_static_screening(candidate_root: str | Path) -> list[str]:
                 f"`{token}`."
             )
     return dedupe(reasons)
+
+
+def validate_sn60_sampling_policy(tree: ast.AST, relative_path: str) -> list[str]:
+    reasons: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg in FORBIDDEN_SAMPLING_NAMES:
+                reasons.append(
+                    "SN60 screening rejected model sampling control: "
+                    f"{relative_path} uses `{keyword.arg}`."
+                )
+            if keyword.arg is None:
+                forbidden = find_forbidden_sampling_in_expression(keyword.value)
+                for name in forbidden:
+                    reasons.append(
+                        "SN60 screening rejected model sampling control: "
+                        f"{relative_path} uses `{name}`."
+                    )
+    return dedupe(reasons)
+
+
+def find_forbidden_sampling_in_expression(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Dict):
+        found: list[str] = []
+        for key_node in node.keys:
+            if (
+                isinstance(key_node, ast.Constant)
+                and isinstance(key_node.value, str)
+                and key_node.value in FORBIDDEN_SAMPLING_NAMES
+            ):
+                found.append(key_node.value)
+        for value in node.values:
+            found.extend(find_forbidden_sampling_in_expression(value))
+        return dedupe(found)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        left = find_forbidden_sampling_in_expression(node.left)
+        right = find_forbidden_sampling_in_expression(node.right)
+        return dedupe(left + right)
+    return []
 
 
 def validate_sn60_screening_report(report_payload: dict[str, object]) -> list[str]:

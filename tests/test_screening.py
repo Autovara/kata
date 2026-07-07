@@ -221,6 +221,24 @@ def test_validate_sn60_static_screening_rejects_direct_empty_report(
     assert any("no-op agent" in reason for reason in reasons)
 
 
+def test_validate_sn60_static_screening_rejects_sampling_override(
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    inference_api_call(**{**{'temperature': 0.2}, 'messages': []})\n"
+        "    return {'vulnerabilities': [{'title': 'x', 'description': '"
+        + SCREENING_DESCRIPTION
+        + "', 'severity': 'high', 'file': 'contracts/Admin.sol'}]}\n",
+    )
+
+    reasons = validate_sn60_static_screening(bundle_root)
+
+    assert any("sampling control" in reason and "temperature" in reason for reason in reasons)
+
+
 def test_run_sn60_screening_rejects_empty_execution_report(tmp_path: Path) -> None:
     sandbox_root = tmp_path / "sandbox"
     benchmark_path = write_sandbox_source(sandbox_root)

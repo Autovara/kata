@@ -30,7 +30,7 @@ SKIP_DIRS = {
     "broadcast", "node_modules", "vendor", "vendors", "lib", "libs", "out",
     "artifacts", "cache", "coverage", "interfaces", "interface", "fixtures",
 }
-CONTRACT_RE = re.compile(r"\b(?:abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)")
+CONTRACT_RE = re.compile(r"^\s*(?:abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
 FUNC_RE = re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 VYDEF_RE = re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", re.MULTILINE)
 

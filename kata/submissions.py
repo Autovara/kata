@@ -720,9 +720,21 @@ def verify_submission_result(
     lane_benchmark_is_current = sn60_lane_benchmark_is_current(
         evaluator_entry.lane_id, summary, public_root=public_root
     )
+    recorded_descriptor, _ = resolve_submission_descriptor(
+        Path(summary.candidate_artifact),
+        repo_root=None,
+        require_exists=False,
+    )
+    submission_identity_matches = (
+        recorded_descriptor is not None
+        and recorded_descriptor.repo_pack == validation.metadata.repo_pack
+        and recorded_descriptor.mode == validation.metadata.mode
+        and recorded_descriptor.submission_id == validation.metadata.submission_id
+    )
     submission_matches = (
         summary.mode == validation.metadata.mode
         and summary.candidate_artifact_hash == candidate_hash
+        and submission_identity_matches
     )
     king_is_current = summary.king_artifact_hash == current_king_hash
     benchmark_is_current = (
@@ -732,7 +744,16 @@ def verify_submission_result(
 
     reasons: list[str] = []
     if not submission_matches:
-        reasons.append("Challenge result does not match the current submission payload.")
+        if (
+            summary.mode == validation.metadata.mode
+            and summary.candidate_artifact_hash == candidate_hash
+            and not submission_identity_matches
+        ):
+            reasons.append(
+                "Challenge result was produced for a different submission identity."
+            )
+        else:
+            reasons.append("Challenge result does not match the current submission payload.")
     if not king_is_current:
         reasons.append("Challenge result is stale because the king artifact has changed.")
     if not benchmark_is_current:

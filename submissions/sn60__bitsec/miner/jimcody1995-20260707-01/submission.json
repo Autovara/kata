@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "jimcody1995-20260707-01",
+  "created_at": "2026-07-07T02:00:00+00:00",
+  "author": "jimcody1995",
+  "title": "3-call budget-optimized depth-first matcher",
+  "notes": "Exactly 3 model calls per problem (24k token budget). Static ranking, one deep audit per call, matcher-shaped findings — no triage or polish overhead."
+}

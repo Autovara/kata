@@ -1495,18 +1495,25 @@ def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[st
                         f"directly: {relative_path} uses `{keyword.arg}`."
                     )
                 if keyword.arg is None and isinstance(keyword.value, ast.Dict):
-                    for key_node in keyword.value.keys:
-                        if (
-                            isinstance(key_node, ast.Constant)
-                            and isinstance(key_node.value, str)
-                            and key_node.value in FORBIDDEN_SAMPLING_NAMES
-                        ):
-                            reasons.append(
-                                "Submission bundle must not control model sampling "
-                                f"parameters directly: {relative_path} uses "
-                                f"`{key_node.value}`."
-                            )
+                    for forbidden_name in iter_forbidden_sampling_dict_keys(keyword.value):
+                        reasons.append(
+                            "Submission bundle must not control model sampling "
+                            f"parameters directly: {relative_path} uses "
+                            f"`{forbidden_name}`."
+                        )
     return reasons
+
+
+def iter_forbidden_sampling_dict_keys(node: ast.Dict):
+    for key_node, value_node in zip(node.keys, node.values):
+        if (
+            isinstance(key_node, ast.Constant)
+            and isinstance(key_node.value, str)
+            and key_node.value in FORBIDDEN_SAMPLING_NAMES
+        ):
+            yield key_node.value
+        if isinstance(value_node, ast.Dict):
+            yield from iter_forbidden_sampling_dict_keys(value_node)
 
 
 def iter_non_nested_function_returns(function_node: ast.FunctionDef):

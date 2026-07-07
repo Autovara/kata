@@ -272,6 +272,36 @@ def test_validate_submission_rejects_dict_unpack_sampling_override(
     assert any("temperature" in reason for reason in reasons)
 
 
+def test_validate_submission_rejects_nested_dict_unpack_sampling_override(
+    tmp_path, monkeypatch
+) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    call(**{**{'temperature': 0.2}})\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("temperature" in reason for reason in reasons)
+
+
+def test_validate_submission_rejects_nested_payload_sampling_override(
+    tmp_path, monkeypatch
+) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    call(**{'payload': {**{'top_p': 0.8}}})\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("top_p" in reason for reason in reasons)
+
+
 def test_validate_submission_rejects_provider_endpoint(tmp_path, monkeypatch) -> None:
     reasons = validation_reasons(
         tmp_path,

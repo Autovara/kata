@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "DragunovX16-20260707-01",
+  "created_at": "2026-07-07T00:00:00+00:00",
+  "author": "DragunovX16",
+  "title": "Batched source-guided SN60 miner",
+  "notes": "Uses three ranked batched audits under the validator inference budget, with static fallback findings for proxy failures or empty model output."
+}

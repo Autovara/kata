@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "ultrahighsuper-20260707-01",
+  "created_at": "2026-07-07T00:00:00+00:00",
+  "author": "ultrahighsuper",
+  "title": "Budget-aware high/critical smart-contract auditor",
+  "notes": "Reads project sources, runs up to 3 pinned-model calls within the token budget, and reports only high/critical exploitable findings in the bitsec Vulnerability schema."
+}

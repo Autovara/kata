@@ -159,7 +159,10 @@ def resolve_pinned_model(api_key: str | None = None) -> str:
     """The single model every inference request is forced onto."""
     value = os.environ.get("KATA_RELAY_PINNED_MODEL")
     if value and value.strip():
-        return value.strip()
+        pinned_model = value.strip()
+        if is_akash_api_key(api_key) and pinned_model == DEFAULT_PINNED_MODEL:
+            return DEFAULT_AKASH_PINNED_MODEL
+        return pinned_model
     if is_akash_api_key(api_key):
         return DEFAULT_AKASH_PINNED_MODEL
     return DEFAULT_PINNED_MODEL

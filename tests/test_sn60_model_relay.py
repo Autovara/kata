@@ -120,6 +120,12 @@ def test_resolve_pinned_model_uses_akash_default_for_akash_keys(monkeypatch) -> 
     assert resolve_pinned_model("akml_test") == DEFAULT_AKASH_PINNED_MODEL
 
 
+def test_resolve_pinned_model_treats_standard_default_as_provider_default(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", DEFAULT_PINNED_MODEL)
+    assert resolve_pinned_model("akml-test") == DEFAULT_AKASH_PINNED_MODEL
+    assert resolve_pinned_model("sk-or-test") == DEFAULT_PINNED_MODEL
+
+
 def test_resolve_pinned_model_override(monkeypatch) -> None:
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "vendor/model")
     assert resolve_pinned_model() == "vendor/model"

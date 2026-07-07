@@ -217,6 +217,19 @@ def test_validate_submission_ignores_python_cache_artifacts(tmp_path, monkeypatc
     assert result.is_valid
 
 
+def test_hash_submission_bundle_matches_evaluator_hash_ignoring_cache_artifacts(
+    tmp_path, monkeypatch
+) -> None:
+    from kata.evaluators.sn60_bitsec import hash_bundle_root
+
+    _, _repo_root, submission_root = make_miner_submission(tmp_path, monkeypatch)
+    cache = submission_root / "__pycache__"
+    cache.mkdir()
+    (cache / "agent.cpython-313.pyc").write_bytes(b"\x00")
+
+    assert hash_submission_bundle(submission_root) == hash_bundle_root(submission_root)
+
+
 def test_validate_submission_rejects_validator_env_reference(tmp_path, monkeypatch) -> None:
     reasons = validation_reasons(
         tmp_path,

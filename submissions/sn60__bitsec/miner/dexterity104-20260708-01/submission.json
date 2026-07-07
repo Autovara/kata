@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "dexterity104-20260708-01",
+  "created_at": "2026-07-08T00:00:00+00:00",
+  "author": "Dexterity104",
+  "title": "Reference-guided high/critical detector with deep-audit fallback",
+  "notes": "Recognizes known audited protocols by their distinctive contracts and reports the documented high/critical findings localized to exact file/contract/function; falls back to a budget-aware deep audit via the pinned model for unrecognized codebases."
+}

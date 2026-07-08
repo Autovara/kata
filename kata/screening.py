@@ -24,6 +24,7 @@ from kata.evaluators.sn60_bitsec import (
     hash_bundle_root,
     stage_bundle,
 )
+from kata.screening_system.benchmark_replay import analyze_benchmark_replay
 from kata.util import dedupe, write_json
 
 SN60_SCREENING_SCHEMA_VERSION = 1
@@ -337,6 +338,8 @@ def validate_sn60_static_screening(candidate_root: str | Path) -> list[str]:
                 "SN60 screening rejected benchmark-answer leakage token: "
                 f"`{token}`."
             )
+    replay_findings, _replay_score = analyze_benchmark_replay(bundle_files)
+    reasons.extend(finding.reason for finding in replay_findings)
     return dedupe(reasons)
 
 

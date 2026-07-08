@@ -108,17 +108,18 @@ def test_screen_submission_reports_exact_benchmark_replay_signals(tmp_path: Path
         mode="miner",
     )
 
-    assert decision.status == "pass"
-    assert decision.passed
-    assert decision.rejection_messages() == []
+    assert decision.status == "reject"
+    assert not decision.passed
     assert decision.score == 12
+    assert any("benchmark-style project id" in reason for reason in decision.rejection_messages())
+    assert any("benchmark finding id" in reason for reason in decision.rejection_messages())
     assert [finding.rule_id for finding in decision.review_reasons] == [
         "benchmark_replay.project_id",
         "benchmark_replay.finding_id",
     ]
 
 
-def test_screen_submission_can_promote_replay_signals_to_review_status(
+def test_screen_submission_rejects_replay_signals_even_when_review_is_enabled(
     tmp_path: Path,
 ) -> None:
     bundle_root = tmp_path / "candidate"
@@ -137,10 +138,64 @@ def test_screen_submission_can_promote_replay_signals_to_review_status(
         enable_review=True,
     )
 
-    assert decision.status == "review"
+    assert decision.status == "reject"
     assert not decision.passed
     assert decision.score == 6
     assert decision.review_reasons[0].line == 1
+
+
+def test_validate_sn60_static_screening_rejects_source_fingerprint_replay(
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
+        "def _source_heuristics(records):\n"
+        "    findings = []\n"
+        "    for rec in records:\n"
+        "        text = rec['text']\n"
+        "        compact = text.replace(' ', '')\n"
+        "        if (\n"
+        "            'functiontransferVesting(' in compact\n"
+        "            and 'grantorVesting.stepsClaimed' in text\n"
+        "            and '_createVesting(_beneficiary, _amount, "
+        "grantorVesting.stepsClaimed, true)' in text\n"
+        "            and 'releaseRate' in text\n"
+        "        ):\n"
+        "            findings.append({\n"
+        "                'title': 'TokenVesting.transferVesting - purchased vesting "
+        "inherits seller claimed steps',\n"
+        "                'description': 'The buyer inherits already claimed vesting "
+        "steps from the seller.',\n"
+        "                'severity': 'high',\n"
+        "                'file': 'contracts/TokenVesting.sol',\n"
+        "                'contract': 'TokenVesting',\n"
+        "                'function': 'transferVesting',\n"
+        "                'mechanism': 'A copied benchmark answer is returned when "
+        "source strings match.',\n"
+        "                'impact': 'The benchmark finding is replayed without analysis.',\n"
+        "            })\n"
+        "            findings.append({\n"
+        "                'title': 'TokenVesting.transferVesting - grantor releaseRate "
+        "ignores claimed steps',\n"
+        "                'description': 'The release rate is recomputed without "
+        "remaining-step accounting.',\n"
+        "                'severity': 'high',\n"
+        "                'file': 'contracts/TokenVesting.sol',\n"
+        "                'contract': 'TokenVesting',\n"
+        "                'function': 'transferVesting',\n"
+        "                'mechanism': 'A second copied benchmark answer is returned "
+        "from the same branch.',\n"
+        "                'impact': 'The agent recognizes the benchmark project and "
+        "replays answers.',\n"
+        "            })\n"
+        "    return findings\n"
+        + VALID_AGENT_SOURCE,
+    )
+
+    reasons = validate_sn60_static_screening(bundle_root)
+
+    assert any("benchmark-specific answer replay" in reason for reason in reasons)
 
 
 def test_screen_submission_allows_generic_reusable_detector(tmp_path: Path) -> None:

@@ -20,9 +20,9 @@ def screen_submission(
 ) -> ScreeningDecision:
     """Run the screening subsystem for a candidate submission.
 
-    Phase 1 intentionally preserves current behavior: it wraps the existing SN60
-    static screening checks in a structured decision object. The extra arguments
-    are part of the stable subsystem API and will be used by later layers.
+    Wrap the SN60 static screening checks in a structured decision object. The
+    extra arguments are part of the stable subsystem API and can be used by later
+    layers.
     """
     del changed_paths, repo_root, public_root, pr_author
     if mode != "miner":

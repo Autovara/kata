@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-"""SN60 miner: repository triage plus two focused deep-audit passes.
+"""SN60 miner: repository triage plus two evidence-checked deep-audit passes.
 
 The scoring lane rewards precise high/critical findings with concrete source
 locations. This agent spends the first inference call on repo-wide target
-selection, then uses the remaining calls on full-source batches instead of
-single-file guesses. It is self-contained and uses only the validator-provided
-inference proxy.
+selection, then uses the remaining calls on line-numbered source batches.
+Reported findings must survive local file/function/evidence validation.
 """
 
 import json
@@ -72,6 +71,7 @@ MAX_SUMMARY_CHARS = 18_000
 MAX_BATCH_CHARS = 31_000
 MAX_RELATED_CHARS = 3_500
 MAX_FINDINGS = 8
+MAX_EVIDENCE_CHARS = 220
 MAX_RUNTIME_SECONDS = 230
 REQUEST_TIMEOUT_SECONDS = 150
 
@@ -232,11 +232,105 @@ def _function_at_line(text: str, line: int | None) -> str:
         end = starts[index + 1][0] if index + 1 < len(starts) else len(text)
         start_line = text.count("\n", 0, start) + 1
         end_line = text.count("\n", 0, end) + 1
+        if index + 1 == len(starts):
+            end_line = len(text.splitlines()) + 1
         spans.append((start_line, end_line, name))
     for start_line, end_line, name in spans:
         if start_line <= line < end_line:
             return name
     return ""
+
+
+def _function_source(text: str, function: str) -> str:
+    if not function:
+        return ""
+    starts = []
+    for match in SOL_FUNC_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
+    for match in VY_FUNC_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
+    starts.sort(key=lambda item: item[0])
+    for index, (start, name) in enumerate(starts):
+        if name != function:
+            continue
+        end = starts[index + 1][0] if index + 1 < len(starts) else len(text)
+        return text[start:end]
+    return ""
+
+
+def _line_text(text: str, line: int | None) -> str:
+    if not isinstance(line, int) or line <= 0:
+        return ""
+    lines = text.splitlines()
+    if line > len(lines):
+        return ""
+    return " ".join(lines[line - 1].strip().split())
+
+
+def _line_for_evidence(text: str, evidence: str) -> int | None:
+    if not evidence:
+        return None
+    for number, line in enumerate(text.splitlines(), start=1):
+        if _evidence_in_text(evidence, line):
+            return number
+    return None
+
+
+def _numbered_source(text: str, max_chars: int) -> str:
+    out = []
+    used = 0
+    for number, line in enumerate(text.splitlines(), start=1):
+        rendered = f"{number}: {line}"
+        used += len(rendered) + 1
+        if used > max_chars:
+            out.append("/* truncated */")
+            break
+        out.append(rendered)
+    return "\n".join(out)
+
+
+def _compact_code(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _dense_code(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _clean_evidence(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = value.strip().strip("`").strip()
+    cleaned = re.sub(r"^\s*(?:line\s*)?\d+\s*[:|]\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) > MAX_EVIDENCE_CHARS:
+        cleaned = cleaned[:MAX_EVIDENCE_CHARS].rsplit(" ", 1)[0].strip()
+    return cleaned
+
+
+def _evidence_from(raw: dict[str, Any]) -> str:
+    for key in ("evidence", "source", "source_line", "vulnerable_code", "code", "snippet"):
+        evidence = _clean_evidence(raw.get(key))
+        if evidence:
+            return evidence
+    return ""
+
+
+def _evidence_in_text(evidence: str, text: str) -> bool:
+    needle = _clean_evidence(evidence)
+    if len(needle) < 8:
+        return False
+    haystack = _compact_code(text)
+    if needle in haystack:
+        return True
+    compact_needle = _compact_code(needle)
+    if compact_needle in haystack:
+        return True
+    return len(compact_needle) >= 12 and _dense_code(compact_needle) in _dense_code(text)
+
+
+def _line_count(text: str) -> int:
+    return len(text.splitlines())
 
 
 def _functions(text: str) -> list[dict[str, Any]]:
@@ -469,20 +563,16 @@ def _json_obj(text: str) -> dict[str, Any]:
 def _triage(inference_api: str | None, records: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
     prompt = (
         "Review this compact smart-contract repository map. Pick the files most likely to contain "
-        "real high/critical exploitable bugs, and include any strong findings you can infer from "
-        "the listed signatures/risk lines. Return strict JSON only:\n"
-        '{"target_files":["path.sol"],"findings":[{"title":"Contract.function - bug",'
-        '"file":"path.sol","contract":"Contract","function":"functionName","severity":"high|critical",'
-        '"mechanism":"precondition -> attacker action -> state effect","impact":"fund loss or other material impact",'
-        '"description":"2-4 precise sentences"}]}\n'
+        "real high/critical exploitable bugs. Return strict JSON only:\n"
+        '{"target_files":["path.sol"]}\n'
         "High-value bug families to prioritize when present: DEX/stableswap invariant breaks, "
         "LP share mint/burn mis-accounting, decimal/rate scaling mistakes, slippage checks that "
         "can be bypassed or attacker-shaped, fee/admin-fee accounting drift, invalid zero or "
         "imbalanced pool assets, marketplace listing/purchase order bugs, vesting transfer math "
         "that corrupts buyer/seller claimable balances, reward/farm epoch edge cases, and loops "
         "that can make critical user actions unexecutable. "
-        "Prefer precision over volume. Do not invent files or functions. Keep the answer short; "
-        "do not enumerate safe functions or explain rejected ideas.\n\n"
+        "Prefer precision over volume. Do not invent files. Keep the JSON short; do not "
+        "enumerate safe functions or explain rejected ideas.\n\n"
         + _repo_digest(records)
     )
     try:
@@ -496,19 +586,19 @@ def _triage(inference_api: str | None, records: list[dict[str, Any]]) -> tuple[l
     except Exception:
         return [], []
     targets = obj.get("target_files")
-    findings = obj.get("findings") or obj.get("vulnerabilities") or []
     return (
         [str(x) for x in targets if isinstance(x, str)] if isinstance(targets, list) else [],
-        [x for x in findings if isinstance(x, dict)] if isinstance(findings, list) else [],
+        [],
     )
 
 
 def _batch_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]) -> str:
     header = (
-        "Deep-audit the Solidity/Vyper source below. Find only high/critical vulnerabilities "
-        "with a concrete exploit path. Return strict JSON only:\n"
+        "Deep-audit the line-numbered Solidity/Vyper source below. Find only high/critical "
+        "vulnerabilities with a concrete exploit path and exact source evidence. Return strict JSON only:\n"
         '{"findings":[{"title":"Contract.function - specific bug","file":"exact/path.sol",'
         '"contract":"Contract","function":"functionName","line":123,"severity":"high|critical",'
+        '"evidence":"exact vulnerable source line or expression copied without the line number",'
         '"mechanism":"preconditions -> attacker transaction(s) -> broken invariant",'
         '"impact":"specific loss/insolvency/privilege/DoS impact",'
         '"description":"2-4 sentences naming exact file, contract, function, exploit mechanism, and impact"}]}\n'
@@ -518,24 +608,30 @@ def _batch_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]
         "For marketplace/vesting code, verify listing balance updates, purchase ordering, "
         "buyer/seller vesting transfer math, claim-step/release-rate calculations, whitelist "
         "constraints, currency/price selection, and unlist/cancel flows. At most 5 findings. "
-        "If a candidate issue is not clearly exploitable, omit it. "
+        "Every finding is invalid unless its evidence appears in the named file below and the "
+        "named function exists. If a candidate issue is not clearly exploitable, omit it. "
         "Do not produce a long walkthrough; return the JSON object as soon as the findings are selected.\n"
     )
     parts = [header]
     remaining = MAX_BATCH_CHARS - len(header)
     for rec in batch:
+        if remaining <= 0:
+            break
         related = _related_for(rec, by_name)
+        source_budget = max(0, remaining - len(related) - 700)
+        numbered = _numbered_source(str(rec["text"]), source_budget)
         block = (
             f"\n\n===== FILE: {rec['rel']} =====\n"
             f"Contracts: {', '.join(rec['contracts'][:8])}\n"
-            f"{rec['text']}\n"
+            f"Source with line numbers:\n{numbered}\n"
         )
         if related:
-            block += f"\n===== DIRECT IMPORT CONTEXT FOR {rec['rel']} =====\n{related}\n"
+            block += (
+                f"\n===== DIRECT IMPORT CONTEXT FOR {rec['rel']} =====\n"
+                f"{_numbered_source(related, MAX_RELATED_CHARS)}\n"
+            )
         if len(block) > remaining:
             block = block[: max(0, remaining)] + "\n/* truncated */\n"
-        if remaining <= 0:
-            break
         parts.append(block)
         remaining -= len(block)
     return "".join(parts)
@@ -589,21 +685,52 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
             break
     if chosen is None:
         return None
+    source_text = str(chosen["text"])
     severity = str(raw.get("severity") or "").lower().strip()
     if severity not in {"high", "critical"}:
         return None
+
     line = raw.get("line")
-    line_value = line if isinstance(line, int) else None
+    line_value: int | None = None
+    if isinstance(line, int):
+        line_value = line
+    elif isinstance(line, str) and line.strip().isdigit():
+        line_value = int(line.strip())
+    if line_value is not None and (line_value <= 0 or line_value > _line_count(source_text)):
+        return None
+
+    evidence = _evidence_from(raw)
+    explicit_evidence = bool(evidence)
+    if evidence and not _evidence_in_text(evidence, source_text):
+        return None
+    if not evidence and line_value is not None:
+        evidence = _line_text(source_text, line_value)
+    if not evidence or not _evidence_in_text(evidence, source_text):
+        return None
+    if line_value is None:
+        line_value = _line_for_evidence(source_text, evidence)
+
     function = str(raw.get("function") or "").strip().strip("`() ")
     if "." in function:
         function = function.split(".")[-1]
     valid_functions = {f["name"] for f in chosen["functions"]}
+    invalid_function_hint = False
     if function and function not in valid_functions:
+        invalid_function_hint = True
         function = ""
-    if not function and line_value is not None:
-        inferred_function = _function_at_line(str(chosen["text"]), line_value)
-        if inferred_function in valid_functions:
-            function = inferred_function
+    line_function = _function_at_line(source_text, line_value)
+    if function and line_function and line_function != function:
+        return None
+    if not function and line_function:
+        if line_function in valid_functions:
+            function = line_function
+    if invalid_function_hint and not function:
+        return None
+    if function:
+        function_source = _function_source(source_text, function)
+        if function_source and not _evidence_in_text(evidence, function_source):
+            return None
+
     contract = str(raw.get("contract") or "").strip().strip("`")
     if not contract and chosen["contracts"]:
         contract = str(chosen["contracts"][0])
@@ -611,7 +738,16 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
     impact = str(raw.get("impact") or "").strip()
     description = str(raw.get("description") or "").strip()
     title = str(raw.get("title") or "").strip()
-    if len(mechanism) < 25 and len(description) < 120:
+    explanatory_text = " ".join((mechanism, impact, description)).strip()
+    if len(explanatory_text) < 120:
+        return None
+    if len(mechanism) < 25 and len(description) < 160:
+        return None
+    if len(impact) < 8 and not re.search(
+        r"\b(steal|drain|loss|insolven|mint|burn|withdraw|privilege|owner|admin|dos|brick|lock|corrupt)\b",
+        explanatory_text,
+        re.IGNORECASE,
+    ):
         return None
     loc = ".".join(x for x in (contract, function) if x)
     if not title:
@@ -628,6 +764,8 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
         rebuilt += "Mechanism: " + mechanism.rstrip(".") + ". "
     if impact:
         rebuilt += "Impact: " + impact.rstrip(".") + ". "
+    if evidence:
+        rebuilt += "Evidence: `" + evidence.rstrip(".") + "`. "
     if description:
         rebuilt += description
     description = " ".join(rebuilt.split())
@@ -635,11 +773,16 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
         return None
     description = _location_hint(description, file_value, function)
     if line_value is None:
-        line_value = _line_for(str(chosen["text"]), f"function {function}") if function else None
+        line_value = _line_for(source_text, f"function {function}") if function else None
     if line_value is None and function:
-        line_value = _line_for(str(chosen["text"]), f"def {function}")
+        line_value = _line_for(source_text, f"def {function}")
     if line_value is None:
-        line_value = _line_for(str(chosen["text"]), title.split(" - ", 1)[0])
+        line_value = _line_for(source_text, title.split(" - ", 1)[0])
+    confidence = 0.93 if severity == "critical" else 0.85
+    if not explicit_evidence:
+        confidence -= 0.04
+    if not function:
+        confidence -= 0.04
     return {
         "title": title[:220],
         "description": description[:3000],
@@ -648,7 +791,7 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
         "function": function,
         "line": line_value,
         "type": str(raw.get("type") or "logic"),
-        "confidence": 0.92 if severity == "critical" else 0.84,
+        "confidence": round(confidence, 2),
     }
 
 
@@ -711,8 +854,7 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
     by_name = {Path(r["rel"]).name: r for r in records}
 
     raw_findings: list[dict[str, Any]] = []
-    targets, triage_findings = _triage(inference_api, records)
-    raw_findings.extend(triage_findings)
+    targets, _ = _triage(inference_api, records)
     first_batch, second_batch = _choose_batches(targets, records)
 
     if time.monotonic() - start < MAX_RUNTIME_SECONDS:

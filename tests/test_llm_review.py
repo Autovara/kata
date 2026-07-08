@@ -71,8 +71,10 @@ def test_llm_review_invokes_codex_and_adds_review_finding(
     assert findings[0].rule_id == "llm_review.suspicious"
     assert findings[0].severity == "review"
     assert notes[0].rule_id == "llm_review.result"
-    assert "artifact" in notes[0].reason
-    assert list((tmp_path / "artifacts").glob("llm-review-*.json"))
+    artifacts = list((tmp_path / "artifacts").glob("llm-review-*.json"))
+    assert artifacts
+    assert "artifact saved for maintainer audit" in notes[0].reason
+    assert str(artifacts[0]) not in notes[0].reason
 
 
 def test_llm_review_is_not_called_for_clean_decision(tmp_path: Path, monkeypatch) -> None:

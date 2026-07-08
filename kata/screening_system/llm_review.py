@@ -312,7 +312,7 @@ def llm_review_note(result: LlmReviewResult) -> ScreeningFinding | None:
         return None
     parts = [f"LLM review verdict `{result.verdict}` ({result.confidence:.2f})"]
     if result.artifact_path:
-        parts.append(f"artifact `{result.artifact_path}`")
+        parts.append("artifact saved for maintainer audit")
     if result.error:
         parts.append(f"error `{result.error[:160]}`")
     return ScreeningFinding(

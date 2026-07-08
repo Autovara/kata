@@ -1247,3 +1247,31 @@ def test_verify_and_promote_honor_explicit_public_root(
     # Nothing was written to the decoy KATA_ROOT.
     assert not (decoy_root / "kings").exists()
     assert not (decoy_root / "lanes").exists()
+
+
+def test_verify_submission_result_rejects_cross_submission_hash_collision(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _public_root, submission_a, summary, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+    assert summary.promotion_ready
+
+    submission_b = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="bob-20260709-01",
+        output_root=str(submission_a.parents[2]),
+    )
+    (submission_b / "agent.py").write_text(
+        (submission_a / "agent.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    verification = verify_submission_result(str(submission_b), str(summary_path))
+    assert not verification.submission_matches_challenge
+    assert not verification.auto_merge_ready
+    assert any(
+        "different submission identity" in reason for reason in verification.reasons
+    )

@@ -1,6 +1,7 @@
+"""SN60 validator screening gates used before full challenge execution."""
+
 from __future__ import annotations
 
-import ast
 import json
 import os
 import re
@@ -11,12 +12,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 
-from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files
-from kata.ast_utils import (
-    find_module_async_function_def,
-    find_module_function_def,
-    function_supports_no_arg_invocation,
-)
 from kata.evaluators.sn60_bitsec import (
     Sn60ReplicaContext,
     Sn60SandboxSource,
@@ -24,6 +19,7 @@ from kata.evaluators.sn60_bitsec import (
     hash_bundle_root,
     stage_bundle,
 )
+from kata.screening_system.rules import validate_sn60_static_screening
 from kata.util import dedupe, write_json
 
 SN60_SCREENING_SCHEMA_VERSION = 1
@@ -40,33 +36,6 @@ SOURCE_LOCATION_PATTERN = re.compile(
     r"\b[\w./-]+\.(?:sol|vy|rs|move|cairo|fe)\b",
     re.IGNORECASE,
 )
-
-BENCHMARK_LEAK_TOKENS = (
-    "curated-highs-only",
-    "known_solution",
-    "known solution",
-    "expected_findings",
-    "expected findings",
-    "expected_vulnerabilities",
-    "expected vulnerabilities",
-    "ground_truth",
-    "ground truth",
-    "answer_key",
-    "answer key",
-    "scabench",
-    "hardsteer",
-)
-
-# Screener security checks: submitted agents must never reference validator
-# scoring secrets or ship hardcoded provider keys.
-VALIDATOR_SECRET_ENV_TOKENS = (
-    "CHUTES_API_KEY",
-    "KATA_VALIDATOR_API_KEY",
-)
-HARDCODED_SECRET_PATTERN = re.compile(
-    r"(sk-[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{10,}|hf_[A-Za-z0-9]{10,}|cpk_[A-Za-z0-9]{10,})"
-)
-
 
 @dataclass(frozen=True)
 class Sn60ScreeningResult:
@@ -269,77 +238,6 @@ def resolve_sn60_screening_execution_timeout_seconds() -> float:
     return DEFAULT_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS
 
 
-def validate_sn60_static_screening(candidate_root: str | Path) -> list[str]:
-    root = Path(candidate_root).expanduser().resolve()
-    reasons: list[str] = []
-    bundle_files = load_bundle_files(root)
-    helper_paths = [
-        relative_path
-        for relative_path in sorted(bundle_files)
-        if Path(relative_path).parts and Path(relative_path).parts[0] == "helpers"
-    ]
-    if helper_paths:
-        reasons.append(
-            "SN60 miner submissions do not support helper files in V1: "
-            + ", ".join(helper_paths)
-        )
-
-    for relative_path, content in sorted(bundle_files.items()):
-        if not relative_path.endswith(".py"):
-            continue
-        for token in VALIDATOR_SECRET_ENV_TOKENS:
-            if token in content:
-                reasons.append(
-                    "SN60 screening rejected a validator secret reference: "
-                    f"{relative_path} references `{token}`."
-                )
-        if HARDCODED_SECRET_PATTERN.search(content):
-            reasons.append(
-                f"SN60 screening rejected a hardcoded secret token in {relative_path}."
-            )
-
-    agent_source = bundle_files.get(AGENT_ENTRY_FILENAME)
-    if agent_source is None:
-        reasons.append("Submission agent must define agent_main(...).")
-        return reasons
-
-    try:
-        tree = ast.parse(agent_source, filename=AGENT_ENTRY_FILENAME)
-    except SyntaxError as exc:
-        line_number = exc.lineno or 1
-        reasons.append(
-            f"Submission bundle contains invalid Python syntax in agent.py:{line_number}."
-        )
-        return reasons
-
-    agent_main = find_module_function_def(tree, "agent_main")
-    if agent_main is None:
-        if find_module_async_function_def(tree, "agent_main") is not None:
-            reasons.append(
-                "Submission agent_main must be a synchronous function; the SN60 "
-                "sandbox runner calls agent_main() directly and does not await "
-                "coroutines."
-            )
-        else:
-            reasons.append("Submission agent must define agent_main(...).")
-    elif not function_supports_no_arg_invocation(agent_main):
-        reasons.append("Submission agent must support no-argument invocation: agent_main().")
-    elif agent_main_returns_direct_empty_report(agent_main):
-        reasons.append(
-            "SN60 screening rejected a no-op agent: agent_main returns an empty "
-            "`vulnerabilities` list without doing any analysis."
-        )
-
-    lowered_source = agent_source.lower()
-    for token in BENCHMARK_LEAK_TOKENS:
-        if token in lowered_source:
-            reasons.append(
-                "SN60 screening rejected benchmark-answer leakage token: "
-                f"`{token}`."
-            )
-    return dedupe(reasons)
-
-
 def validate_sn60_screening_report(report_payload: dict[str, object]) -> list[str]:
     reasons: list[str] = []
     if not report_payload.get("success"):
@@ -407,32 +305,6 @@ def has_source_location_hint(finding: dict[str, object]) -> bool:
         for key in ("title", "description", "function", "contract")
     )
     return bool(SOURCE_LOCATION_PATTERN.search(searchable))
-
-
-def agent_main_returns_direct_empty_report(agent_main: ast.FunctionDef) -> bool:
-    """Catch the common scaffold/no-op pattern without rejecting real analysis code."""
-    for return_node in iter_direct_function_returns(agent_main):
-        value = return_node.value
-        if not isinstance(value, ast.Dict):
-            continue
-        for key, item in zip(value.keys, value.values, strict=False):
-            if not (isinstance(key, ast.Constant) and key.value == "vulnerabilities"):
-                continue
-            if isinstance(item, ast.List) and not item.elts:
-                return True
-    return False
-
-
-def iter_direct_function_returns(function_node: ast.FunctionDef):
-    stack: list[ast.AST] = list(reversed(function_node.body))
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Return):
-            yield node
-            continue
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
 def build_screening_result(

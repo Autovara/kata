@@ -1,4 +1,4 @@
-"""SN60 model-pinning inference relay.
+"""Validator SN60 model-pinning inference relay.
 
 Untrusted miner agents run inside an internet-blocked Docker network, so the only
 way they can reach an LLM is through the inference endpoint Kata hands them via

@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from kata.agent_bundle import AGENT_MANIFEST_FILENAME, write_agent_manifest
-from kata.challenge import run_sn60_challenge
-from kata.lane_state import (
+from kata.screening_system.rules import hash_submission_bundle
+from kata.state_system.lane import (
     KING_STATE_SCHEMA_VERSION,
     LANE_METADATA_SCHEMA_VERSION,
     EvaluatorLaneMetadata,
@@ -21,21 +20,21 @@ from kata.lane_state import (
     write_lane_king_state,
     write_lane_metadata,
 )
-from kata.submissions import (
+from kata.submission_system import (
     PR_ACTION_CLOSE_INVALID,
     PR_ACTION_EVALUATE,
     PR_ACTION_MERGE,
     PR_ACTION_RERUN_STALE,
     decide_submission_action,
     evaluate_submission,
-    hash_submission_bundle,
     init_submission,
     inspect_pull_request,
     promote_submission_result,
-    sample_sn60_project_keys,
     validate_submission,
     verify_submission_result,
 )
+from kata.submission_system.bundle import AGENT_MANIFEST_FILENAME, write_agent_manifest
+from kata.validator_system import run_sn60_challenge, sample_sn60_project_keys
 
 SCREENING_DESCRIPTION = (
     "A privileged state-changing function can be called by any account, "
@@ -43,16 +42,18 @@ SCREENING_DESCRIPTION = (
 )
 VALID_MINER_AGENT = (
     "def agent_main(project_dir=None, inference_api=None):\n"
+    "    source_hint = str(project_dir or '')\n"
+    "    finding = {\n"
+    "        \"title\": \"Missing access control on privileged update\",\n"
+    "        \"description\": (\n"
+    "            \"A privileged state-changing function can be called by any \"\n"
+    "            \"account, allowing unauthorized changes to protected protocol settings.\"\n"
+    "        ) + source_hint[:0],\n"
+    "        \"severity\": \"high\",\n"
+    "        \"file\": \"contracts/Admin.sol\",\n"
+    "    }\n"
     "    return {\n"
-    "        \"vulnerabilities\": [{\n"
-    "            \"title\": \"Missing access control on privileged update\",\n"
-    "            \"description\": (\n"
-    "                \"A privileged state-changing function can be called by any \"\n"
-    "                \"account, allowing unauthorized changes to protected protocol settings.\"\n"
-    "            ),\n"
-    "            \"severity\": \"high\",\n"
-    "            \"file\": \"contracts/Admin.sol\",\n"
-    "        }],\n"
+    "        \"vulnerabilities\": [finding],\n"
     "    }\n"
 )
 SEED_MINER_AGENT = (
@@ -91,6 +92,37 @@ def validation_reasons(tmp_path, monkeypatch, agent_source):
         tmp_path, monkeypatch, agent_source=agent_source
     )
     return validate_submission(str(submission_root), repo_root=str(repo_root)).reasons
+
+
+def write_replay_benchmark(root: Path) -> Path:
+    benchmark_path = root / "curated-highs-only-2025-08-08.json"
+    benchmark_path.write_text(
+        json.dumps(
+            [
+                {
+                    "project_id": "sample_project",
+                    "name": "Sample Project",
+                    "codebases": [],
+                    "vulnerabilities": [
+                        {
+                            "finding_id": "2026-01-sample_H-01",
+                            "severity": "high",
+                            "title": "Exact Replay Title For Validation",
+                            "description": (
+                                "ValidationReplayContract knownFunctionName "
+                                "knownStorageSlot copied benchmark answer text "
+                                "should be rejected when strict concrete replay "
+                                "screening is enabled for production intake."
+                            ),
+                        }
+                    ],
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return benchmark_path
 
 
 def test_validate_submission_accepts_scoped_pr_changes(tmp_path, monkeypatch) -> None:
@@ -495,7 +527,143 @@ def test_validate_submission_accepts_miner_submission_for_registry_lane(
 
     assert result.reasons == []
     assert result.is_valid
+    assert result.screening_status == "pass"
+    assert result.screening_score == 0
+    assert result.screening_review_reasons == []
+
+
+def test_validate_submission_holds_replay_signals_when_review_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+    monkeypatch.setenv("KATA_SCREENING_REVIEW_MODE", "1")
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(repo_root / "submissions"),
+        author="alice",
+    )
+    (submission_root / "agent.py").write_text(
+        "PROJECT = 'code4rena_secondswap_2025_02'\n" + VALID_MINER_AGENT,
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root), repo_root=str(repo_root))
+
+    assert result.reasons == []
+    assert result.is_valid
+    assert result.screening_status == "review"
+    assert result.screening_score == 6
+    assert any(
+        "code4rena_secondswap_2025_02" in reason
+        for reason in result.screening_review_reasons
+    )
     assert result.evaluator_id == "sn60_bitsec"
+
+
+def test_validate_submission_keeps_replay_signals_report_only_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(repo_root / "submissions"),
+        author="alice",
+    )
+    (submission_root / "agent.py").write_text(
+        "PROJECT = 'code4rena_secondswap_2025_02'\n" + VALID_MINER_AGENT,
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root), repo_root=str(repo_root))
+
+    assert result.reasons == []
+    assert result.is_valid
+    assert result.screening_status == "pass"
+    assert result.screening_score == 6
+    assert any(
+        "code4rena_secondswap_2025_02" in reason
+        for reason in result.screening_review_reasons
+    )
+
+
+def test_validate_submission_rejects_replay_signals_when_strict_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+    monkeypatch.setenv("KATA_SCREENING_STRICT_REPLAY", "1")
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(repo_root / "submissions"),
+        author="alice",
+    )
+    (submission_root / "agent.py").write_text(
+        "PROJECT = 'code4rena_secondswap_2025_02'\n" + VALID_MINER_AGENT,
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root), repo_root=str(repo_root))
+
+    assert any("rejected hardcoded benchmark replay" in reason for reason in result.reasons)
+    assert any(reason.startswith("agent.py:1: ") for reason in result.reasons)
+    assert not result.is_valid
+
+
+def test_validate_submission_rejects_known_answer_text_when_strict_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    benchmark_path = write_replay_benchmark(tmp_path)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+    monkeypatch.setenv("KATA_SCREENING_STRICT_REPLAY", "1")
+    monkeypatch.setenv("KATA_SN60_BENCHMARK_FILE", str(benchmark_path))
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(repo_root / "submissions"),
+        author="alice",
+    )
+    (submission_root / "agent.py").write_text(
+        "TITLE = 'Exact Replay Title For Validation'\n"
+        "ANSWER = (\n"
+        "    'ValidationReplayContract knownFunctionName knownStorageSlot copied '\n"
+        "    'benchmark answer text should be rejected when strict concrete replay '\n"
+        "    'screening is enabled for production intake.'\n"
+        ")\n"
+        + VALID_MINER_AGENT,
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root), repo_root=str(repo_root))
+
+    assert any("rejected hardcoded benchmark replay" in reason for reason in result.reasons)
+    assert any(reason.startswith("agent.py:1: ") for reason in result.reasons)
+    assert not result.is_valid
 
 
 def test_init_submission_rejects_inactive_registry_lane(
@@ -551,6 +719,45 @@ def test_validate_submission_rejects_copy_of_lane_king(
     assert not result.is_valid
 
 
+def test_validate_submission_reviews_near_copy_of_lane_king(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+    monkeypatch.setenv("KATA_SCREENING_REVIEW_MODE", "1")
+
+    king_root = public_root / "kings" / "sn60__bitsec" / "miner"
+    king_root.mkdir(parents=True)
+    king_agent = VALID_MINER_AGENT
+    (king_root / "agent.py").write_text(king_agent, encoding="utf-8")
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(repo_root / "submissions"),
+    )
+    near_copy = king_agent.replace(
+        "    return {\n",
+        "    x = 0\n    return {\n",
+        1,
+    )
+    (submission_root / "agent.py").write_text(near_copy, encoding="utf-8")
+
+    result = validate_submission(str(submission_root), repo_root=str(repo_root))
+
+    assert result.reasons == []
+    assert result.is_valid
+    assert result.screening_status == "review"
+    assert any(
+        "highly similar to the current lane king" in reason
+        for reason in result.screening_review_reasons
+    )
+
+
 def test_evaluate_submission_uses_seeded_lane_king_for_registry_lane(
     tmp_path: Path,
     monkeypatch,
@@ -576,7 +783,10 @@ def test_evaluate_submission_uses_seeded_lane_king_for_registry_lane(
         calls.update(kwargs)
         return sentinel
 
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -628,7 +838,10 @@ def test_evaluate_submission_uses_benchmark_project_keys_by_default(
         return sentinel
 
     monkeypatch.delenv("KATA_SN60_PROJECT_KEYS", raising=False)
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -681,8 +894,14 @@ def test_evaluate_submission_samples_benchmark_project_keys_from_env(
     monkeypatch.delenv("KATA_SN60_PROJECT_KEYS", raising=False)
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "2")
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SECRET", "validator-secret")
-    monkeypatch.setattr("kata.submissions.secrets.token_hex", lambda _size: "nonce-1")
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.validator_system.project_selection.secrets.token_hex",
+        lambda _size: "nonce-1",
+    )
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -777,7 +996,10 @@ def test_explicit_sn60_project_keys_override_sampling_env(
 
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "1")
     monkeypatch.delenv("KATA_SN60_PROJECT_SAMPLE_SECRET", raising=False)
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -850,7 +1072,10 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
         calls.update(kwargs)
         return sentinel
 
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -908,15 +1133,17 @@ def test_promote_records_published_king_hash_for_non_normalized_agent(
     # king_is_current=False -> a permanent rerun-stale livelock.
     non_normalized = (
         "def agent_main(project_dir=None, inference_api=None):\n"
-        "    return {\"vulnerabilities\": [{\n"
+        "    source_hint = str(project_dir or '')\n"
+        "    finding = {\n"
         "        \"title\": \"Missing access control on privileged update\",\n"
         "        \"description\": (\n"
         "            \"A privileged state-changing function can be called by any \"\n"
         "            \"account, allowing unauthorized changes to protected protocol settings.\"\n"
-        "        ),\n"
+        "        ) + source_hint[:0],\n"
         "        \"severity\": \"high\",\n"
         "        \"file\": \"contracts/Admin.sol\",\n"
-        "    }]}"  # no trailing newline
+        "    }\n"
+        "    return {\"vulnerabilities\": [finding]}"  # no trailing newline
     )
     assert not non_normalized.endswith("\n")
 

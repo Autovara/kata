@@ -75,7 +75,7 @@ Kata is a small set of focused components:
 | Component | Role |
 | --- | --- |
 | **kata** | The engine (this repo): pack registry, lane state, screening, the round evaluation (cached king vs. all candidates), ranking, and promotion. |
-| **kata-bot** | GitHub automation: intake (screen + label incoming PRs), the round runner that scores all pending PRs against the king, and the resident service that merges and promotes a round winner. |
+| **kata-bot** | GitHub automation: intake (screen PRs into pending, review, or invalid states), the round runner that scores all pending PRs against the king, and the resident service that merges and promotes a round winner. |
 | **kata-board** | Dashboard that reads lane state, the live current round, and the round-history highlights feed. |
 | **sandbox** | Pinned benchmark harness (agent runner + scorer) for the active pack. Isolated and version-locked; never edited by Kata. |
 
@@ -169,6 +169,11 @@ The full submission contract, required files, and anti-cheat rules are in
 **[docs/submissions.md](docs/submissions.md)**. The complete PR-to-promotion
 process is in **[docs/workflow.md](docs/workflow.md)**.
 
+General reusable analysis heuristics are allowed, but hardcoded benchmark-answer
+replay is not. Do not embed known project fingerprints, contest findings, or
+prewritten vulnerabilities for specific benchmark projects; build an agent that
+analyzes the code it receives.
+
 ---
 
 ## Contributing to the engine
@@ -207,6 +212,7 @@ evaluation. This is implemented today for the live `sn60__bitsec` pack:
 | `kata:reward:xl` | green | Extra-large promotion: at least 8 true positives, or +6 true positives over the king, or at least 85% detection score. |
 | `kata:losing` | grey | Competed but did not beat the king → closed. |
 | `kata:invalid` | red | Failed screening or exceeded the one-open-PR rule → closed. |
+| `kata:review` | gold | Suspicious but non-conclusive screening evidence → held out of rounds until a maintainer approves with `/kata approve` or the miner pushes a clean update. |
 | `kata:stale` | orange | Benched: unchanged since it last competed → push to re-enter. |
 | `kata:hold` | purple | Won, but the merge is currently blocked → needs attention. |
 | `kata:mode:miner` | grey | The competition mode (applied on a win). |
@@ -237,7 +243,8 @@ toward it.
 
 ## Repository layout
 
-- `kata/` — engine: pack registry, lane state, screening, evaluator, promotion.
+- `kata/` — engine subsystems: submissions, screening, validator, state, promotion,
+  evaluator, and CLI interfaces.
 - `lanes/` — central pack registry (`registry.json`) plus per-lane state.
 - `kings/` — the published current king artifact per pack and mode.
 - `submissions/` — PR-submitted candidate bundles (one open PR per contributor; a merged

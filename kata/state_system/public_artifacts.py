@@ -1,3 +1,5 @@
+"""Public Kata artifact path and bundle publication helpers."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from kata.agent_bundle import load_bundle_files, replace_bundle_contents
+from kata.submission_system.bundle import load_bundle_files, replace_bundle_contents
 
 KATA_REPO_ROOT = Path(__file__).resolve().parents[1]
 KATA_ROOT_ENV = "KATA_ROOT"

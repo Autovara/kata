@@ -1,10 +1,12 @@
+"""Lane registry, king state, and benchmark snapshot persistence."""
+
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from kata.public_artifacts import resolve_kata_root
+from kata.state_system.public_artifacts import resolve_kata_root
 from kata.util import write_json
 
 LANES_DIRNAME = "lanes"

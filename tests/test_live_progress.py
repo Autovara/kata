@@ -4,7 +4,7 @@ import json
 import stat
 from pathlib import Path
 
-from kata.live_progress import update_live_status
+from kata.state_system.live_progress import update_live_status
 
 
 def test_update_live_status_merges_flat_and_nested_keys(

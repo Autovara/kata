@@ -19,6 +19,8 @@ depend on this module without a cycle.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -115,9 +117,17 @@ def save_king_scoreboard(path: str | Path, board: KingScoreboard) -> None:
         "benchmark_version": board.benchmark_version,
         "scores": board.scores,
     }
-    tmp_path = board_path.with_name(board_path.name + ".tmp")
-    tmp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{board_path.name}.",
+        suffix=".tmp",
+        dir=board_path.parent,
+        text=True,
     )
-    tmp_path.replace(board_path)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        tmp_path.replace(board_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()

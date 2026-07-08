@@ -22,7 +22,8 @@ from kata.evaluators.sn60_bitsec import (
     resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
 )
-from kata.lane_state import (
+from kata.provenance import short_hash
+from kata.state_system.lane import (
     BENCHMARK_SNAPSHOT_SCHEMA_VERSION,
     CHALLENGE_STATE_SCHEMA_VERSION,
     PROMOTION_RECORD_SCHEMA_VERSION,
@@ -33,9 +34,8 @@ from kata.lane_state import (
     write_challenge_state,
     write_promotion_record,
 )
-from kata.live_progress import update_live_status
-from kata.provenance import short_hash
-from kata.screening import (
+from kata.state_system.live_progress import update_live_status
+from kata.validator_system.screening import (
     Sn60ScreeningResult,
     build_sn60_execution_note_result,
     build_sn60_screening_id,
@@ -87,8 +87,6 @@ class Sn60PromotionDecision:
     promotion_ready: bool
     final_winner: str
     reason: str
-
-
 
 
 def summarize_candidate_finding_quality(
@@ -600,11 +598,7 @@ def run_sn60_round(
         )
         detection = acc["tp"] / acc["expected"] if acc["expected"] else 0.0
         precision = acc["tp"] / acc["found"] if acc["found"] else 0.0
-        f1 = (
-            2 * precision * detection / (precision + detection)
-            if (precision + detection)
-            else 0.0
-        )
+        f1 = 2 * precision * detection / (precision + detection) if (precision + detection) else 0.0
         target["aggregated_score"] = detection
         target["precision"] = precision
         target["f1_score"] = f1
@@ -916,9 +910,7 @@ def record_sn60_benchmark_snapshot(
             benchmark_dataset_hash=sandbox_source.benchmark_sha256,
             project_list_hash=sn60_project_list_hash(project_keys),
             project_keys=list(project_keys),
-            container_images=[
-                bitsec_project_image(project_key) for project_key in project_keys
-            ],
+            container_images=[bitsec_project_image(project_key) for project_key in project_keys],
             scorer_version=sandbox_source.scorer_version,
             updated_at=datetime.now(UTC).isoformat(),
         ),
@@ -951,8 +943,6 @@ def sn60_evaluator_version(duel_summary: Sn60DuelSummary) -> str:
     )
 
 
-
-
 def render_challenge_summary(summary: ChallengeSummary) -> str:
     lines: list[str] = []
     lines.append(f"Challenge run: {summary.run_id}")
@@ -964,9 +954,7 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
     lines.append(f"King artifact hash: {short_hash(summary.king_artifact_hash)}")
     lines.append(f"Candidate artifact hash: {short_hash(summary.candidate_artifact_hash)}")
     if summary.primary_pool_fingerprint:
-        lines.append(
-            f"Primary pool fingerprint: {short_hash(summary.primary_pool_fingerprint)}"
-        )
+        lines.append(f"Primary pool fingerprint: {short_hash(summary.primary_pool_fingerprint)}")
     lines.append("")
     lines.append("Primary pool")
     lines.extend(render_pool(summary.primary))
@@ -1017,28 +1005,6 @@ def parse_challenge_pool(payload: dict[str, object]) -> ChallengePoolSummary:
     )
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def render_pool(pool: ChallengePoolSummary) -> list[str]:
     lines = [
         f"- Projects: {', '.join(pool.project_keys)}",
@@ -1051,15 +1017,9 @@ def render_pool(pool: ChallengePoolSummary) -> list[str]:
             f"- {variant_name} invalid runs: {pool.variant_invalid_runs.get(variant_name, 0)}"
         )
         lines.append(f"- {variant_name} score: {pool.variant_scores.get(variant_name, 0.0):.2f}")
-    lines.append(
-        f"- Candidate beats king: {'yes' if pool.candidate_beats_king else 'no'}"
-    )
+    lines.append(f"- Candidate beats king: {'yes' if pool.candidate_beats_king else 'no'}")
     lines.append(f"- Candidate score delta: {pool.candidate_score_delta:+.2f}")
     return lines
-
-
-
-
 
 
 def write_challenge_summary(path: Path, summary: ChallengeSummary) -> None:

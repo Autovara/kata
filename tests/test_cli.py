@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from kata.cli import build_parser, main, parse_round_candidate
+from kata.interfaces.cli import build_parser, main, parse_round_candidate
 
 
 def test_top_level_cli_exposes_agent_competition_commands() -> None:
@@ -161,7 +161,7 @@ def test_parse_round_candidate_rejects_malformed_specs() -> None:
 
 
 def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None:
-    import kata.cli as cli
+    import kata.interfaces.cli as cli
 
     fake_result = types.SimpleNamespace(
         run_id="sn60-round-x",
@@ -237,7 +237,7 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
 
 
 def test_round_cli_samples_problems_when_keys_omitted(tmp_path, monkeypatch, capsys) -> None:
-    import kata.cli as cli
+    import kata.interfaces.cli as cli
 
     benchmark = tmp_path / "sandbox" / "validator" / "curated-highs-only-2025-08-08.json"
     benchmark.parent.mkdir(parents=True)

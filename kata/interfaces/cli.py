@@ -1,17 +1,16 @@
+"""Command-line interface for Kata maintainers and local validation."""
+
 from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from kata.challenge import (
+from kata.evaluators.sn60_bitsec import (
     DEFAULT_REPLICAS_PER_PROJECT,
     hash_bundle_root,
-    load_challenge_summary,
-    render_challenge_summary,
-    run_sn60_round,
 )
-from kata.lane_state import (
+from kata.state_system.lane import (
     LANE_METADATA_SCHEMA_VERSION,
     EvaluatorLaneMetadata,
     lane_metadata_path,
@@ -20,7 +19,7 @@ from kata.lane_state import (
     sync_pack_registry,
     write_lane_metadata,
 )
-from kata.submissions import (
+from kata.submission_system import (
     SUPPORTED_SUBMISSION_MODES,
     decide_submission_action,
     evaluate_submission,
@@ -33,9 +32,14 @@ from kata.submissions import (
     render_submission_json,
     render_submission_validation,
     render_submission_verification,
-    resolve_sn60_project_keys,
     validate_submission,
     verify_submission_result,
+)
+from kata.validator_system import (
+    load_challenge_summary,
+    render_challenge_summary,
+    resolve_sn60_project_keys,
+    run_sn60_round,
 )
 
 

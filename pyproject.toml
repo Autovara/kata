@@ -17,8 +17,8 @@ dev = [
 ]
 
 [project.scripts]
-kata = "kata.cli:main"
-kata-sn60-model-relay = "kata.sn60_model_relay:main"
+kata = "kata.interfaces.cli:main"
+kata-sn60-model-relay = "kata.validator_system.model_relay:main"
 
 [build-system]
 requires = ["hatchling"]

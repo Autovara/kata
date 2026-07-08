@@ -14,7 +14,6 @@ from pathlib import Path
 from statistics import fmean
 from typing import Callable, NamedTuple, TypedDict
 
-from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files, write_bundle_files
 from kata.evaluators.king_cache import (
     KingScoreboard,
     benchmark_version_key,
@@ -22,6 +21,11 @@ from kata.evaluators.king_cache import (
     save_king_scoreboard,
 )
 from kata.provenance import sha256_directory
+from kata.submission_system.bundle import (
+    AGENT_ENTRY_FILENAME,
+    load_bundle_files,
+    write_bundle_files,
+)
 from kata.util import write_json
 
 SN60_BITSEC_EVALUATOR_ID = "sn60_bitsec"

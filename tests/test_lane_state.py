@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from kata.lane_state import (
+from kata.state_system.lane import (
     BENCHMARK_SNAPSHOT_SCHEMA_VERSION,
     CHALLENGE_STATE_SCHEMA_VERSION,
     KING_STATE_SCHEMA_VERSION,

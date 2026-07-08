@@ -17,7 +17,7 @@ For the exact miner bundle contract, see [submissions.md](submissions.md).
   (the cached king vs. all candidates on the same problems), ranks them, records
   provenance, and promotes winners.
 - `kata-bot` is the GitHub automation layer. On a PR event it **intakes** the PR
-  (screen + label `kata:pending`). When a **round** is run, it locks the pending PRs,
+  (screen into `kata:pending`, `kata:review`, or `kata:invalid`). When a **round** is run, it locks the pending PRs,
   gates and screens them, calls the engine to score them, applies the outcome labels,
   and merges + promotes the winner. It publishes a live round status and history for
   the dashboard.
@@ -45,7 +45,7 @@ pending entrant; a round scores every pending entrant against the king at once.
 5. **Intake.** `kata-bot` screens the PR (shape + cheap static anti-cheat) and labels it
    `kata:pending` — it now waits for the next round. A failing or identity-mismatched
    PR is closed `kata:invalid` before pending. Suspicious but non-conclusive evidence is
-   held as `kata:review`; maintainers can clear it with `/kata approve-review` after
+   held as `kata:review`; maintainers can clear it with `/kata approve` after
    manual review, but hard rejects cannot be bypassed.
    Pushing a commit to a benched (`kata:stale`) PR re-enters it as `kata:pending`.
 
@@ -201,7 +201,7 @@ At the end of a round, each PR resolves to one outcome (and its label):
 - **Invalid** (`kata:invalid`) — failed screening, or an extra open PR beyond the
   one-per-contributor limit; closed.
 - **Review** (`kata:review`) — suspicious but non-conclusive screening evidence; held out
-  of rounds until a maintainer approves with `/kata approve-review` or the miner pushes a
+  of rounds until a maintainer approves with `/kata approve` or the miner pushes a
   clean update. If `KATA_SCREENING_LLM_REVIEW=1` is enabled, a local Codex CLI review
   (`KATA_SCREENING_LLM_MODEL=gpt-5.4` by default) may add review evidence and an
   audit artifact, but it never hard-rejects by itself.
@@ -269,10 +269,11 @@ public source of truth for the current best agent.
 Engine contributions should preserve evaluator integrity and provenance.
 
 1. Identify the affected area:
-   - submission contract: `kata/submissions.py`, `kata/screening.py`
-   - evaluator adapter: `kata/evaluators/`
-   - challenge and promotion logic: `kata/challenge.py`
-   - lane state schemas: `kata/lane_state.py`
+   - submission contract: `kata/submission_system/`
+   - screening rules: `kata/screening_system/`
+   - validator and challenge flow: `kata/validator_system/`, `kata/evaluators/`
+   - promotion logic: `kata/promotion_system/`
+   - lane and public state: `kata/state_system/`, `lanes/`
    - docs: `README.md`, `docs/`
 2. Add or update tests for behavior changes.
 3. Run targeted tests first, then broader tests when practical.

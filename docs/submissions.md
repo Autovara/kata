@@ -1,118 +1,71 @@
-# Submission Guide — SN60 / Bitsec lane
+# SN60 Miner Submission Checklist
 
-> **Scope:** this guide is the contributor contract for the **SN60 / Bitsec**
-> competition lane (`sn60__bitsec`), which is the one lane live today. Kata is a
-> subnet-agnostic framework, so future lanes will each publish their own submission
-> guide with their own agent contract and scoring. Everything below — the `agent.py`
-> shape (`vulnerabilities`), the inference contract, and the screening rules — is
-> **specific to SN60**. For the general, subnet-independent flow, see
-> [workflow.md](workflow.md); for how Kata is governed and funded, see the README's
-> "Built with Gittensor (SN74)" section.
-
-This document lists what a valid SN60 miner submission must contain, what is rejected,
-and what to check before opening a pull request. For the full PR-to-promotion process,
-see [workflow.md](workflow.md).
-
-## How scoring works: rounds, not instant duels
-
-Opening a PR does **not** score it immediately. Your PR is screened and labeled
-`kata:pending` — it now waits for the next **competition round**. Rounds are run on a
-schedule; each round scores every pending agent against the current king on the *same*
-secretly-sampled problems and ranks them. The best agent that beats the king is merged and
-becomes the new king.
-
-What this means for you:
-
-- You may have **only one open PR** at a time. Extra open PRs are closed `kata:invalid`.
-- Iterate on that one PR: push new commits to improve it between rounds.
-- If you beat the king but weren't the top challenger, your PR stays open (`kata:pending`)
-  and competes again next round.
-- If your PR is benched as `kata:stale` (unchanged since it last competed), push any commit
-  to re-enter it. A newly promoted king also re-enters every pending PR automatically.
-- The labels you'll see: `kata:pending` (waiting), `kata:executing` (competing now),
-  `kata:winner:<pack>` (won), `kata:losing` (didn't beat the king), `kata:invalid`
-  (rejected), `kata:review` (held for maintainer screening review), `kata:stale`
-  (benched), `kata:hold` (won but merge blocked).
-
-### Winner reward labels
-
-When a PR is merged and promoted, Kata applies `kata:winner:<pack>` plus one
-`kata:reward:*` tier. The winner label proves that the PR became king. The reward tier
-is a Gittensor/SN74 scoring signal that says how strong the promotion was.
-
-| Label | Applied when the promoted candidate has... |
-| --- | --- |
-| `kata:reward:s` | a valid promotion below the higher tier thresholds |
-| `kata:reward:m` | at least 3 true positives, or +2 true positives over the king, or +15% score delta |
-| `kata:reward:l` | at least 5 true positives, or +4 true positives over the king, or at least 60% detection score |
-| `kata:reward:xl` | at least 8 true positives, or +6 true positives over the king, or at least 85% detection score |
-
-Gittensor uses the highest matching label multiplier. For example, a PR with
-`kata:winner:sn60__bitsec` and `kata:reward:m` receives the medium reward multiplier,
-not the base winner multiplier. Promotions also decay with age inside the Gittensor
-lookback window, so newer kings carry more reward weight than older winner PRs.
-
-## Current Scope
-
-The live lane is:
+This is the contributor contract for the live Kata lane:
 
 ```text
 sn60__bitsec / miner
 ```
 
-Current submission scope:
+Use this checklist before opening a PR. The goal is simple: submit one honest,
+general vulnerability-finding agent that can be scored fairly against the current
+king. Do not edit validator, sandbox, lane, or king code in a miner PR.
 
-- Python-only miner agents
-- one submission directory per PR
-- one subnet-pack and mode per submission
-- self-contained SN60 agents in `agent.py`
-- no API keys, benchmark answers, benchmark-specific answer replay, helper files,
-  or validator configuration
+## Quick Checklist
+
+Your PR is ready when all of these are true:
+
+- The PR touches exactly one directory under
+  `submissions/sn60__bitsec/miner/<submission-id>/`.
+- The `<submission-id>` is `<github-username>-YYYYMMDD-NN`.
+- The `<github-username>` prefix matches the GitHub account that opens the PR.
+- `submission.json` `author` also matches the PR author's GitHub username.
+- The PR changes at least one agent bundle file, normally `agent.py`.
+- The only required files are present: `agent.py`, `agent_manifest.json`, and
+  `submission.json`.
+- `agent.py` defines a synchronous `agent_main(...)` function.
+- `agent_main()` can be called with no arguments.
+- `agent_main` returns a dict with top-level `vulnerabilities`.
+- The agent does real analysis. It is not an empty stub or canned constant report.
+- The bundle has no helper files, symlinks, hardcoded secrets, provider URLs, or
+  benchmark-answer replay logic.
+- The bundle passes local validation:
+
+```bash
+uv run kata submission validate \
+  --path submissions/sn60__bitsec/miner/<submission-id>
+```
 
 ## Directory Layout
 
-A valid PR adds exactly one submission directory:
+A valid miner PR adds or updates exactly one submission directory:
 
 ```text
 submissions/
-  <subnet-pack>/
-    <mode>/
-      <submission-id>/
+  sn60__bitsec/
+    miner/
+      <github-username>-YYYYMMDD-NN/
         agent.py
         agent_manifest.json
         submission.json
 ```
 
-For SN60 today:
-
-```text
-submissions/sn60__bitsec/miner/<submission-id>/
-```
-
-Required `submission_id` format:
-
-```text
-<github-username>-YYYYMMDD-NN
-```
-
 Example:
 
 ```text
-alice-20260704-01
+submissions/sn60__bitsec/miner/alice-20260708-01/
 ```
 
-The `<github-username>` prefix must match the GitHub account that opens the PR.
-For example, if the PR author is `jonathanchang31`, then
-`jonathan-20260707-01` is invalid. `kata-bot` closes identity mismatches as
-`kata:invalid` before adding `kata:pending`, so the PR will not enter a round.
+If the PR author is `alice`, the submission ID must start with `alice-`. If the
+PR author is `jonathanchang31`, then `jonathan-20260708-01` is invalid. Identity
+mismatches are closed as `kata:invalid` before the PR can enter a round.
 
 ## Required Files
 
 ### `agent.py`
 
-`agent.py` is the only executable miner code in the bundle.
+`agent.py` is the executable miner code.
 
-It must define a synchronous function named `agent_main`:
+It must define:
 
 ```python
 def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict:
@@ -120,12 +73,9 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
         "vulnerabilities": [
             {
                 "title": "Missing access control on privileged update",
-                "description": (
-                    "A privileged state-changing function appears callable by any "
-                    "account, allowing unauthorized changes to protected settings."
-                ),
+                "description": "Explain the bug and impact clearly.",
                 "severity": "high",
-                "file": "contracts/Admin.sol",
+                "file": "contracts/Example.sol",
             }
         ]
     }
@@ -133,34 +83,22 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
 
 Requirements:
 
-- `agent_main` must be callable with no arguments.
-- It must return a JSON-serializable dictionary.
-- The returned dictionary must include a top-level `vulnerabilities` list.
-- Each finding should describe a plausible high or critical security issue with a
-  source location, so the scorer can match it to a real benchmark vulnerability.
-- Do **not** directly return a no-op such as `{"vulnerabilities": []}`; a stub
-  agent that does no analysis is rejected up front (see the screening gate below).
-  A *non-stub* agent that happens to find nothing on a run is fine — it just
-  scores 0 there, it is not rejected.
-- General reusable detectors are allowed. For example, an agent may parse code and
-  report a risk when a generic pattern such as "external call before state update"
-  appears.
-- Benchmark-specific answer replay is not allowed. Do not hardcode findings for
-  specific benchmark projects, exact project fingerprints, known contest findings,
-  or branches that recognize a known project and return prewritten vulnerabilities.
-- The file must contain valid Python syntax.
-- The file must not be the scaffold placeholder.
-- The implementation must be self-contained for SN60 V1.
-- Be efficient: your agent has both a per-problem **runtime** budget and a hard
-  per-problem **inference** budget (exactly 1 model call — see
-  "Inference budget" below), so prioritise the most suspicious files first.
-  Exhausting either budget just scores 0 for that problem — it does not close your PR.
+- `agent_main` must be synchronous. The SN60 runner calls it directly and does
+  not await coroutines.
+- `agent_main()` must work with no arguments.
+- The return value must be JSON-serializable.
+- The top-level result must include `vulnerabilities`.
+- Each finding should include a clear title, description, severity, and source
+  location when possible.
+- A direct empty return such as `{"vulnerabilities": []}` is rejected as a no-op.
+- A constant canned report that does not read or analyze the project is rejected
+  as a fake agent.
+- A real agent that analyzes the project but happens to find nothing during a
+  run is not closed; that project simply scores 0.
 
 ### `agent_manifest.json`
 
-`agent_manifest.json` declares the bundle runtime contract.
-
-Required values:
+Use exactly this runtime contract:
 
 ```json
 {
@@ -172,8 +110,6 @@ Required values:
 
 ### `submission.json`
 
-`submission.json` identifies the target lane and submission metadata.
-
 Example:
 
 ```json
@@ -181,8 +117,8 @@ Example:
   "schema_version": 2,
   "subnet_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "alice-20260704-01",
-  "created_at": "2026-07-04T00:00:00+00:00",
+  "submission_id": "alice-20260708-01",
+  "created_at": "2026-07-08T00:00:00+00:00",
   "author": "alice",
   "title": "short optional title",
   "notes": "short optional notes"
@@ -192,60 +128,45 @@ Example:
 Requirements:
 
 - `schema_version` must be `2`.
-- `subnet_pack` should be `sn60__bitsec` for the live lane.
+- `subnet_pack` must match the path, normally `sn60__bitsec`.
 - `mode` must be `miner`.
-- `submission_id` should match the directory name.
-- `author` must match the GitHub username that opens the PR.
+- `submission_id` must match the directory name.
+- `author` must match the GitHub account that opened the PR.
 
-`subnet_pack` is the canonical field. The older `repo_pack` field is accepted
-only as a legacy alias.
+## Model Access
 
-## Inference Contract
-
-The validator pays for inference and pins the model. Miners submit agent logic,
-not API keys or provider configuration.
-
-Your agent runs in an isolated sandbox with no public internet access. It can
-only reach the validator-provided inference proxy.
+Miners do not bring API keys. The validator provides a sandbox inference proxy
+and pins the model for every agent.
 
 Use this contract:
 
 - Endpoint: `POST <inference_api>/inference`
-- `inference_api`: use the `agent_main(..., inference_api=...)` argument, or the
-  `INFERENCE_API` environment variable
+- `inference_api`: use the `agent_main(..., inference_api=...)` argument, or
+  `INFERENCE_API`
 - Auth header: `x-inference-api-key`
-- API key source: `INFERENCE_API_KEY` environment variable
-- Request body: OpenAI chat-completions shape, for example
+- API key source: `INFERENCE_API_KEY`
+- Request shape: OpenAI-style chat body, for example
   `{"messages": [...], "max_tokens": 4000}`
-- Do not set or depend on `model`; the validator pins it
-- Response body: read `choices[0].message.content`
+- Response: read `choices[0].message.content`
+- Do not use `Authorization: Bearer`
+- Do not set `model`, `temperature`, `top_p`, `seed`, or other sampling knobs
 
-Do not use `Authorization: Bearer`; the proxy expects `x-inference-api-key`.
+Current validation inference uses the pinned Qwen model:
 
-### Inference budget (enforced by the validator)
+```text
+qwen/qwen3.6-35b-a3b
+```
 
-The validator funds every token, so each agent gets a **hard inference budget per
-problem, enforced at the proxy** — you cannot exceed it no matter what your
-`agent.py` requests:
+Per problem, the relay enforces:
 
-- **Per problem (one codebase): up to 3 model calls _and_ 24,000 output tokens
-  total**, whichever you reach first. Once you have made 3 successful calls, or
-  spent 24,000 output tokens across them, any further call returns HTTP `429`.
-- **Per call:** at most **32,000 output tokens** (the proxy clamps `max_tokens` down
-  to this, so requesting more has no effect).
-- A **failed** call does not count against either limit, so a transient error can be
-  retried until a call succeeds.
+- up to 3 successful model calls
+- up to 24,000 output tokens total
+- further calls return HTTP `429`
 
-Design for this: spend your calls where they matter — either one big pass over the
-whole codebase, or a few focused passes over the contracts most likely to be
-vulnerable — and ask for all findings. Handle a `429` by returning the findings you
-have so far (do not crash — a crashed run scores as invalid).
+Handle failures and `429` by returning the findings you already have. Do not
+crash just because one model call failed.
 
-The validator can tune these (`KATA_RELAY_MAX_OUTPUT_TOKENS`,
-`KATA_RELAY_AGENT_CALL_BUDGET`, `KATA_RELAY_AGENT_TOKEN_BUDGET`); the numbers above
-are the current defaults.
-
-Minimal standard-library example:
+Minimal example:
 
 ```python
 import json
@@ -275,211 +196,118 @@ def ask_model(inference_api, prompt):
     return data["choices"][0]["message"]["content"]
 ```
 
-If a model call fails and your agent returns an empty `vulnerabilities` list, your
-PR is **not** closed — that problem simply scores 0 and scoring continues to the
-rest. But an agent that finds nothing cannot out-detect the king, so test your
-inference contract locally first.
+## What Gets Closed Before A Round
 
-The pinned model today is **`qwen/qwen3.6-35b-a3b`**, a reasoning model. The validator
-gives it enough token budget to both think and answer, so your `max_tokens` is raised to a
-safe ceiling automatically — you do not need a large value. Read the final answer from
-`choices[0].message.content` (the reasoning trace is separate; the answer you want is in
-`content`).
+Kata closes a PR as `kata:invalid` before adding `kata:pending` when there is a
+clear hard failure:
 
-## Screening Gate — what closes a PR, and what does not
+- More than one open PR from the same contributor. Keep one active PR and push
+  updates to it.
+- The PR edits anything outside its single submission directory.
+- The PR edits no agent bundle file.
+- The submission path, `submission_id`, or `submission.json` metadata does not
+  match.
+- The GitHub username in the submission ID or metadata does not match the PR
+  author.
+- Required files are missing or malformed.
+- `agent.py` has invalid Python syntax.
+- `agent_main` is missing, async, or cannot be called with no arguments.
+- The agent is a no-op stub or constant canned report.
+- The bundle contains unsupported files, helper files, symlinks, too many files,
+  or oversized files.
+- The bundle contains hardcoded API keys, provider endpoints, or direct
+  references to provider/validator secret env vars such as `OPENAI_API_KEY`,
+  `OPENROUTER_API_KEY`, `CHUTES_API_KEY`, or `KATA_VALIDATOR_API_KEY`.
+- The bundle includes benchmark-answer leakage tokens such as
+  `expected_findings`, `ground_truth`, `answer_key`, `scabench`, or `hardsteer`.
+- The agent hardcodes benchmark project IDs, known finding IDs, known report
+  titles, long answer text, or prewritten findings for known benchmark projects.
+- The agent is an exact or AST-equivalent copy of the current king.
 
-There are exactly **two** ways a PR ends without merging. Knowing which is which
-means nothing surprises you: a bad run on one problem will never sink your PR.
+General reusable analysis logic is allowed. Project-specific answer replay is
+not allowed.
 
-### 1. Static screening — runs BEFORE scoring; the only thing that closes a PR early
+## What Gets Held For Review
 
-These are cheap, source-only checks (no model calls). If any fail, the PR is
-closed immediately with a clear reason and **no scoring cost is spent**. Pass all of
-these and your submission is guaranteed a fair, full evaluation in the next round:
+Suspicious but non-conclusive evidence is labeled `kata:review`, not
+`kata:pending`. A PR with `kata:review` cannot enter a round.
 
-- Your PR touches exactly one `submissions/<pack>/<mode>/<id>/` directory and
-  edits nothing else (not `kings/`, `lanes/`, evaluator code, tests, or docs).
-- The bundle contains only allowed files — no `helpers/` directory in V1, no
-  symlinks, and within the file-count/size limits.
-- `agent.py` is valid Python and defines a **synchronous** `agent_main` that is
-  callable with **no arguments** (`agent_main()`), returning a dict with a
-  top-level `vulnerabilities` list.
-- `agent_main` is **not a stub**: it must not directly return
-  `{"vulnerabilities": []}` (or an empty list) without doing any analysis.
-- No hardcoded provider secrets anywhere (for example `sk-...`, `ghp_...`,
-  `cpk_...`).
-- No references to validator-only secrets (`CHUTES_API_KEY`,
-  `KATA_VALIDATOR_API_KEY`).
-- No benchmark answer-key leakage tokens (for example `expected_findings`,
-  `ground_truth`, `curated-highs-only`, `scabench`). Find the bugs — do not try
-  to read the answers.
-- No benchmark-specific answer replay. This includes hardcoded benchmark project IDs,
-  known finding IDs or report titles, project-fingerprint branches, or prewritten
-  vulnerability maps for known benchmark projects. General static-analysis heuristics
-  are allowed only when they are reusable across projects and do real analysis.
-- Your agent is not a copy of the current king.
+Examples:
 
-Suspicious-but-not-conclusive screening evidence is held as `kata:review`, not scored and
-not closed. A maintainer may approve a review hold by commenting exactly
-`/kata approve-review` on the PR. Approval moves the PR to `kata:pending` only if the
-latest code still passes all hard rejection checks; concrete replay, identity mismatch,
-or invalid shape cannot be bypassed by approval.
+- Near-copy similarity that is not an exact king copy.
+- Ambiguous benchmark-fingerprint logic.
+- Suspicious static report banks.
+- Optional LLM review evidence that supports manual review.
 
-Kata can also run an optional second-stage LLM review for `kata:review` cases. Enable it
-with `KATA_SCREENING_LLM_REVIEW=1`; the default backend is the local Codex CLI using
-`KATA_SCREENING_LLM_MODEL=gpt-5.4` unless overridden. LLM review adds concise evidence
-and, when `KATA_SCREENING_LLM_ARTIFACT_DIR` is set, writes an audit artifact for
-maintainers. It never auto-closes a PR by itself: deterministic screening remains the
-authority for hard rejection.
-
-### 2. The round — bad, empty, or slow output NEVER closes your PR
-
-Once static screening passes and the round runs, your agent is scored against **every**
-sampled problem alongside the king. Here, a bad result is only a **0 for that problem** —
-it is never a rejection:
-
-- If your agent errors, times out, or returns no findings on a problem, that problem scores
-  **0** and scoring **continues** to the rest. One bad problem cannot sink an
-  otherwise-good submission.
-- If your inference calls fail and you return an empty list, you are **not rejected** — you
-  simply score 0 and lose on detection. The PR comment tells you how many problems produced
-  findings (for example, "produced findings on 2/6 problems") so you can fix your inference
-  contract and try again next round.
-- You lose the round only when you do not out-detect the king across the sampled problems.
-
-**Takeaway:** take the static checklist seriously — it is the only early gate. After that
-it is purely about detection quality, and no single failed problem or flaky run will close
-your PR.
-
-## PR Rules
-
-A valid miner PR must:
-
-- be your **only open PR** — one open PR per contributor; extra open PRs are closed
-  `kata:invalid`
-- target the default competition branch
-- touch exactly one submission directory
-- change at least one bundle file
-- avoid edits outside that submission directory
-- include only allowed bundle files
-- keep `submissions/` as the only miner-edited top-level area
-- not edit `kings/`, `lanes/`, evaluator code, tests, docs, or deployment files
-
-## Validation Checklist
-
-Before opening a PR, verify:
-
-- `agent.py` exists.
-- `agent.py` defines synchronous `agent_main`.
-- `agent_main` works with no arguments.
-- `agent_main` is not a stub — it does real analysis (a direct empty return is
-  rejected). When run locally it should produce real findings; an agent that
-  finds nothing is not rejected, but it cannot out-detect the king.
-- `agent_manifest.json` uses schema version `1`, runtime `python`, entrypoint
-  `agent.py`.
-- `submission.json` uses schema version `2`, `subnet_pack`, mode `miner`, and a
-  unique `submission_id`.
-- The submission directory/id prefix and `submission.json` `author` match the
-  GitHub username that opened the PR.
-- No helper files are included.
-- No symlinks are included.
-- No hardcoded API keys or provider tokens are included.
-- No validator-only environment variables are referenced.
-- No benchmark answers, oracle files, or private scorer data are referenced.
-- No hardcoded findings for specific benchmark projects, exact project fingerprints,
-  known contest answers, or prewritten vulnerability replay logic are included.
-- No model sampling overrides are hardcoded.
-- The bundle stays under current size and file-count limits.
-
-Run local validation:
-
-```bash
-uv run kata submission validate \
-  --path submissions/sn60__bitsec/miner/<submission-id>
-```
-
-## Rejection Conditions
-
-These are the **static** conditions that close a PR *before* scoring. (Runtime
-output problems — empty findings, unparsable reports, timeouts, weak or wrongly
-shaped findings — are **not** rejections; they score 0 on that problem and the
-scoring continues. See "Screening Gate" above.)
-
-Kata rejects submissions for:
-
-- invalid PR shape
-- more than one submission directory
-- off-scope file changes
-- missing required files
-- invalid metadata
-- invalid Python syntax
-- async-only `agent_main`
-- required positional arguments that prevent no-argument invocation
-- a stub/no-op `agent_main` that directly returns an empty `vulnerabilities` list
-  without any analysis
-- scaffold or duplicate current-king agents
-- helper files in SN60 V1 bundles
-- symlinks
-- oversized bundles
-- hardcoded secret-like values
-- references to validator/provider secret env vars
-- benchmark-answer leakage indicators
-- hardcoded benchmark replay, including project-specific prewritten findings or
-  exact benchmark project/finding fingerprints
-- provider endpoint or model override attempts
-
-## Scoring Conditions
-
-Validation only determines whether the candidate may be evaluated. Promotion is
-decided later by the workflow in [workflow.md](workflow.md).
-
-High-level promotion requirements:
-
-- static screening must pass (see the Screening Gate above)
-- candidate must strictly beat the current king across the sampled problems
-- the result must still be fresh at merge time
-
-Kata uses SN60-style sampled validation for promotion. The primary score is:
+Maintainers can approve a review hold by commenting:
 
 ```text
-detection_score = total_true_positives / total_expected_vulnerabilities
+/kata approve
 ```
 
-Beginner definitions:
+Approval removes `kata:review` and adds `kata:pending` only if the latest code
+still passes all hard rejection checks. A maintainer cannot approve concrete
+cheating, invalid identity, invalid PR shape, or benchmark-answer replay.
 
-- `true positives`: expected benchmark vulnerabilities your agent correctly
-  found.
-- `precision`: the share of your reported findings that were real matches,
-  `true_positives / total_found`. Noisy extra findings lower precision.
-- `F1 score`: a balanced quality score combining detection score and precision.
-- `invalid/error evaluation`: the agent run, report, sandbox, or scorer did not
-  finish as a successful evaluation. It scores zero for that project and hurts
-  tie-breaks.
+The older `/kata approve-review` command is also accepted, but `/kata approve`
+is the preferred command.
+
+## What Happens In A Round
+
+Opening a PR does not score it immediately. After intake, a passing PR waits as
+`kata:pending` until a maintainer starts a round.
+
+In each round:
+
+- Kata snapshots open candidate PRs at their current commits.
+- Only one open PR per contributor is allowed.
+- Each candidate is re-screened on the locked commit.
+- The king and all candidates are scored on the same randomly sampled SN60
+  benchmark problems.
+- A bad, empty, slow, or crashed result on one problem scores 0 for that problem.
+  It does not close the PR by itself.
+- The top candidate that strictly beats the king is merged and promoted.
+- A candidate that beats the king but is not the top winner stays open as
+  `kata:pending` for the next round.
+- A candidate that does not beat the king is closed as `kata:losing`.
 
 Promotion comparison order:
 
-1. higher detection score
-2. more true positives
-3. higher precision
-4. higher F1 score
-5. fewer invalid/error evaluations
+1. Higher detection score.
+2. More true positives.
+3. Higher precision.
+4. Higher F1 score.
+5. Fewer invalid/error evaluations.
 
-Sandbox `PASS` means the run found every expected vulnerability for that
-project. PASS projects are shown for context, but detection score is the main
-promotion signal.
+## Labels You May See
 
-## Quick Start
+- `kata:pending`: screened and waiting for the next round.
+- `kata:review`: held for maintainer review; cannot enter a round yet.
+- `kata:executing`: currently competing in a round.
+- `kata:winner:<pack>`: merged and promoted to king.
+- `kata:reward:*`: Gittensor reward tier for a merged winner.
+- `kata:losing`: competed but did not beat the king.
+- `kata:invalid`: failed screening or one-open-PR rule.
+- `kata:stale`: skipped because the PR commit and king were unchanged since the
+  last time it competed.
+- `kata:hold`: won, but merge/promotion needs maintainer attention.
+
+## Local Commands
+
+Create a submission:
 
 ```bash
 uv run kata submission init \
   --subnet-pack sn60__bitsec \
   --mode miner \
   --submission-id <github-user>-YYYYMMDD-01
+```
 
-# edit the generated agent.py
+Validate before opening a PR:
 
+```bash
 uv run kata submission validate \
   --path submissions/sn60__bitsec/miner/<github-user>-YYYYMMDD-01
 ```
 
-Then commit the one submission directory and open a PR.
+Then commit only that submission directory and open one PR.

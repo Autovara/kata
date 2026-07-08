@@ -46,12 +46,6 @@ from kata.submission_system.rendering import (
     render_submission_validation,
     render_submission_verification,
 )
-from kata.submission_system.validation import (
-    render_screening_finding,
-    validate_changed_paths,
-    validate_submission_candidate,
-    validate_submission_metadata,
-)
 
 _WORKFLOW_EXPORTS = {
     "decide_submission_action",
@@ -66,12 +60,23 @@ _WORKFLOW_EXPORTS = {
     "verify_submission_result",
 }
 
+_VALIDATION_EXPORTS = {
+    "render_screening_finding",
+    "validate_changed_paths",
+    "validate_submission_candidate",
+    "validate_submission_metadata",
+}
+
 
 def __getattr__(name: str):
     if name in _WORKFLOW_EXPORTS:
         from kata.submission_system import workflow
 
         return getattr(workflow, name)
+    if name in _VALIDATION_EXPORTS:
+        from kata.submission_system import validation
+
+        return getattr(validation, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [

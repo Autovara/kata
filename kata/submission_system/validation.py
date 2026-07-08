@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kata.screening_system import ScreeningFinding, screen_submission
+from kata.screening_system.engine import screen_submission
+from kata.screening_system.models import ScreeningFinding
 from kata.screening_system.rules import (
     validate_bundle_python_sources,
     validate_bundle_static_policy,

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-SOURCE_SUFFIXES = (".sol", ".vy")
+SOURCE_SUFFIXES = (".sol", ".vy", ".rs", ".move", ".cairo", ".go")
 SKIP_DIRS = {
     ".git",
     ".github",
@@ -38,6 +38,7 @@ SKIP_DIRS = {
     "out",
     "script",
     "scripts",
+    "target",
     "test",
     "tests",
     "vendor",
@@ -55,6 +56,22 @@ VY_FUNC_RE = re.compile(
 )
 CONTRACT_RE = re.compile(
     r"^\s*(?:abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
+MODULE_RE = re.compile(
+    r"^\s*(?:pub\s+)?(?:mod|module|contract|package)\s+([A-Za-z_][A-Za-z0-9_:]*)",
+    re.MULTILINE,
+)
+RS_FN_RE = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    re.MULTILINE,
+)
+MOVE_FUN_RE = re.compile(
+    r"^\s*(?:public\s+)?(?:entry\s+)?fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>{}]*>)?\s*\(",
+    re.MULTILINE,
+)
+GO_FUNC_RE = re.compile(
+    r"^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(",
     re.MULTILINE,
 )
 IMPORT_RE = re.compile(r'^\s*import\b[^;]*?["\']([^"\']+)["\']', re.MULTILINE)
@@ -277,6 +294,12 @@ def _function_at_line(text: str, line: int | None) -> str:
         starts.append((match.start(), match.group(1)))
     for match in VY_FUNC_RE.finditer(text):
         starts.append((match.start(), match.group(1)))
+    for match in RS_FN_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
+    for match in MOVE_FUN_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
+    for match in GO_FUNC_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
     starts.sort(key=lambda item: item[0])
     for index, (start, name) in enumerate(starts):
         end = starts[index + 1][0] if index + 1 < len(starts) else len(text)
@@ -298,6 +321,12 @@ def _function_source(text: str, function: str) -> str:
     for match in SOL_FUNC_RE.finditer(text):
         starts.append((match.start(), match.group(1)))
     for match in VY_FUNC_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
+    for match in RS_FN_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
+    for match in MOVE_FUN_RE.finditer(text):
+        starts.append((match.start(), match.group(1)))
+    for match in GO_FUNC_RE.finditer(text):
         starts.append((match.start(), match.group(1)))
     starts.sort(key=lambda item: item[0])
     for index, (start, name) in enumerate(starts):
@@ -434,13 +463,32 @@ def _functions(text: str) -> list[dict[str, Any]]:
         name = match.group(1)
         returns = f" -> {match.group(3).strip()}" if match.group(3) else ""
         out.append({"name": name, "sig": f"{name}({match.group(2).strip()}){returns}".strip()})
+    for match in RS_FN_RE.finditer(text):
+        name = match.group(1)
+        out.append({"name": name, "sig": match.group(0).strip()})
+    for match in MOVE_FUN_RE.finditer(text):
+        name = match.group(1)
+        out.append({"name": name, "sig": match.group(0).strip()})
+    for match in GO_FUNC_RE.finditer(text):
+        name = match.group(1)
+        out.append({"name": name, "sig": match.group(0).strip()})
     return out
 
 
 def _score(rel: str, text: str) -> int:
     low_name = rel.lower()
     low_text = text.lower()
-    score = min(low_text.count("function ") + low_text.count("\ndef "), 35)
+    score = min(
+        low_text.count("function ")
+        + low_text.count("\ndef ")
+        + low_text.count("\nfn ")
+        + low_text.count(" fn ")
+        + low_text.count("\nfun ")
+        + low_text.count(" fun ")
+        + low_text.count("\nfunc ")
+        + low_text.count(" func "),
+        45,
+    )
     for term in NAME_TERMS:
         if term in low_name:
             score += 9
@@ -480,12 +528,22 @@ def _discover(root: Path) -> list[dict[str, Any]]:
             and "library " not in text
             and "\ndef " not in text
             and not text.lstrip().startswith("def ")
+            and "\nfn " not in text
+            and " fn " not in text
+            and "\nfun " not in text
+            and " fun " not in text
+            and "\nfunc " not in text
+            and " func " not in text
+            and "module " not in text
+            and "package " not in text
         ):
             continue
         rel = rel_path.as_posix()
         funcs = _functions(text)
         contracts = CONTRACT_RE.findall(text)
-        if not contracts and path.suffix.lower() == ".vy":
+        if not contracts:
+            contracts = MODULE_RE.findall(text)
+        if not contracts and path.suffix.lower() in {".vy", ".rs", ".move", ".cairo", ".go"}:
             contracts = [path.stem]
         records.append(
             {
@@ -682,7 +740,7 @@ def _triage(inference_api: str | None, records: list[dict[str, Any]]) -> tuple[l
 
 def _batch_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]) -> str:
     header = (
-        "Deep-audit the line-numbered Solidity/Vyper source below. Find only high/critical "
+        "Deep-audit the line-numbered smart-contract source below. Find only high/critical "
         "vulnerabilities with a concrete exploit path and exact source evidence. Return strict JSON only:\n"
         '{"findings":[{"title":"Contract.function - specific bug","file":"exact/path.sol",'
         '"contract":"Contract","function":"functionName","line":123,"severity":"high|critical",'
@@ -1028,6 +1086,12 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
         line_value = _line_for(source_text, f"function {function}") if function else None
     if line_value is None and function:
         line_value = _line_for(source_text, f"def {function}")
+    if line_value is None and function:
+        line_value = _line_for(source_text, f"fn {function}")
+    if line_value is None and function:
+        line_value = _line_for(source_text, f"fun {function}")
+    if line_value is None and function:
+        line_value = _line_for(source_text, f"func {function}")
     if line_value is None:
         line_value = _line_for(source_text, title.split(" - ", 1)[0])
     confidence = 0.93 if severity == "critical" else 0.85

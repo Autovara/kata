@@ -1,15 +1,6 @@
 from __future__ import annotations
 
-"""Generalized SN60 miner: repository triage plus focused deep audits.
-
-This submission keeps the useful shape of the former king workflow:
-1. build a compact repository map
-2. spend one model call on target selection
-3. spend the remaining calls on a small number of high-risk source batches
-
-It intentionally avoids benchmark-specific project fingerprints, canned
-findings, and hardcoded answer heuristics.
-"""
+"""Repository triage plus focused deep audits for SN60."""
 
 import json
 import os
@@ -231,13 +222,11 @@ UTILITY_NAME_TERMS = (
 REJECT_PHRASES = (
     "if access control is insufficient",
     "if any bypass of",
-    "if the onlymarketplace modifier is improperly configured",
     "if compiler settings change",
     "if the admin slot is corrupted",
     "if the admin executor address is attacker-controlled",
-    "if the vesting contract is malicious or compromised",
-    "if the vesting contract does not enforce proper authorization",
-    "if the vesting contract does not enforce transfer authorization",
+    "if an external dependency is malicious or compromised",
+    "if an upstream dependency fails to enforce authorization",
     "if the token is malicious",
     "if tokens do not behave as expected",
     "malicious or non-compliant erc20",
@@ -431,7 +420,7 @@ def _score(rel: str, text: str) -> int:
         score += 6
     if any(token in low_text for token in ("permit(", "permitwrap", "allowance", "transferfrom")):
         score += 12
-    if any(token in low_text for token in ("queuewithdrawal", "confirmwithdrawal", "batchconfirmwithdrawals", "claimstakerewards", "applyslashes")):
+    if sum(token in low_text for token in ("queue", "confirm", "withdraw", "reward", "slash")) >= 2:
         score += 10
     if any(token in low_text for token in ("pure returns", "view returns")) and any(
         token in low_text for token in ("sqrt(", " ln(", " log(", "exponent", "mantissa", "packedfloat")
@@ -583,7 +572,7 @@ def _candidate_highlights(snippet: str) -> list[str]:
         low = compact.lower()
         if any(term in low for term in lowered_terms) and any(op in compact for op in ("+", "-", "*", "/", "%", ">", "<", "=")):
             lines.append(f"{idx}: {compact[:180]}")
-        elif any(term in low for term in ("refund", "slippage", "reward", "claim", "vesting", "release", "liquidat")):
+        elif any(term in low for term in ("claim", "redeem", "release", "settle", "queue", "withdraw", "liquidat")):
             lines.append(f"{idx}: {compact[:180]}")
         if len(lines) >= 10:
             break
@@ -719,9 +708,9 @@ def _candidate_digest(candidates: list[dict[str, Any]]) -> str:
 def _triage_candidates(inference_api: str | None, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     prompt = (
         "Review these function-level audit candidates. Select the functions most likely to contain real "
-        "high or critical bugs in accounting, order dependence, queue/reward/slashing fairness, permit "
-        "or allowance misuse, liquidation/redeem logic, math domain handling, refund/slippage handling, "
-        "or validator/delegator bookkeeping. Reject generic access-control, delegatecall, or malicious-token theories. "
+        "high or critical bugs in accounting, authorization, asset movement, settlement ordering, "
+        "signature or allowance handling, liquidation or redemption logic, or arithmetic invariants. "
+        "Reject generic access-control notes, delegatecall theories, or malicious-token assumptions. "
         'Return strict JSON only: {"candidate_ids":[1,2,3]}\n\n'
         + _candidate_digest(candidates)
     )
@@ -753,9 +742,9 @@ def _triage_candidates(inference_api: str | None, candidates: list[dict[str, Any
 def _audit_candidate(inference_api: str | None, candidate: dict[str, Any]) -> dict[str, Any] | None:
     prompt = (
         "Audit this single function. Find at most one real high or critical vulnerability. Prefer concrete "
-        "state-transition, accounting, rounding, reward-index, vesting-step, queue fairness, slashing "
-        "accounting, permit/allowance misuse, math domain/precision, refund, slippage, or liquidation bugs. "
-        "Reject generic reentrancy, generic auth, admin compromise, malicious token, or external-contract "
+        "state-transition, accounting, settlement, authorization, signature, arithmetic, "
+        "liquidation, redemption, or asset-flow bugs. Reject generic reentrancy, generic auth, "
+        "admin compromise, malicious token, or external-contract "
         "assumptions. The answer must cite exact variables from the code snippet. Return strict JSON only:\n"
         '{"finding":null}\n'
         "or\n"
@@ -944,10 +933,10 @@ def _json_obj(text: str) -> dict[str, Any]:
 def _triage(inference_api: str | None, records: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
     prompt = (
         "Review this compact smart-contract repository map. Pick the files most likely to contain "
-        "real high or critical exploitable bugs. Prioritize accounting, state-transition, slippage, "
-        "rounding, liquidation, reward-index, vesting-step, and refund logic. Deprioritize generic "
-        "admin, delegatecall, faucet, interface, utility, or 'if compromised' style hypotheses. "
-        "Return strict JSON only:\n"
+        "real high or critical exploitable bugs. Prioritize accounting, state transitions, asset "
+        "movement, signature or allowance flows, liquidation or redemption paths, and arithmetic "
+        "invariants. Deprioritize generic admin, delegatecall, faucet, interface, utility, or "
+        "'if compromised' style hypotheses. Return strict JSON only:\n"
         '{"target_files":["path.sol"],"findings":[]}\n'
         + _repo_digest(records)
     )
@@ -973,9 +962,9 @@ def _triage(inference_api: str | None, records: list[dict[str, Any]]) -> tuple[l
 def _batch_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]) -> str:
     header = (
         "Deep-audit the Solidity or Vyper source below. Find only high or critical vulnerabilities "
-        "with a concrete exploit path. Prefer accounting, state-transition, reward-index, vesting, "
-        "queue or slashing fairness, validator/delegator accounting, allowance or permit misuse, "
-        "liquidation, refund, slippage, math-domain handling, and rounding bugs. Reject generic reentrancy, delegatecall, "
+        "with a concrete exploit path. Prefer accounting, state transitions, asset settlement, "
+        "allowance or permit misuse, liquidation, arithmetic domain handling, and rounding bugs. "
+        "Reject generic reentrancy, delegatecall, "
         "admin compromise, malicious-token, or missing-access-control theories unless the code itself "
         "shows a direct exploit path in this function. Every finding must cite exact variable names "
         "from the function body. Return strict JSON only:\n"
@@ -984,9 +973,8 @@ def _batch_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]
         '"mechanism":"preconditions -> attacker transactions -> broken invariant",'
         '"impact":"specific loss, insolvency, privilege escalation, or durable DoS",'
         '"description":"2-4 precise sentences naming the exact file, contract, function, exploit path, and impact"}]}\n'
-        "Audit for state transition correctness, token/share/accounting math, "
-        "liquidation or redemption correctness, vesting bookkeeping, refund/slippage correctness, "
-        "reward index advancement, queue fairness across time, validator/delegator reward attribution, "
+        "Audit for state-transition correctness, token/share/accounting math, "
+        "liquidation or redemption correctness, signature or allowance flows, "
         "math-library domain correctness, and operations that can permanently lock user or protocol funds. At most 4 findings. "
         "If an issue is not clearly exploitable and material, omit it.\n"
     )
@@ -1131,7 +1119,7 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
         token in combined_low
         for token in (
             "external contract",
-            "if the vesting contract",
+            "upstream contract",
             "without proper authorization",
         )
     ):

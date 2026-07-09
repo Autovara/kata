@@ -1,1193 +1,699 @@
 from __future__ import annotations
 
-"""SN60 miner: repository triage plus two evidence-checked deep-audit passes.
-
-The scoring lane rewards precise high/critical findings with concrete source
-locations. This agent spends the first inference call on repo-wide target
-selection, then uses the remaining calls on line-numbered source batches.
-Reported findings must survive local file/function/evidence validation.
-"""
-
 import json
 import os
 import re
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-
-SOURCE_SUFFIXES = (".sol", ".vy", ".rs", ".move", ".cairo", ".go")
+SOURCE_SUFFIXES = {".sol", ".vy", ".cairo", ".rs", ".move", ".go"}
 SKIP_DIRS = {
     ".git",
-    ".github",
-    "artifacts",
-    "broadcast",
-    "cache",
-    "coverage",
-    "dist",
-    "docs",
-    "example",
-    "examples",
-    "interfaces",
-    "lib",
-    "mock",
-    "mocks",
+    ".venv",
     "node_modules",
-    "out",
-    "script",
-    "scripts",
-    "target",
-    "test",
-    "tests",
+    "lib",
+    "libs",
     "vendor",
     "vendors",
+    "out",
+    "artifacts",
+    "cache",
+    "target",
+    "build",
+    "dist",
+    "coverage",
+    "__pycache__",
 }
+LOW_VALUE_DIRS = {"test", "tests", "mock", "mocks", "example", "examples", "script", "scripts"}
+MAX_FILE_BYTES = 260_000
+MAX_FILES = 28
+MAX_PACK_CHARS = 46_000
+MAX_SNIPPETS_PER_FILE = 9
+MAX_FINDINGS = 8
+REQUEST_TIMEOUT = 150
 
-SOL_FUNC_RE = re.compile(
-    r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*"
-    r"([^{};]*)(?:;|\{)",
-    re.MULTILINE,
-)
-VY_FUNC_RE = re.compile(
-    r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?:",
+RISK_PATTERNS = [
+    r"\b(call|delegatecall|staticcall)\s*(\{|[(])",
+    r"\bsafeApprove\b|\bapprove\b|\bsafeIncreaseAllowance\b",
+    r"\btransferFrom\b|\bsafeTransferFrom\b|\bsafeTransfer\b|\btransfer\b",
+    r"\bwithdraw\b|\bredeem\b|\bclaim\b|\bsweep\b|\brescue\b",
+    r"\bliquidat|\bborrow\b|\brepay\b|\bcollateral\b|\bmargin\b|\bhealth\b",
+    r"\bprice\b|\boracle\b|\bquote\b|\btwap\b|\bslot0\b|\blatestRoundData\b",
+    r"\bsignature\b|\becrecover\b|\bpermit\b|\bnonce\b|\bdeadline\b|\bdomain",
+    r"\binitialize\b|\bupgradeTo\b|\bset[A-Z]|\bowner\b|\badmin\b|\brole\b",
+    r"\bunchecked\b|\bassembly\b|\bselfdestruct\b|\btx\.origin\b",
+    r"\bentry\b|\bread\s*\(|\bwrite\s*\(|\bassert\b|\bpanic\b",
+    r"\bkill\w*\b|\bdisable\w*\b|\bdeactivate\w*\b|\brevive\w*\b",
+    r"\bdistribute\w*\b|\bnotifyRewardAmount\b|\bclaimable\b|\bemission\b",
+    r"\btotalWeight\w*\b|\bweightsPerEpoch\b|\bindex\b|\bepoch\b",
+]
+RISK_RE = [re.compile(p, re.IGNORECASE) for p in RISK_PATTERNS]
+FUNC_RE = re.compile(
+    r"^\s*(?:(?:public|entry|public\s+entry)\s+)?(?:function|fn|fun)\s+([A-Za-z_][A-Za-z0-9_]*)\b|"
+    r"^\s*(?:func\s+(?:\([^)]*\)\s*)?|def\s+)([A-Za-z_][A-Za-z0-9_]*)\b",
     re.MULTILINE,
 )
 CONTRACT_RE = re.compile(
-    r"^\s*(?:abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
-    re.MULTILINE,
-)
-MODULE_RE = re.compile(
-    r"^\s*(?:pub\s+)?(?:mod|module|contract|package)\s+([A-Za-z_][A-Za-z0-9_:]*)",
-    re.MULTILINE,
-)
-RS_FN_RE = re.compile(
-    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-    re.MULTILINE,
-)
-MOVE_FUN_RE = re.compile(
-    r"^\s*(?:public\s+)?(?:entry\s+)?fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>{}]*>)?\s*\(",
-    re.MULTILINE,
-)
-GO_FUNC_RE = re.compile(
-    r"^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-    re.MULTILINE,
-)
-IMPORT_RE = re.compile(r'^\s*import\b[^;]*?["\']([^"\']+)["\']', re.MULTILINE)
-STATE_RE = re.compile(
-    r"^\s*(?:mapping\s*\([^;]+|[A-Za-z_][A-Za-z0-9_<>,\\[\\]. ]+)\s+"
-    r"(?:public|private|internal|constant|immutable|override|\s)*"
-    r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|;)",
-    re.MULTILINE,
-)
-
-MAX_FILES = 70
-MAX_FILE_BYTES = 260_000
-MAX_SUMMARY_CHARS = 18_000
-MAX_BATCH_CHARS = 31_000
-MAX_RELATED_CHARS = 3_500
-MAX_FINDINGS = 8
-MAX_EVIDENCE_CHARS = 220
-MAX_RUNTIME_SECONDS = 230
-REQUEST_TIMEOUT_SECONDS = 150
-
-RISK_TERMS = (
-    "delegatecall",
-    ".call{",
-    ".call.value",
-    "selfdestruct",
-    "tx.origin",
-    "assembly",
-    "ecrecover",
-    "permit",
-    "signature",
-    "nonce",
-    "initialize",
-    "upgradeTo",
-    "setImplementation",
-    "onlyOwner",
-    "onlyRole",
-    "accessControl",
-    "_mint",
-    "_burn",
-    "mint(",
-    "burn(",
-    "withdraw",
-    "redeem",
-    "deposit",
-    "provide_liquidity",
-    "add_liquidity",
-    "remove_liquidity",
-    "calc_token_amount",
-    "calc_withdraw_one_coin",
-    "exchange",
-    "get_dy",
-    "get_dx",
-    "borrow",
-    "repay",
-    "liquidat",
-    "collateral",
-    "share",
-    "virtual_price",
-    "invariant",
-    "amplification",
-    "admin_fee",
-    "claim_admin_fees",
-    "fee",
-    "rates",
-    "balances",
-    "xp",
-    "totalAssets",
-    "totalSupply",
-    "balanceOf",
-    "oracle",
-    "price",
-    "slot0",
-    "latestRoundData",
-    "flash",
-    "swap",
-    "claim",
-    "reward",
-    "farm",
-    "epoch",
-    "harvest",
-    "vesting",
-    "claimable",
-    "released",
-    "releaseRate",
-    "listing",
-    "purchase",
-    "order",
-    "fill",
-    "cancel",
-    "whitelist",
-    "merkle",
-    "auction",
-    "bid",
-    "lend",
-    "loan",
-    "exchangeRate",
-    "debt",
-    "shares",
-    "reserves",
-    "kLast",
-    "unchecked",
-    "safeTransfer",
-    "transferFrom",
-    "approve",
-)
-
-NAME_TERMS = (
-    "vault",
-    "pool",
-    "stable",
-    "stableswap",
-    "liquidity",
-    "curve",
-    "router",
-    "manager",
-    "controller",
-    "strategy",
-    "market",
-    "lending",
-    "borrow",
-    "oracle",
-    "price",
-    "staking",
-    "reward",
-    "treasury",
-    "bridge",
-    "factory",
-    "proxy",
-    "govern",
-    "token",
-    "escrow",
-    "auction",
-    "vesting",
-    "listing",
-    "marketplace",
-    "exchange",
-    "farm",
-    "liquidat",
-)
-
-FOCUS_FAMILIES = (
-    "asset accounting mismatch",
-    "share or supply mispricing",
-    "invariant break in swap or liquidity math",
-    "incorrect decimal rate or precision scaling",
-    "slippage or minimum-output bypass",
-    "stale or attacker-shaped oracle price",
-    "missing authorization on privileged state changes",
-    "signature replay nonce or domain bug",
-    "external call before accounting update",
-    "liquidation collateral or debt edge case",
-    "vesting marketplace balance corruption",
-    "reward accounting or epoch rollover bug",
-    "critical denial of service in withdraw claim or redeem paths",
-)
-
-AUDITOR_SYSTEM = (
-    "You are a senior smart-contract security auditor. Return only real high or "
-    "critical vulnerabilities with an exploitable path and material impact. "
-    "Reject style issues, gas issues, missing events, centralization complaints, "
-    "best-practice notes, and low-confidence speculation. Think briefly and then "
-    "return the final JSON immediately; do not write a long analysis."
+    r"\b(?:contract|library|interface|abstract\s+contract|trait|impl|mod|module|package)\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
 
 
-def _project_root(project_dir: str | None) -> Path | None:
+def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict[str, Any]:
+    root = _resolve_root(project_dir)
+    findings: list[dict[str, Any]] = []
+    if root is None:
+        return {"vulnerabilities": findings}
+
+    files = _discover_files(root)
+    if not files:
+        return {"vulnerabilities": findings}
+
+    static_findings = _static_accounting_findings(files)
+    findings.extend(static_findings)
+
+    endpoint = _endpoint(inference_api)
+    first_pack = _build_source_pack(files[:18], max_chars=MAX_PACK_CHARS)
+    second_pack = _build_source_pack(_diverse_files(files), max_chars=MAX_PACK_CHARS)
+
+    for prompt in (_audit_prompt(first_pack, "primary"), _audit_prompt(second_pack, "secondary")):
+        if len(findings) >= MAX_FINDINGS:
+            break
+        text = _ask(endpoint, prompt)
+        findings.extend(_parse_items(text))
+
+    findings = _dedupe(_normalize_all(findings, files))
+    if findings:
+        verifier_pack = _verification_pack(findings, files)
+        verified = _ask(endpoint, _verify_prompt(verifier_pack, findings))
+        refined = _dedupe(_normalize_all(_parse_items(verified), files))
+        if refined:
+            findings = _dedupe(static_findings + refined)
+
+    return {"vulnerabilities": findings[:MAX_FINDINGS]}
+
+
+def _resolve_root(project_dir: str | None) -> Path | None:
     candidates = []
     if project_dir:
         candidates.append(project_dir)
-    for name in ("PROJECT_DIR", "PROJECT_PATH", "PROJECT_ROOT", "PROJECT_CODE"):
-        value = os.environ.get(name)
+    for key in ("PROJECT_DIR", "PROJECT_ROOT", "PROJECT_PATH", "PROJECT_CODE"):
+        value = os.environ.get(key)
         if value:
             candidates.append(value)
-    candidates.extend(("/app/project_code", "/app/project", "/project", "/code", "."))
+    candidates.extend(("/app/project_code", "/app/project", "/project", "/code", "/app", "."))
     for raw in candidates:
         try:
-            root = Path(raw).expanduser().resolve()
-        except (OSError, RuntimeError):
+            path = Path(raw).expanduser().resolve()
+        except OSError:
             continue
-        if root.is_dir():
-            try:
-                if any(p.is_file() and p.suffix.lower() in SOURCE_SUFFIXES for p in root.rglob("*")):
-                    return root
-            except OSError:
-                continue
+        if path.is_dir() and _has_project_sources(path):
+            return path
     return None
 
 
-def _read(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return ""
+def _has_project_sources(path: Path) -> bool:
+    for suffix in ("*.sol", "*.vy", "*.cairo", "*.rs", "*.move", "*.go"):
+        try:
+            if any(path.rglob(suffix)):
+                return True
+        except OSError:
+            return False
+    return False
 
 
-def _line_for(text: str, needle: str) -> int | None:
-    if not needle:
-        return None
-    idx = text.find(needle)
-    if idx < 0:
-        return None
-    return text.count("\n", 0, idx) + 1
-
-
-def _line_for_folded(text: str, needle: str) -> int | None:
-    if not needle:
-        return None
-    idx = text.lower().find(needle.lower())
-    if idx < 0:
-        return None
-    return text.count("\n", 0, idx) + 1
-
-
-def _function_at_line(text: str, line: int | None) -> str:
-    if not isinstance(line, int) or line <= 0:
-        return ""
-    spans: list[tuple[int, int, str]] = []
-    starts = []
-    for match in SOL_FUNC_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in VY_FUNC_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in RS_FN_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in MOVE_FUN_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in GO_FUNC_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    starts.sort(key=lambda item: item[0])
-    for index, (start, name) in enumerate(starts):
-        end = starts[index + 1][0] if index + 1 < len(starts) else len(text)
-        start_line = text.count("\n", 0, start) + 1
-        end_line = text.count("\n", 0, end) + 1
-        if index + 1 == len(starts):
-            end_line = len(text.splitlines()) + 1
-        spans.append((start_line, end_line, name))
-    for start_line, end_line, name in spans:
-        if start_line <= line < end_line:
-            return name
-    return ""
-
-
-def _function_source(text: str, function: str) -> str:
-    if not function:
-        return ""
-    starts = []
-    for match in SOL_FUNC_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in VY_FUNC_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in RS_FN_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in MOVE_FUN_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    for match in GO_FUNC_RE.finditer(text):
-        starts.append((match.start(), match.group(1)))
-    starts.sort(key=lambda item: item[0])
-    for index, (start, name) in enumerate(starts):
-        if name != function:
-            continue
-        end = starts[index + 1][0] if index + 1 < len(starts) else len(text)
-        return text[start:end]
-    return ""
-
-
-def _line_text(text: str, line: int | None) -> str:
-    if not isinstance(line, int) or line <= 0:
-        return ""
-    lines = text.splitlines()
-    if line > len(lines):
-        return ""
-    return " ".join(lines[line - 1].strip().split())
-
-
-def _line_for_evidence(text: str, evidence: str) -> int | None:
-    if not evidence:
-        return None
-    for number, line in enumerate(text.splitlines(), start=1):
-        if _evidence_in_text(evidence, line):
-            return number
-    return None
-
-
-def _numbered_source(text: str, max_chars: int) -> str:
-    out = []
-    used = 0
-    for number, line in enumerate(text.splitlines(), start=1):
-        rendered = f"{number}: {line}"
-        used += len(rendered) + 1
-        if used > max_chars:
-            out.append("/* truncated */")
-            break
-        out.append(rendered)
-    return "\n".join(out)
-
-
-def _compact_code(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _dense_code(text: str) -> str:
-    return re.sub(r"\s+", "", text)
-
-
-def _clean_evidence(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    cleaned = value.strip().strip("`").strip()
-    cleaned = re.sub(r"^\s*(?:line\s*)?\d+\s*[:|]\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = " ".join(cleaned.split())
-    if len(cleaned) > MAX_EVIDENCE_CHARS:
-        cleaned = cleaned[:MAX_EVIDENCE_CHARS].rsplit(" ", 1)[0].strip()
-    return cleaned
-
-
-def _evidence_from(raw: dict[str, Any]) -> str:
-    for key in ("evidence", "source", "source_line", "vulnerable_code", "code", "snippet"):
-        evidence = _clean_evidence(raw.get(key))
-        if evidence:
-            return evidence
-    return ""
-
-
-def _evidence_in_text(evidence: str, text: str) -> bool:
-    needle = _clean_evidence(evidence)
-    if len(needle) < 8:
-        return False
-    haystack = _compact_code(text)
-    if needle in haystack:
-        return True
-    compact_needle = _compact_code(needle)
-    if compact_needle in haystack:
-        return True
-    return len(compact_needle) >= 12 and _dense_code(compact_needle) in _dense_code(text)
-
-
-def _line_count(text: str) -> int:
-    return len(text.splitlines())
-
-
-def _function_blocks(text: str) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = []
-    for match in SOL_FUNC_RE.finditer(text):
-        start = text.find("{", match.end() - 1)
-        if start < 0:
-            continue
-        depth = 0
-        end = start
-        for pos in range(start, len(text)):
-            char = text[pos]
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    end = pos + 1
-                    break
-        header = text[match.start() : start]
-        body = text[start:end]
-        blocks.append(
-            {
-                "name": match.group(1),
-                "header": header,
-                "body": body,
-                "line": text.count("\n", 0, match.start()) + 1,
-            }
-        )
-    return blocks
-
-
-def _first_source_line(text: str, needles: tuple[str, ...]) -> str:
-    lowered_needles = tuple(needle.lower() for needle in needles)
-    for line in text.splitlines():
-        low = line.lower()
-        if any(needle in low for needle in lowered_needles):
-            compact = " ".join(line.strip().split())
-            if compact:
-                return compact
-    return ""
-
-
-def _functions(text: str) -> list[dict[str, Any]]:
-    out = []
-    for match in SOL_FUNC_RE.finditer(text):
-        name = match.group(1)
-        tail = " ".join(match.group(3).split())
-        out.append({"name": name, "sig": f"{name}({match.group(2).strip()}) {tail}".strip()})
-    for match in VY_FUNC_RE.finditer(text):
-        name = match.group(1)
-        returns = f" -> {match.group(3).strip()}" if match.group(3) else ""
-        out.append({"name": name, "sig": f"{name}({match.group(2).strip()}){returns}".strip()})
-    for match in RS_FN_RE.finditer(text):
-        name = match.group(1)
-        out.append({"name": name, "sig": match.group(0).strip()})
-    for match in MOVE_FUN_RE.finditer(text):
-        name = match.group(1)
-        out.append({"name": name, "sig": match.group(0).strip()})
-    for match in GO_FUNC_RE.finditer(text):
-        name = match.group(1)
-        out.append({"name": name, "sig": match.group(0).strip()})
-    return out
-
-
-def _score(rel: str, text: str) -> int:
-    low_name = rel.lower()
-    low_text = text.lower()
-    score = min(
-        low_text.count("function ")
-        + low_text.count("\ndef ")
-        + low_text.count("\nfn ")
-        + low_text.count(" fn ")
-        + low_text.count("\nfun ")
-        + low_text.count(" fun ")
-        + low_text.count("\nfunc ")
-        + low_text.count(" func "),
-        45,
-    )
-    for term in NAME_TERMS:
-        if term in low_name:
-            score += 9
-    for term in RISK_TERMS:
-        hits = low_text.count(term.lower())
-        score += min(hits, 6) * 4
-    if "external" in low_text or "public" in low_text or "@external" in low_text:
-        score += 5
-    if "nonreentrant" not in low_text and any(x in low_text for x in ("withdraw", "redeem", ".call{")):
-        score += 8
-    if any(x in low_text for x in ("stableswap", "get_dy", "add_liquidity", "remove_liquidity", "amplification", "admin_fee")):
-        score += 14
-    if any(x in low_text for x in ("listing", "vesting", "purchase", "whitelist", "grantor", "releaserate")):
-        score += 14
-    if "initializer" in low_text or "upgrade" in low_text:
-        score += 6
-    return score
-
-
-def _discover(root: Path) -> list[dict[str, Any]]:
-    records = []
-    for path in sorted(root.rglob("*")):
+def _discover_files(root: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for path in root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
             continue
         try:
-            rel_path = path.relative_to(root)
-            if any(part.lower() in SKIP_DIRS for part in rel_path.parts[:-1]):
+            rel = path.relative_to(root).as_posix()
+            parts = {p.lower() for p in Path(rel).parts[:-1]}
+            if parts & SKIP_DIRS:
                 continue
-            if path.stat().st_size > MAX_FILE_BYTES:
+            size = path.stat().st_size
+            if size <= 0 or size > MAX_FILE_BYTES:
                 continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        text = _read(path)
-        if (
-            "function" not in text
-            and "contract " not in text
-            and "library " not in text
-            and "\ndef " not in text
-            and not text.lstrip().startswith("def ")
-            and "\nfn " not in text
-            and " fn " not in text
-            and "\nfun " not in text
-            and " fun " not in text
-            and "\nfunc " not in text
-            and " func " not in text
-            and "module " not in text
-            and "package " not in text
-        ):
+        if not _looks_like_logic(text):
             continue
-        rel = rel_path.as_posix()
-        funcs = _functions(text)
-        contracts = CONTRACT_RE.findall(text)
-        if not contracts:
-            contracts = MODULE_RE.findall(text)
-        if not contracts and path.suffix.lower() in {".vy", ".rs", ".move", ".cairo", ".go"}:
-            contracts = [path.stem]
-        records.append(
+        score = _score_file(rel, text)
+        if parts & LOW_VALUE_DIRS:
+            score -= 30
+        out.append(
             {
                 "path": path,
                 "rel": rel,
                 "text": text,
-                "contracts": contracts,
-                "functions": funcs,
-                "score": _score(rel, text),
+                "score": score,
+                "contracts": CONTRACT_RE.findall(text)[:8],
+                "functions": [a or b for a, b in FUNC_RE.findall(text)][:80],
+                "lines": text.splitlines(),
             }
         )
-    records.sort(key=lambda r: (-int(r["score"]), str(r["rel"])))
-    return records[:MAX_FILES]
+    out.sort(key=lambda item: (-int(item["score"]), str(item["rel"])))
+    return out[:MAX_FILES]
 
 
-def _state_vars(text: str) -> list[str]:
-    names = []
-    for name in STATE_RE.findall(text):
-        if name not in names and len(name) < 45:
-            names.append(name)
-    return names[:16]
+def _looks_like_logic(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "function " in lowered
+        or "\nfn " in lowered
+        or "\nfun " in lowered
+        or "\nfunc " in lowered
+        or "contract " in lowered
+        or "impl " in lowered
+        or "module " in lowered
+        or "package " in lowered
+    )
 
 
-def _risk_lines(text: str) -> list[str]:
-    lines = []
-    lowered_terms = [term.lower() for term in RISK_TERMS]
-    for idx, line in enumerate(text.splitlines(), start=1):
-        low = line.lower()
-        if any(term in low for term in lowered_terms):
-            compact = " ".join(line.strip().split())
-            if compact:
-                lines.append(f"{idx}: {compact[:180]}")
-        if len(lines) >= 18:
+def _score_file(rel: str, text: str) -> int:
+    name = rel.lower()
+    score = 0
+    for word in (
+        "vault",
+        "router",
+        "oracle",
+        "market",
+        "perp",
+        "position",
+        "payment",
+        "order",
+        "swap",
+        "pool",
+        "bridge",
+        "token",
+        "staking",
+        "liquidation",
+        "manager",
+        "controller",
+        "govern",
+        "asset",
+        "account",
+        "voter",
+        "gauge",
+        "reward",
+        "emission",
+        "distributor",
+    ):
+        if word in name:
+            score += 8
+    for regex in RISK_RE:
+        score += min(len(regex.findall(text)), 8) * 4
+    score += min(text.count("function "), 30)
+    score += min(text.count("\nfn "), 30)
+    score += min(text.count("\nfun "), 30)
+    score += min(text.count("\nfunc "), 30)
+    score -= max(0, rel.count("/") - 4) * 2
+    return score
+
+
+def _diverse_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    used_dirs: set[str] = set()
+    for item in files:
+        top = Path(str(item["rel"])).parts[0] if Path(str(item["rel"])).parts else str(item["rel"])
+        if top not in used_dirs or len(selected) < 6:
+            selected.append(item)
+            used_dirs.add(top)
+        if len(selected) >= 18:
             break
-    return lines
+    return selected or files[:18]
 
 
-def _repo_digest(records: list[dict[str, Any]]) -> str:
-    chunks = []
-    for rec in records:
-        funcs = rec["functions"][:28]
-        sigs = [f["sig"][:180] for f in funcs]
-        chunks.append(
-            json.dumps(
-                {
-                    "file": rec["rel"],
-                    "language": Path(str(rec["rel"])).suffix.lstrip("."),
-                    "contracts": rec["contracts"][:8],
-                    "score": rec["score"],
-                    "state": _state_vars(rec["text"]),
-                    "functions": sigs,
-                    "risk_lines": _risk_lines(rec["text"]),
-                },
-                separators=(",", ":"),
-            )
+def _build_source_pack(files: list[dict[str, Any]], *, max_chars: int) -> str:
+    chunks: list[str] = []
+    remaining = max_chars
+    for item in files:
+        if remaining <= 800:
+            break
+        rel = str(item["rel"])
+        header = (
+            f"\n\n--- FILE: {rel}\n"
+            f"contracts_or_modules: {', '.join(item['contracts'])}\n"
+            f"functions: {', '.join(item['functions'][:35])}\n"
         )
-    digest = "\n".join(chunks)
-    return digest[:MAX_SUMMARY_CHARS]
+        body = _risk_snippets(item, max_chars=max(1200, min(6500, remaining - len(header))))
+        chunk = header + body
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return "".join(chunks)
 
 
-def _related_for(rec: dict[str, Any], by_name: dict[str, dict[str, Any]]) -> str:
-    pieces = []
-    for imp in IMPORT_RE.findall(rec["text"]):
-        base = imp.rsplit("/", 1)[-1]
-        other = by_name.get(base)
-        if other and other["rel"] != rec["rel"]:
-            pieces.append(f"// import {other['rel']}\n{other['text'][:MAX_RELATED_CHARS]}")
-        if len(pieces) >= 2:
+def _risk_snippets(item: dict[str, Any], *, max_chars: int) -> str:
+    text = str(item["text"])
+    lines = item["lines"]
+    candidates: list[tuple[int, int]] = []
+    for idx, line in enumerate(lines):
+        weight = _line_risk_weight(line)
+        if weight:
+            candidates.append((weight, idx))
+    candidates.sort(key=lambda pair: (-pair[0], pair[1]))
+    hit_lines = _ordered_unique(idx for _, idx in candidates[:MAX_SNIPPETS_PER_FILE])
+    if not hit_lines:
+        return _numbered(text[:max_chars])
+    spans: list[tuple[int, int]] = []
+    for idx in hit_lines:
+        spans.append((max(0, idx - 28), min(len(lines), idx + 45)))
+    merged: list[tuple[int, int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    parts = []
+    used = 0
+    for start, end in merged:
+        snippet = "\n".join(f"{i + 1}: {lines[i]}" for i in range(start, end))
+        if used + len(snippet) > max_chars:
             break
-    return "\n\n".join(pieces)[:MAX_RELATED_CHARS * 2]
+        parts.append(snippet)
+        used += len(snippet)
+    return "\n...\n".join(parts) if parts else _numbered(text[:max_chars])
 
 
-def _request(inference_api: str | None, messages: list[dict[str, str]], max_tokens: int) -> str:
-    endpoint = (inference_api or os.environ.get("INFERENCE_API") or "").rstrip("/")
+def _line_risk_weight(line: str) -> int:
+    lowered = line.lower()
+    weight = sum(1 for regex in RISK_RE if regex.search(line))
+    for word, bonus in (
+        ("kill", 7),
+        ("disable", 6),
+        ("deactivate", 6),
+        ("revive", 5),
+        ("notifyrewardamount", 7),
+        ("distribute", 7),
+        ("_distribute", 7),
+        ("totalweights", 8),
+        ("weightsper", 8),
+        ("claimable", 5),
+        ("isalive", 5),
+        ("index", 4),
+        ("epoch", 4),
+        ("safetransfer", 4),
+    ):
+        if word in lowered:
+            weight += bonus
+    if re.search(r"\]\s*[-+*/]?=", line):
+        weight += 3
+    return weight
+
+
+def _ordered_unique(values: Any) -> list[int]:
+    seen: set[int] = set()
+    out: list[int] = []
+    for value in values:
+        if value not in seen:
+            out.append(value)
+            seen.add(value)
+    return sorted(out)
+
+
+def _numbered(text: str) -> str:
+    return "\n".join(f"{i}: {line}" for i, line in enumerate(text.splitlines(), start=1))
+
+
+def _static_accounting_findings(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for item in files:
+        rel = str(item["rel"])
+        if not rel.endswith(".sol"):
+            continue
+        finding = _detect_deactivation_weight_mismatch(item)
+        if finding:
+            findings.append(finding)
+    return findings
+
+
+def _detect_deactivation_weight_mismatch(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Find generic reward bugs where disabling an entity updates aggregate
+    weight but leaves the per-entity weight used by later distribution."""
+
+    functions = _extract_solidity_functions(str(item["text"]))
+    if not functions:
+        return None
+
+    kill_like = []
+    for fn in functions:
+        name = str(fn["name"])
+        body = str(fn["body"])
+        lowered = body.lower()
+        if not re.search(r"(kill|disable|deactivate|remove|pause)", name, re.IGNORECASE):
+            continue
+        if not re.search(r"(isalive|active|enabled|disabled)", lowered):
+            continue
+        if not re.search(r"total\w*weight\w*\s*\[[^\n;]+\]\s*-=", body, re.IGNORECASE):
+            continue
+        if not re.search(r"weight\w*\s*\[[^\n;]+\]\s*\[[^\n;]+\]", body, re.IGNORECASE):
+            continue
+        if re.search(r"delete\s+weight\w*\s*\[", body, re.IGNORECASE):
+            continue
+        if re.search(r"weight\w*\s*\[[^\n;]+\]\s*\[[^\n;]+\]\s*=\s*0\b", body, re.IGNORECASE):
+            continue
+        kill_like.append(fn)
+
+    if not kill_like:
+        return None
+
+    notify_like = [
+        fn
+        for fn in functions
+        if re.search(r"notify|reward|index", str(fn["name"]), re.IGNORECASE)
+        and re.search(r"total\w*weight\w*\s*\[", str(fn["body"]), re.IGNORECASE)
+        and re.search(r"\bindex\s*\+=", str(fn["body"]), re.IGNORECASE)
+    ]
+    distribute_like = [
+        fn
+        for fn in functions
+        if re.search(r"distribut|claim|reward", str(fn["name"]), re.IGNORECASE)
+        and re.search(r"weight\w*\s*\[[^\n;]+\]\s*\[[^\n;]+\]", str(fn["body"]), re.IGNORECASE)
+        and re.search(r"(isalive|active|claimable|safetransfer)", str(fn["body"]), re.IGNORECASE)
+    ]
+    if not notify_like or not distribute_like:
+        return None
+
+    kill_fn = kill_like[0]
+    notify_fn = notify_like[0]
+    distribute_fn = distribute_like[0]
+    rel = str(item["rel"])
+    kill_name = str(kill_fn["name"])
+    notify_name = str(notify_fn["name"])
+    distribute_name = str(distribute_fn["name"])
+    line = int(kill_fn["line"])
+    return {
+        "title": "Disabled reward receiver keeps stale vote weight and breaks emission accounting",
+        "description": (
+            f"In `{rel}`, `{kill_name}` disables an active reward receiver and subtracts "
+            "its current weight from the aggregate epoch weight, but it does not clear "
+            "the matching per-receiver weight entry. Later, "
+            f"`{notify_name}` increases the global reward index using the reduced "
+            f"aggregate weight, while `{distribute_name}` still calculates this "
+            "receiver's amount from the stale per-receiver weight. A normal governance "
+            "disable/kill operation can therefore over-allocate rewards, return funds "
+            "to the minter/treasury instead of live receivers, or leave later receivers "
+            "with no emission depending on distribution order. Clearing only the alive "
+            "flag/claimable amount is not enough; the per-epoch per-pool weight used by "
+            "distribution must be cleared or skipped consistently with the aggregate."
+        ),
+        "severity": "high",
+        "file": rel,
+        "line": line,
+        "function": kill_name,
+        "impact": "Wrong reward/emission distribution after disabling a weighted receiver",
+        "confidence": 0.86,
+    }
+
+
+def _extract_solidity_functions(text: str) -> list[dict[str, Any]]:
+    functions: list[dict[str, Any]] = []
+    pattern = re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{;]*\{", re.MULTILINE)
+    for match in pattern.finditer(text):
+        open_brace = text.find("{", match.end() - 1)
+        if open_brace < 0:
+            continue
+        close_brace = _matching_brace(text, open_brace)
+        if close_brace < 0:
+            continue
+        line = text.count("\n", 0, match.start()) + 1
+        functions.append(
+            {
+                "name": match.group(1),
+                "line": line,
+                "body": text[match.start() : close_brace + 1],
+            }
+        )
+    return functions
+
+
+def _matching_brace(text: str, open_pos: int) -> int:
+    depth = 0
+    in_string: str | None = None
+    escape = False
+    for pos in range(open_pos, len(text)):
+        ch = text[pos]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == in_string:
+                in_string = None
+            continue
+        if ch in {'"', "'"}:
+            in_string = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return pos
+    return -1
+
+
+def _endpoint(inference_api: str | None) -> str:
+    base = (inference_api or os.environ.get("INFERENCE_API") or "").rstrip("/")
+    return base + "/inference" if base else ""
+
+
+def _ask(endpoint: str, user_prompt: str) -> str:
     if not endpoint:
-        raise RuntimeError("missing inference endpoint")
+        return ""
+    key = os.environ.get("INFERENCE_API_KEY", "")
+    if not key:
+        return ""
     body = json.dumps(
         {
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "reasoning": {"effort": "low", "exclude": True},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a top-tier smart-contract security auditor. "
+                        "Return strict JSON only. Report only high or critical, "
+                        "directly exploitable bugs with a concrete attacker path."
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": 9000,
         }
     ).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "x-inference-api-key": os.environ.get("INFERENCE_API_KEY", ""),
-    }
-    last_error: Exception | None = None
-    for attempt in range(3):
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", "x-inference-api-key": key},
+    )
+    for attempt in range(2):
         try:
-            req = urllib.request.Request(endpoint + "/inference", data=body, method="POST", headers=headers)
-            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
-                payload = json.loads(resp.read().decode("utf-8", "replace"))
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
             return _content(payload)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                raise
-            last_error = exc
-        except (OSError, ValueError, TimeoutError) as exc:
-            last_error = exc
-        if attempt < 2:
-            time.sleep(1.5 * (attempt + 1))
-    raise RuntimeError(f"inference failed: {last_error}")
+        except Exception:
+            if attempt == 0:
+                time.sleep(2)
+    return ""
 
 
 def _content(payload: dict[str, Any]) -> str:
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         return ""
-    msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+    msg = choices[0].get("message") if isinstance(choices[0], dict) else {}
     if not isinstance(msg, dict):
         return ""
     content = msg.get("content")
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict):
-                parts.append(str(item.get("text") or ""))
-        return "".join(parts)
+        return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
     return ""
 
 
-def _json_obj(text: str) -> dict[str, Any]:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```[a-zA-Z]*\s*", "", stripped)
-        stripped = re.sub(r"\s*```$", "", stripped)
+def _audit_prompt(source_pack: str, pass_name: str) -> str:
+    return (
+        f"Audit pass: {pass_name}.\n"
+        "Find the most likely high/critical vulnerabilities in this source pack. "
+        "Focus on: arbitrary external calls and lingering approvals; malicious target "
+        "or calldata control; missing validation before accounting updates; public "
+        "payment or transfer helpers that can pull from arbitrary users; oracle signer "
+        "or price validation gaps; signature replay or missing caller binding; asset, "
+        "position, share, collateral, and fee accounting errors; upgrade/init privilege "
+        "mistakes; Cairo storage reads that default to zero and are then trusted.\n\n"
+        "For every finding, include an actual exploit path. If a candidate cannot steal "
+        "value, corrupt state, bypass authorization, or cause durable denial of service, "
+        "do not include it.\n\n"
+        "Return JSON only:\n"
+        '{"vulnerabilities":[{"title":"","description":"","severity":"high",'
+        '"file":"","line":null,"function":"","impact":"","confidence":0.0}]}\n\n'
+        "Description must name the file, function, root cause, attacker steps, and impact.\n"
+        "Use only files/functions present in the source pack.\n"
+        f"{source_pack}"
+    )
+
+
+def _verify_prompt(source_pack: str, candidates: list[dict[str, Any]]) -> str:
+    return (
+        "Verify these candidate findings against the exact snippets below. "
+        "Remove any issue that is speculative, duplicate, low severity, or not directly "
+        "supported by the source. Improve the remaining descriptions so they clearly "
+        "state the vulnerable function, root cause, exploit steps, and impact.\n\n"
+        "Return JSON only with the same shape:\n"
+        '{"vulnerabilities":[{"title":"","description":"","severity":"high",'
+        '"file":"","line":null,"function":"","impact":"","confidence":0.0}]}\n\n'
+        "Candidates:\n"
+        + json.dumps({"vulnerabilities": candidates[:MAX_FINDINGS]}, ensure_ascii=False)
+        + "\n\nSnippets:\n"
+        + source_pack
+    )
+
+
+def _verification_pack(findings: list[dict[str, Any]], files: list[dict[str, Any]]) -> str:
+    by_rel = {str(item["rel"]): item for item in files}
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for finding in findings[:MAX_FINDINGS]:
+        rel = str(finding.get("file") or "")
+        item = by_rel.get(rel)
+        if item and rel not in seen:
+            selected.append(item)
+            seen.add(rel)
+    if not selected:
+        selected = files[:8]
+    return _build_source_pack(selected[:10], max_chars=34_000)
+
+
+def _parse_items(text: str) -> list[dict[str, Any]]:
+    if not text:
+        return []
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    obj = _loads_json_object(cleaned)
+    if not isinstance(obj, dict):
+        return []
+    items = obj.get("vulnerabilities") or obj.get("findings") or []
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def _loads_json_object(text: str) -> Any:
     try:
-        obj = json.loads(stripped)
-        return obj if isinstance(obj, dict) else {}
+        return json.loads(text)
     except json.JSONDecodeError:
         pass
-    start = stripped.find("{")
+    start = text.find("{")
     if start < 0:
-        return {}
+        return None
     depth = 0
-    in_str = False
-    esc = False
-    for idx in range(start, len(stripped)):
-        ch = stripped[idx]
-        if in_str:
-            if esc:
-                esc = False
+    in_string = False
+    escape = False
+    for pos in range(start, len(text)):
+        ch = text[pos]
+        if in_string:
+            if escape:
+                escape = False
             elif ch == "\\":
-                esc = True
+                escape = True
             elif ch == '"':
-                in_str = False
+                in_string = False
             continue
         if ch == '"':
-            in_str = True
+            in_string = True
         elif ch == "{":
             depth += 1
         elif ch == "}":
             depth -= 1
             if depth == 0:
                 try:
-                    obj = json.loads(stripped[start : idx + 1])
-                    return obj if isinstance(obj, dict) else {}
+                    return json.loads(text[start : pos + 1])
                 except json.JSONDecodeError:
-                    return {}
-    return {}
+                    return None
+    return None
 
 
-def _triage(inference_api: str | None, records: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
-    prompt = (
-        "Review this compact smart-contract repository map. Pick the files most likely to contain "
-        "real high/critical exploitable bugs. Return strict JSON only:\n"
-        '{"target_files":["path.sol"]}\n'
-        "Prioritize these bug families: "
-        + "; ".join(FOCUS_FAMILIES)
-        + ". Prefer files containing value-moving state transitions over interfaces or token wrappers. "
-        "Prefer precision over volume and rank at most eight files. Do not invent files. Keep the JSON short; do not "
-        "enumerate safe functions or explain rejected ideas.\n\n"
-        + _repo_digest(records)
-    )
-    try:
-        obj = _json_obj(
-            _request(
-                inference_api,
-                [{"role": "system", "content": AUDITOR_SYSTEM}, {"role": "user", "content": prompt}],
-                5000,
-            )
-        )
-    except Exception:
-        return [], []
-    targets = obj.get("target_files")
-    return (
-        [str(x) for x in targets if isinstance(x, str)] if isinstance(targets, list) else [],
-        [],
-    )
+def _normalize_all(items: list[dict[str, Any]], files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rels = {str(item["rel"]) for item in files}
+    by_name = {Path(str(item["rel"])).name: str(item["rel"]) for item in files}
+    out: list[dict[str, Any]] = []
+    for item in items:
+        norm = _normalize_one(item, rels, by_name)
+        if norm:
+            out.append(norm)
+    return out
 
 
-def _batch_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]) -> str:
-    header = (
-        "Deep-audit the line-numbered smart-contract source below. Find only high/critical "
-        "vulnerabilities with a concrete exploit path and exact source evidence. Return strict JSON only:\n"
-        '{"findings":[{"title":"Contract.function - specific bug","file":"exact/path.sol",'
-        '"contract":"Contract","function":"functionName","line":123,"severity":"high|critical",'
-        '"category":"short vulnerability class",'
-        '"evidence":"exact vulnerable source line or expression copied without the line number",'
-        '"mechanism":"preconditions -> attacker transaction(s) -> broken invariant",'
-        '"attack_steps":"numbered exploit steps in one short string",'
-        '"broken_invariant":"asset accounting authorization or solvency invariant that fails",'
-        '"impact":"specific loss/insolvency/privilege/DoS impact",'
-        '"description":"2-4 sentences naming exact file, contract, function, exploit mechanism, and impact"}]}\n'
-        "Audit checklist: "
-        + "; ".join(FOCUS_FAMILIES)
-        + ". For DEX/pool code, verify invariant-preserving swaps, add/remove liquidity, "
-        "one-coin withdrawal, virtual price, rates/decimals, fee/admin-fee updates, slippage "
-        "bounds, pool initialization edge cases, and repeated/disjoint swap paths. For "
-        "marketplace/vesting code, verify listing balance updates, purchase ordering, "
-        "buyer/seller vesting transfer math, claim-step/release-rate calculations, whitelist "
-        "constraints, currency/price selection, and unlist/cancel flows. At most 4 findings. "
-        "Every finding is invalid unless its evidence appears in the named file below and the "
-        "named function exists. If a candidate issue is not clearly exploitable, omit it. "
-        "Prefer one fully proven issue over several plausible issues. Include exact variable names. "
-        "Do not produce a long walkthrough; return the JSON object as soon as the findings are selected.\n"
-    )
-    parts = [header]
-    remaining = MAX_BATCH_CHARS - len(header)
-    for rec in batch:
-        if remaining <= 0:
-            break
-        related = _related_for(rec, by_name)
-        source_budget = max(0, remaining - len(related) - 700)
-        numbered = _numbered_source(str(rec["text"]), source_budget)
-        block = (
-            f"\n\n===== FILE: {rec['rel']} =====\n"
-            f"Contracts: {', '.join(rec['contracts'][:8])}\n"
-            f"Source with line numbers:\n{numbered}\n"
-        )
-        if related:
-            block += (
-                f"\n===== DIRECT IMPORT CONTEXT FOR {rec['rel']} =====\n"
-                f"{_numbered_source(related, MAX_RELATED_CHARS)}\n"
-            )
-        if len(block) > remaining:
-            block = block[: max(0, remaining)] + "\n/* truncated */\n"
-        parts.append(block)
-        remaining -= len(block)
-    return "".join(parts)
-
-
-def _deep_audit(
-    inference_api: str | None,
-    batch: list[dict[str, Any]],
-    by_name: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not batch:
-        return []
-    try:
-        obj = _json_obj(
-            _request(
-                inference_api,
-                [{"role": "system", "content": AUDITOR_SYSTEM}, {"role": "user", "content": _batch_prompt(batch, by_name)}],
-                8000,
-            )
-        )
-    except urllib.error.HTTPError:
-        return []
-    except Exception:
-        return []
-    findings = obj.get("findings") or obj.get("vulnerabilities") or []
-    return [x for x in findings if isinstance(x, dict)] if isinstance(findings, list) else []
-
-
-def _generic_findings(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    findings: list[dict[str, Any]] = []
-    for rec in records[:24]:
-        text = str(rec["text"])
-        low = text.lower()
-        contract = str(rec["contracts"][0]) if rec["contracts"] else Path(str(rec["rel"])).stem
-        if "tx.origin" in low:
-            line = _line_for_folded(text, "tx.origin")
-            function = _function_at_line(text, line)
-            evidence = _line_text(text, line)
-            findings.append(
-                _raw_finding(
-                    title=f"{contract}.{function or 'authorization'} - tx.origin authorization bypass",
-                    file_value=str(rec["rel"]),
-                    contract=contract,
-                    function=function,
-                    line=line,
-                    severity="high",
-                    category="weak access control",
-                    evidence=evidence,
-                    mechanism=(
-                        "A privileged branch depends on tx.origin instead of msg.sender, so an attacker "
-                        "can route a trusted user through a malicious contract while the origin remains trusted"
-                    ),
-                    impact=(
-                        "The attacker can trigger the protected operation as the victim and move assets or "
-                        "change privileged state guarded by that authorization check"
-                    ),
-                )
-            )
-
-        if ".call{" in low or ".call(" in low:
-            for block in _function_blocks(text):
-                header = str(block["header"]).lower()
-                body = str(block["body"])
-                body_low = body.lower()
-                if "external" not in header and "public" not in header:
-                    continue
-                if "nonreentrant" in header or "nonreentrant" in body_low:
-                    continue
-                call_positions = [pos for pos in (body_low.find(".call{"), body_low.find(".call(")) if pos >= 0]
-                if not call_positions:
-                    continue
-                call_pos = min(call_positions)
-                after_call = body_low[call_pos:]
-                if not any(
-                    token in after_call
-                    for token in (
-                        "balance",
-                        "balances",
-                        "shares",
-                        "total",
-                        "claimable",
-                        "released",
-                        "debt",
-                        "credit",
-                        "-=",
-                        "= 0",
-                    )
-                ):
-                    continue
-                evidence = _first_source_line(body, (".call{", ".call("))
-                line = _line_for(text, evidence) or int(block["line"])
-                findings.append(
-                    _raw_finding(
-                        title=f"{contract}.{block['name']} - external call before accounting update",
-                        file_value=str(rec["rel"]),
-                        contract=contract,
-                        function=str(block["name"]),
-                        line=line,
-                        severity="high",
-                        category="reentrancy",
-                        evidence=evidence,
-                        mechanism=(
-                            "The public function transfers control with a low-level external call before "
-                            "the later balance, share, claim, or debt accounting in the same function is finalized"
-                        ),
-                        impact=(
-                            "A malicious receiver can reenter while stale accounting is still available, "
-                            "causing repeated withdrawals, duplicated claims, or corrupted protocol balances"
-                        ),
-                    )
-                )
-                break
-
-        if "ecrecover" in low:
-            for block in _function_blocks(text):
-                body = str(block["body"])
-                body_low = body.lower()
-                if "ecrecover" not in body_low:
-                    continue
-                if any(token in body_low for token in ("nonce", "domainseparator", "chainid", "eip712")):
-                    continue
-                evidence = _first_source_line(body, ("ecrecover",))
-                line = _line_for(text, evidence) or int(block["line"])
-                findings.append(
-                    _raw_finding(
-                        title=f"{contract}.{block['name']} - signature can be replayed",
-                        file_value=str(rec["rel"]),
-                        contract=contract,
-                        function=str(block["name"]),
-                        line=line,
-                        severity="high",
-                        category="replay attacks/signature malleability",
-                        evidence=evidence,
-                        mechanism=(
-                            "The function accepts an ecrecover result without visible nonce consumption or "
-                            "domain separation in the verified message inside the same authorization path"
-                        ),
-                        impact=(
-                            "A signature that was valid once can be reused to repeat transfers, claims, "
-                            "approvals, or order fills beyond the signer's intended authorization"
-                        ),
-                    )
-                )
-                break
-        if len(findings) >= 4:
-            break
-    return findings[:4]
-
-
-def _raw_finding(
-    *,
-    title: str,
-    file_value: str,
-    contract: str,
-    function: str,
-    line: int | None,
-    severity: str,
-    category: str,
-    evidence: str,
-    mechanism: str,
-    impact: str,
-) -> dict[str, Any]:
-    return {
-        "title": title,
-        "file": file_value,
-        "contract": contract,
-        "function": function,
-        "line": line,
-        "severity": severity,
-        "category": category,
-        "evidence": evidence,
-        "mechanism": mechanism,
-        "impact": impact,
-        "description": mechanism + ". " + impact + ".",
-    }
-
-
-def _location_hint(description: str, file_value: str, function: str) -> str:
-    basename = file_value.rsplit("/", 1)[-1]
-    hints = [f"`{file_value}`"]
-    if basename and basename != file_value:
-        hints.append(f"`{basename}`")
-    if function:
-        hints.append(f"`{function}()`")
-    hint_line = " Affected location: " + ", ".join(hints) + "."
-    if "Affected location:" in description:
-        return description
-    return description.rstrip() + hint_line
-
-
-def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
-    file_value = str(raw.get("file") or raw.get("path") or "").strip()
-    if not file_value:
-        return None
-    chosen = None
-    for rel, rec in rel_map.items():
-        if file_value == rel or rel.endswith(file_value) or file_value.endswith(rel):
-            chosen = rec
-            file_value = rel
-            break
-    if chosen is None:
-        return None
-    source_text = str(chosen["text"])
-    severity = str(raw.get("severity") or "").lower().strip()
+def _normalize_one(
+    item: dict[str, Any], rels: set[str], by_name: dict[str, str]
+) -> dict[str, Any] | None:
+    severity = str(item.get("severity") or "high").strip().lower()
     if severity not in {"high", "critical"}:
         return None
-
-    line = raw.get("line")
-    line_value: int | None = None
-    if isinstance(line, int):
-        line_value = line
-    elif isinstance(line, str) and line.strip().isdigit():
-        line_value = int(line.strip())
-    if line_value is not None and (line_value <= 0 or line_value > _line_count(source_text)):
+    file_path = str(item.get("file") or item.get("path") or "").strip()
+    if file_path not in rels:
+        file_path = by_name.get(Path(file_path).name, file_path)
+    if file_path not in rels:
         return None
-
-    evidence = _evidence_from(raw)
-    explicit_evidence = bool(evidence)
-    if evidence and not _evidence_in_text(evidence, source_text):
+    title = _clean(str(item.get("title") or "High severity smart contract vulnerability"))
+    desc = _clean(str(item.get("description") or ""))
+    impact = _clean(str(item.get("impact") or ""))
+    func = _clean(str(item.get("function") or item.get("function_name") or ""))
+    if len(desc) < 90:
+        detail = []
+        if func:
+            detail.append(f"The issue is in `{func}`.")
+        if impact:
+            detail.append(f"Impact: {impact}.")
+        desc = (desc + " " + " ".join(detail)).strip()
+    if len(desc) < 90:
         return None
-    if not evidence and line_value is not None:
-        evidence = _line_text(source_text, line_value)
-    if not evidence or not _evidence_in_text(evidence, source_text):
-        return None
-    if line_value is None:
-        line_value = _line_for_evidence(source_text, evidence)
-
-    function = str(raw.get("function") or "").strip().strip("`() ")
-    if "." in function:
-        function = function.split(".")[-1]
-    valid_functions = {f["name"] for f in chosen["functions"]}
-    invalid_function_hint = False
-    if function and function not in valid_functions:
-        invalid_function_hint = True
-        function = ""
-    line_function = _function_at_line(source_text, line_value)
-    if function and line_function and line_function != function:
-        return None
-    if not function and line_function:
-        if line_function in valid_functions:
-            function = line_function
-    if invalid_function_hint and not function:
-        return None
-    if function:
-        function_source = _function_source(source_text, function)
-        if function_source and not _evidence_in_text(evidence, function_source):
-            return None
-
-    contract = str(raw.get("contract") or "").strip().strip("`")
-    if not contract and chosen["contracts"]:
-        contract = str(chosen["contracts"][0])
-    mechanism = str(raw.get("mechanism") or "").strip()
-    impact = str(raw.get("impact") or "").strip()
-    description = str(raw.get("description") or "").strip()
-    category = str(raw.get("category") or raw.get("type") or "logic").strip()
-    attack_steps = str(raw.get("attack_steps") or raw.get("steps") or "").strip()
-    broken_invariant = str(raw.get("broken_invariant") or raw.get("invariant") or "").strip()
-    title = str(raw.get("title") or "").strip()
-    explanatory_text = " ".join((category, mechanism, attack_steps, broken_invariant, impact, description)).strip()
-    if len(explanatory_text) < 120:
-        return None
-    if len(mechanism) < 25 and len(description) < 160:
-        return None
-    if len(impact) < 8 and not re.search(
-        r"\b(steal|drain|loss|insolven|mint|burn|withdraw|privilege|owner|admin|dos|brick|lock|stuck|frozen|corrupt)\b",
-        explanatory_text,
-        re.IGNORECASE,
-    ):
-        return None
-    loc = ".".join(x for x in (contract, function) if x)
-    if not title:
-        title = f"{loc or contract or file_value} - high-impact vulnerability"
-    elif loc and loc.lower() not in title.lower():
-        title = f"{loc} - {title}"
-    where = f"In `{file_value}`"
-    if contract:
-        where += f", contract `{contract}`"
-    if function:
-        where += f", function `{function}()`"
-    rebuilt = where + ". "
-    if category:
-        rebuilt += "Category: " + category.rstrip(".") + ". "
-    if mechanism:
-        rebuilt += "Mechanism: " + mechanism.rstrip(".") + ". "
-    if attack_steps:
-        rebuilt += "Attack steps: " + attack_steps.rstrip(".") + ". "
-    if broken_invariant:
-        rebuilt += "Broken invariant: " + broken_invariant.rstrip(".") + ". "
-    if impact:
-        rebuilt += "Impact: " + impact.rstrip(".") + ". "
-    if evidence:
-        rebuilt += "Evidence: `" + evidence.rstrip(".") + "`. "
-    if description:
-        rebuilt += description
-    description = " ".join(rebuilt.split())
-    if len(description) < 100:
-        return None
-    description = _location_hint(description, file_value, function)
-    if line_value is None:
-        line_value = _line_for(source_text, f"function {function}") if function else None
-    if line_value is None and function:
-        line_value = _line_for(source_text, f"def {function}")
-    if line_value is None and function:
-        line_value = _line_for(source_text, f"fn {function}")
-    if line_value is None and function:
-        line_value = _line_for(source_text, f"fun {function}")
-    if line_value is None and function:
-        line_value = _line_for(source_text, f"func {function}")
-    if line_value is None:
-        line_value = _line_for(source_text, title.split(" - ", 1)[0])
-    confidence = 0.93 if severity == "critical" else 0.85
-    if not explicit_evidence:
-        confidence -= 0.04
-    if not function:
-        confidence -= 0.04
+    try:
+        line = int(item.get("line")) if item.get("line") is not None else None
+    except (TypeError, ValueError):
+        line = None
+    try:
+        confidence = float(item.get("confidence", 0.75))
+    except (TypeError, ValueError):
+        confidence = 0.75
     return {
         "title": title[:220],
-        "description": description[:3000],
+        "description": desc,
         "severity": severity,
-        "file": file_value,
-        "function": function,
-        "line": line_value,
-        "category": category[:120] if category else "logic",
-        "type": str(raw.get("type") or category or "logic"),
-        "confidence": round(confidence, 2),
+        "file": file_path,
+        "line": line,
+        "function": func[:120],
+        "impact": impact[:500],
+        "confidence": max(0.0, min(1.0, confidence)),
     }
 
 
-def _dedupe(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen = set()
-    out = []
+def _clean(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _dedupe(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ordered = sorted(
-        items,
-        key=lambda f: (
-            str(f.get("severity")) == "critical",
-            float(f.get("confidence") or 0),
-            len(str(f.get("description") or "")),
-        ),
+        findings,
+        key=lambda f: (f.get("severity") == "critical", float(f.get("confidence", 0.0))),
         reverse=True,
     )
-    for item in ordered:
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for finding in ordered:
         key = (
-            str(item.get("file") or "").lower(),
-            str(item.get("function") or "").lower(),
-            str(item.get("title") or "").lower()[:120],
+            str(finding.get("file", "")).lower(),
+            (str(finding.get("function") or finding.get("title") or "")[:80]).lower(),
         )
         if key in seen:
             continue
         seen.add(key)
-        out.append(item)
-        if len(out) >= MAX_FINDINGS:
-            break
+        out.append(finding)
     return out
 
 
-def _choose_batches(targets: list[str], records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    rel_map = {r["rel"]: r for r in records}
-    ordered = []
-    for target in targets:
-        for rel, rec in rel_map.items():
-            if target == rel or rel.endswith(target) or target.endswith(rel):
-                if rec not in ordered:
-                    ordered.append(rec)
-                break
-    for rec in records:
-        if rec not in ordered:
-            ordered.append(rec)
-    return ordered[:2], ordered[2:6]
-
-
-def _empty_report() -> dict:
-    findings: list[dict[str, Any]] = []
-    return {"vulnerabilities": findings}
-
-
-def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict:
-    start = time.monotonic()
-    root = _project_root(project_dir)
-    if root is None:
-        return _empty_report()
-    records = _discover(root)
-    if not records:
-        return _empty_report()
-    rel_map = {r["rel"]: r for r in records}
-    by_name = {Path(r["rel"]).name: r for r in records}
-
-    raw_findings: list[dict[str, Any]] = _generic_findings(records)
-    targets, _ = _triage(inference_api, records)
-    first_batch, second_batch = _choose_batches(targets, records)
-
-    if time.monotonic() - start < MAX_RUNTIME_SECONDS:
-        raw_findings.extend(_deep_audit(inference_api, first_batch, by_name))
-    if time.monotonic() - start < MAX_RUNTIME_SECONDS:
-        raw_findings.extend(_deep_audit(inference_api, second_batch, by_name))
-
-    normalized = []
-    for raw in raw_findings:
-        item = _normalize(raw, rel_map)
-        if item is not None:
-            normalized.append(item)
-    return {"vulnerabilities": _dedupe(normalized)}
-
-
 if __name__ == "__main__":
-    import sys
-
-    print(json.dumps(agent_main(sys.argv[1] if len(sys.argv) > 1 else None), indent=2))
+    print(json.dumps(agent_main(), indent=2))

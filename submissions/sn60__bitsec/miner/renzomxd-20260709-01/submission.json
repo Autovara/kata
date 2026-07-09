@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "renzomxd-20260709-01",
+  "created_at": "2026-07-09T01:54:07.996377+00:00",
+  "author": "renzomxd",
+  "title": "Generalized triage miner",
+  "notes": "Derived from the former king workflow but stripped of benchmark-specific heuristics.",
+  "subnet_pack": "sn60__bitsec"
+}

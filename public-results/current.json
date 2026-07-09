@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-07-09T17:30:15Z",
+  "active_pack": "sn60__bitsec",
+  "active_mode": "miner",
+  "current_king": {
+    "author": "kiannidev",
+    "submission_id": "kiannidev-20260708-01",
+    "source_pull_request": 98,
+    "path": "kings/sn60__bitsec/miner",
+    "artifact_hash": "c8b24890ba4605afafcd2830ebf27554a71ba3ac4fef190ea29425350b9de84b",
+    "promoted_at": "2026-07-09T16:14:37.777768Z"
+  },
+  "latest_round": {
+    "round_id": "sn60-round-20260709T145405Z-b7ea74",
+    "round_number": 2,
+    "competition_mode": "candidate_only",
+    "started_at": "2026-07-09T14:51:04Z",
+    "finished_at": "2026-07-09T16:14:08Z",
+    "duration_seconds": 4984,
+    "candidate_count": 7,
+    "outcome": "king_promoted",
+    "winner_pull_request": 98,
+    "winner_author": "kiannidev",
+    "winner_submission_id": "kiannidev-20260708-01",
+    "best_true_positives": 4,
+    "best_detection_score": 0.14814814814814814,
+    "proof": "public-results/rounds/sn60-round-20260709T145405Z-b7ea74.json"
+  },
+  "benchmark": {
+    "name": "curated-highs-only-2025-08-08.json",
+    "round_sha256": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
+    "sandbox_commit": "981c93373b7dc49bde9598173e6fa3bd26acc98e",
+    "scorer_version": "ScaBenchScorerV2"
+  },
+  "dashboard_url": "https://dashboardking.ngrok.app"
+}

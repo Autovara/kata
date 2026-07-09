@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "round_id": "sn60-round-20260709T145405Z-b7ea74",
+  "round_number": 2,
+  "competition_mode": "candidate_only",
+  "started_at": "2026-07-09T14:51:04Z",
+  "finished_at": "2026-07-09T16:14:08Z",
+  "duration_seconds": 4984,
+  "repo": "Autovara/kata",
+  "active_pack": "sn60__bitsec",
+  "active_mode": "miner",
+  "candidate_count": 7,
+  "outcome": "king_promoted",
+  "winner": {
+    "pull_request": 98,
+    "author": "kiannidev",
+    "submission_id": "kiannidev-20260708-01",
+    "artifact_hash": "c8b24890ba4605afafcd2830ebf27554a71ba3ac4fef190ea29425350b9de84b",
+    "true_positives": 4,
+    "total_expected": 27,
+    "total_found": 24,
+    "detection_score": 0.14814814814814814,
+    "precision": 0.16666666666666666,
+    "f1_score": 0.15686274509803924,
+    "invalid_runs": 0
+  },
+  "previous_king": {
+    "author": "jonathanchang31",
+    "submission_id": "jonathanchang31-20260707-01",
+    "artifact_hash": "d7686dff634d25edee2c535cc507962cffdf425ff8280ed5c4e984037603ca57",
+    "evaluated": false,
+    "note": "Candidate-only recovery mode was enabled by the maintainer, so the previous king was intentionally skipped in this round."
+  },
+  "benchmark": {
+    "name": "curated-highs-only-2025-08-08.json",
+    "round_sha256": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
+    "sandbox_commit": "981c93373b7dc49bde9598173e6fa3bd26acc98e",
+    "scorer_version": "ScaBenchScorerV2",
+    "selected_projects": [
+      "code4rena_forte-float128-solidity-library_2025_04",
+      "code4rena_next-generation_2025_05",
+      "code4rena_kinetiq_2025_07",
+      "cantina_smart-contract-audit-of-tn-contracts_2025_08",
+      "sherlock_perennial_v2_update_3_2024_08",
+      "sherlock_oku_2024_12"
+    ]
+  },
+  "top_results": [
+    {
+      "rank": 1,
+      "pull_request": 98,
+      "author": "kiannidev",
+      "submission_id": "kiannidev-20260708-01",
+      "status": "winner",
+      "true_positives": 4,
+      "total_expected": 27,
+      "total_found": 24,
+      "detection_score": 0.14814814814814814,
+      "precision": 0.16666666666666666,
+      "f1_score": 0.15686274509803924,
+      "invalid_runs": 0
+    },
+    {
+      "rank": 2,
+      "pull_request": 101,
+      "author": "statxc",
+      "submission_id": "statxc-20260709-01",
+      "status": "losing",
+      "true_positives": 3,
+      "total_expected": 27,
+      "total_found": 4,
+      "detection_score": 0.1111111111111111,
+      "precision": 0.75,
+      "f1_score": 0.19354838709677416,
+      "invalid_runs": 0
+    },
+    {
+      "rank": 3,
+      "pull_request": 99,
+      "author": "nickmopen",
+      "submission_id": "nickmopen-20260707-01",
+      "status": "losing",
+      "true_positives": 2,
+      "total_expected": 27,
+      "total_found": 13,
+      "detection_score": 0.07407407407407407,
+      "precision": 0.15384615384615385,
+      "f1_score": 0.1,
+      "invalid_runs": 0
+    },
+    {
+      "rank": 4,
+      "pull_request": 102,
+      "author": "Dexterity104",
+      "submission_id": "Dexterity104-20260709-01",
+      "status": "losing",
+      "true_positives": 2,
+      "total_expected": 27,
+      "total_found": 16,
+      "detection_score": 0.07407407407407407,
+      "precision": 0.125,
+      "f1_score": 0.09302325581395349,
+      "invalid_runs": 0
+    },
+    {
+      "rank": 5,
+      "pull_request": 97,
+      "author": "jimcody1995",
+      "submission_id": "jimcody1995-20260708-01",
+      "status": "losing",
+      "true_positives": 1,
+      "total_expected": 27,
+      "total_found": 21,
+      "detection_score": 0.037037037037037035,
+      "precision": 0.047619047619047616,
+      "f1_score": 0.041666666666666664,
+      "invalid_runs": 0
+    },
+    {
+      "rank": 6,
+      "pull_request": 94,
+      "author": "Daedalus-Icarus",
+      "submission_id": "Daedalus-Icarus-20260708-01",
+      "status": "losing",
+      "true_positives": 0,
+      "total_expected": 27,
+      "total_found": 20,
+      "detection_score": 0,
+      "precision": 0,
+      "f1_score": 0,
+      "invalid_runs": 0
+    },
+    {
+      "rank": 7,
+      "pull_request": 100,
+      "author": "9876543210-tc-0123456789",
+      "submission_id": "9876543210-tc-0123456789-20260709-01",
+      "status": "losing",
+      "true_positives": 0,
+      "total_expected": 27,
+      "total_found": 10,
+      "detection_score": 0,
+      "precision": 0,
+      "f1_score": 0,
+      "invalid_runs": 0
+    }
+  ],
+  "proof_notes": [
+    "This is a sanitized public proof file. It intentionally omits private bot paths, raw logs, API keys, hidden seeds, and benchmark answers.",
+    "The round used candidate-only recovery mode, so the previous king was skipped and candidates were ranked against each other."
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "kiannidev-20260708-01",
+  "created_at": "2026-07-09T02:30:00+00:00",
+  "author": "kiannidev",
+  "title": "Heuristics plus full triage-batch pipeline",
+  "notes": "Structural pattern scanner for stableswap/vesting/slippage families, then always runs triage plus two deep-audit batches within the 3-call budget."
+}

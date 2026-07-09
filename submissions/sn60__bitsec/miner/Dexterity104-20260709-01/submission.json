@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "Dexterity104-20260709-01",
+  "created_at": "2026-07-09T00:00:00+00:00",
+  "author": "Dexterity104",
+  "title": "General multi-language wide-coverage miner: risk-ranked batched deep audit",
+  "notes": "A general vulnerability detector with no project-specific or benchmark-specific content. It parses Solidity, Vyper, Rust, Move and Cairo source, ranks the project's own contracts by generic risk (down-ranking interface-only, bodiless, test and generated-binding files so deep-audit slots go to real logic), then spends the 3-call inference budget on three batched full-source deep-audit passes over the top-ranked contracts (with imported context) against a high/critical priority list. Findings are verified against the real source (file and function must exist), matcher-shaped, and a truncated model reply is salvaged element-by-element; a small model-free structural fallback fires only if the model returns nothing. Respects the per-problem budget (3 calls / 24k tokens), stops on HTTP 429, and never crashes."
+}

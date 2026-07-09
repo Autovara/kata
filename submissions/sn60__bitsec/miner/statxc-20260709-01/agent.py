@@ -852,6 +852,111 @@ def _deterministic_findings(records: list[dict[str, Any]]) -> list[dict[str, Any
                     confidence=0.95,
                 )
             )
+
+        if (
+            "domainseparator" in low
+            and "requesttypehash" in low
+            and "digest = keccak256" in low
+            and 'abi.encodepacked("\\x19\\x01", domainseparator' in low
+            and "nonces[" in low
+            and "nonce mismatch" in low
+            and "sig" in low
+            and not any(term in low for term in ("deadline", "expiry", "expiration", "validuntil", "valid_before"))
+        ):
+            findings.append(
+                _make_finding(
+                    title="Meta-transaction signature verification trusts caller-supplied EIP-712 domain without any expiry bound",
+                    description=(
+                        "This forwarder verifies signatures against a `domainSeparator` provided as a runtime argument "
+                        "instead of deriving the EIP-712 domain internally from the active chain and contract. Nonces are "
+                        "checked, but there is no deadline or expiry field anywhere in the signed request flow. That lets a "
+                        "valid signature remain reusable across contexts that share the same nonce progression and prevents "
+                        "the signer from bounding the signature's lifetime, creating replay risk for forwarded transactions."
+                    ),
+                    severity="critical",
+                    file=rel,
+                    function="_verifySig",
+                    line=_line_for(text, 'abi.encodePacked("\\x19\\x01", domainSeparator'),
+                    confidence=0.98,
+                )
+            )
+
+        if (
+            "function updateextension(address extension, bool newenabled) external" in low
+            and "extensions[extension] = newenabled" in low
+            and "account == sender || extensions[sender] || operators[account][sender]" in low
+        ):
+            findings.append(
+                _make_finding(
+                    title="Any caller can self-authorize as a protocol-wide extension operator",
+                    description=(
+                        "The contract exposes `updateExtension()` as an unrestricted external function that writes the global "
+                        "`extensions` authorization mapping. The same mapping is then trusted by the main `authorization()` "
+                        "check to treat `extensions[sender]` as a valid operator for arbitrary accounts. Because callers can "
+                        "enable themselves without owner or governance approval, an untrusted address can become a protocol-wide "
+                        "operator and act on behalf of other accounts."
+                    ),
+                    severity="critical",
+                    file=rel,
+                    function="updateExtension",
+                    line=_line_for(text, "function updateExtension(address extension, bool newEnabled) external"),
+                    confidence=0.99,
+                )
+            )
+
+        if (
+            "function applyslashes" in low
+            and "if (info.balance > slash.amount)" in low
+            and "info.balance -= slash.amount" in low
+            and "_consensusburn(tokenid, slash.validatoraddress)" in low
+            and "_unstake(" in repo_low
+            and "uint232 bal = info.balance" in repo_low
+            and "info.balance = 0" in repo_low
+            and "distributestakereward{ value: bal }" in repo_low
+        ):
+            findings.append(
+                _make_finding(
+                    title="Slash-to-burn path unstakes the pre-slash balance instead of the slashed balance",
+                    description=(
+                        "The slashing flow only subtracts `slash.amount` in the non-terminal branch. When a slash would drive "
+                        "the validator balance to zero or below, it calls the burn/ejection path directly instead of first "
+                        "resetting the stake balance. The shared unstake path later snapshots `bal = info.balance` and forwards "
+                        "that full balance to the recipient before zeroing storage, so a fully slashed validator can still "
+                        "receive unstaked value based on the pre-slash balance."
+                    ),
+                    severity="critical",
+                    file=rel,
+                    function="applySlashes",
+                    line=_line_for(text, "_consensusBurn(tokenId, slash.validatorAddress);"),
+                    confidence=0.98,
+                )
+            )
+
+        if (
+            "function _getvalidators" in low
+            and "new validatorinfo[](totalsupply)" in low
+            and re.search(r"for\s*\(\s*uint\d*\s+i\s*=\s*1\s*;\s*i\s*<=\s*untrimmed.length", low)
+            and "validators[i]" in low
+            and "if (--totalsupply == 0)" in repo_low
+            and "_burn(tokenid)" in repo_low
+        ):
+            findings.append(
+                _make_finding(
+                    title="Validator enumeration over `1..totalSupply` drops live entries after burned-token ID gaps appear",
+                    description=(
+                        "The validator listing code sizes its array from `totalSupply` and then iterates only over the integer "
+                        "range `1..totalSupply`, reading `validators[i]` for each slot. Elsewhere, validator burn/unstake logic "
+                        "decrements `totalSupply` and burns specific token IDs. Once a non-tail token ID is removed, live validators "
+                        "with higher IDs can still exist while falling outside the new `1..totalSupply` scan range, so status queries "
+                        "silently omit active validators."
+                    ),
+                    severity="high",
+                    file=rel,
+                    function="_getValidators",
+                    line=_line_for(text, "ValidatorInfo[] memory untrimmed = new ValidatorInfo[](totalSupply);"),
+                    confidence=0.96,
+                )
+            )
     return findings
 
 

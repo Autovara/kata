@@ -72,7 +72,8 @@ RISK_PATTERNS = [
 ]
 RISK_RE = [re.compile(p, re.IGNORECASE) for p in RISK_PATTERNS]
 FUNC_RE = re.compile(
-    r"^\s*(?:(?:public|entry|public\s+entry)\s+)?(?:function|fn|fun)\s+([A-Za-z_][A-Za-z0-9_]*)\b|"
+    r"^\s*(?:(?:public(?:\([^)]*\))?|entry|public\s+entry|pub(?:\([^)]*\))?|async|unsafe)\s+)*"
+    r"(?:function|fn|fun)\s+([A-Za-z_][A-Za-z0-9_]*)\b|"
     r"^\s*(?:func\s+(?:\([^)]*\)\s*)?|def\s+)([A-Za-z_][A-Za-z0-9_]*)\b",
     re.MULTILINE,
 )
@@ -221,10 +222,7 @@ def _skip_filename(path: Path) -> bool:
 def _looks_like_logic(text: str) -> bool:
     lowered = text.lower()
     return (
-        "function " in lowered
-        or "\nfn " in lowered
-        or "\nfun " in lowered
-        or "\nfunc " in lowered
+        bool(FUNC_RE.search(text))
         or "contract " in lowered
         or "impl " in lowered
         or "module " in lowered
@@ -309,10 +307,16 @@ def _diverse_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     used_dirs: set[str] = set()
     for item in files:
-        top = Path(str(item["rel"])).parts[0] if Path(str(item["rel"])).parts else str(item["rel"])
-        if top not in used_dirs or len(selected) < 6:
+        parts = Path(str(item["rel"])).parts
+        key = "/".join(parts[:2]) if len(parts) > 1 else str(item["rel"])
+        if key not in used_dirs:
             selected.append(item)
-            used_dirs.add(top)
+            used_dirs.add(key)
+        if len(selected) >= 18:
+            break
+    for item in files:
+        if item not in selected:
+            selected.append(item)
         if len(selected) >= 18:
             break
     return selected or files[:18]
@@ -653,6 +657,17 @@ def _audit_prompt(source_pack: str, pass_name: str) -> str:
         "accounting errors; slippage/min-output failures; upgrade/init privilege "
         "mistakes; Rust or Move authorization/storage mistakes; Cairo storage reads "
         "that default to zero and are then trusted.\n\n"
+        "High-yield exploit patterns to actively test: aggregate totals diverging from "
+        "per-account or per-epoch state; fee or reward amounts counted twice or not "
+        "cleared on cancellation/disable; low-decimal rewards rounding to zero while "
+        "timestamps advance; first-depositor/share-inflation donation attacks; using "
+        "pool token balances or spot reserves as fair value; stale or incomplete oracle "
+        "rounds; missing deadline/nonce/domain binding on signed approvals; callbacks "
+        "or external transfers before accounting is finalized; concentrated-liquidity "
+        "math that ignores tick range or uncollected fees; wrong router/gauge/interface "
+        "assumptions; vesting, escrow, or unstake paths that let sellers or old owners "
+        "claim assets after transfer; and admin/config functions that can brick user "
+        "withdrawals or bypass protocol invariants.\n\n"
         "For every finding, include an actual exploit path. If a candidate cannot steal "
         "value, corrupt state, bypass authorization, or cause durable denial of service, "
         "do not include it. Prefer a few exact true positives over broad speculation, "

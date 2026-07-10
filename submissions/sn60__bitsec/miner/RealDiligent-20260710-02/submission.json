@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "RealDiligent-20260710-02",
+  "created_at": "2026-07-10T02:39:38.952945+00:00",
+  "author": "RealDiligent",
+  "title": "Import-graph expansion triple-audit miner",
+  "notes": "Recommended conventions:\n- author: your GitHub username\n- submission_id: <github-username>-YYYYMMDD-NN\n- implement a real agent in agent.py before opening the PR\n- SN60 miner submissions in V1 must stay self-contained in agent.py\n",
+  "subnet_pack": "sn60__bitsec"
+}

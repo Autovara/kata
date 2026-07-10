@@ -28,6 +28,7 @@ SKIP_DIRS = {
     "__pycache__",
     "test",
     "tests",
+    "testing",
     "mock",
     "mocks",
     "interface",
@@ -80,6 +81,10 @@ FUNC_RE = re.compile(
 CONTRACT_RE = re.compile(
     r"\b(?:contract|library|interface|abstract\s+contract|trait|impl|mod|module|package)\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
+IMPORT_RE = re.compile(
+    r"^\s*import\b(?:[^;\"']+\bfrom\s+)?[\"']([^\"']+)[\"']",
+    re.MULTILINE,
+)
 
 
 def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict[str, Any]:
@@ -98,12 +103,13 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
     endpoint = _endpoint(inference_api)
     primary_pack = _build_full_pack(files[:12], max_chars=MAX_PACK_CHARS)
     wide_pack = _build_source_pack(files[:36], max_chars=MAX_PACK_CHARS)
-    diverse_pack = _build_source_pack(_diverse_files(files), max_chars=MAX_PACK_CHARS)
+    covered = {str(item["rel"]) for item in files[:36]}
+    diverse_pack = _build_source_pack(_diverse_files(files, skip_rels=covered), max_chars=MAX_PACK_CHARS)
 
     for prompt in (
         _audit_prompt(primary_pack, "primary whole-file"),
         _audit_prompt(wide_pack, "wide risk-surface"),
-        _audit_prompt(diverse_pack, "cross-file invariant"),
+        _audit_prompt(diverse_pack, "uncovered cross-module invariant"),
     ):
         text = _ask(endpoint, prompt)
         findings.extend(_parse_items(text))
@@ -213,7 +219,7 @@ def _skip_filename(path: Path) -> bool:
     return (
         name.endswith((".t.sol", ".s.sol"))
         or stem in {"test", "tests", "mock", "mocks"}
-        or stem.endswith(("_test", "_tests", "test", "tests"))
+        or stem.endswith(("_test", "_tests", "test", "tests", "mock", "mocks"))
         or ".generated" in name
         or "generated" in stem
     )
@@ -303,10 +309,13 @@ def _score_file(rel: str, text: str) -> int:
     return score
 
 
-def _diverse_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _diverse_files(files: list[dict[str, Any]], *, skip_rels: set[str] | None = None) -> list[dict[str, Any]]:
+    skip_rels = skip_rels or set()
     selected: list[dict[str, Any]] = []
     used_dirs: set[str] = set()
     for item in files:
+        if str(item["rel"]) in skip_rels:
+            continue
         parts = Path(str(item["rel"])).parts
         key = "/".join(parts[:2]) if len(parts) > 1 else str(item["rel"])
         if key not in used_dirs:
@@ -315,6 +324,8 @@ def _diverse_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if len(selected) >= 18:
             break
     for item in files:
+        if str(item["rel"]) in skip_rels:
+            continue
         if item not in selected:
             selected.append(item)
         if len(selected) >= 18:
@@ -351,6 +362,11 @@ def _build_full_pack(files: list[dict[str, Any]], *, max_chars: int) -> str:
             body = _numbered(text)
         else:
             body = _risk_snippets(item, max_chars=body_budget)
+        related_budget = max(0, min(4_500, remaining - len(header) - len(body)))
+        if related_budget > 900:
+            body += _import_context(item, max_chars=related_budget)
+        if len(header) + len(body) > remaining:
+            body = body[: max(0, remaining - len(header))]
         chunk = header + body
         chunks.append(chunk)
         remaining -= len(chunk)
@@ -364,6 +380,38 @@ def _pack_header(item: dict[str, Any], rel: str) -> str:
         f"contracts_or_modules: {', '.join(item['contracts'])}\n"
         f"functions: {', '.join(item['functions'][:45])}\n"
     )
+
+
+def _import_context(item: dict[str, Any], *, max_chars: int) -> str:
+    source_path = Path(str(item.get("path") or ""))
+    if not source_path:
+        return ""
+    parts: list[str] = []
+    used = 0
+    for imported in IMPORT_RE.findall(str(item.get("text") or "")):
+        if not imported.startswith("."):
+            continue
+        try:
+            target = (source_path.parent / imported).resolve()
+        except OSError:
+            continue
+        if not target.is_file() or target.suffix.lower() not in SOURCE_SUFFIXES:
+            continue
+        if _skip_filename(target):
+            continue
+        try:
+            text = target.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        rel = target.name
+        snippet = f"\n\n--- RELATED IMPORT: {rel}\n" + _numbered(text[:2_200])
+        if used + len(snippet) > max_chars:
+            break
+        parts.append(snippet)
+        used += len(snippet)
+        if len(parts) >= 2:
+            break
+    return "".join(parts)
 
 
 def _risk_snippets(item: dict[str, Any], *, max_chars: int) -> str:

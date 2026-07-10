@@ -34,14 +34,22 @@ SKIP_DIRS = {
     "interfaces",
     "cmd",
     "cli",
+    "client",
+    "clients",
+    "bindings",
+    "generated",
+    "example",
+    "examples",
+    "script",
+    "scripts",
 }
-LOW_VALUE_DIRS = {"example", "examples", "script", "scripts"}
+LOW_VALUE_DIRS: set[str] = set()
 MAX_FILE_BYTES = 340_000
 MAX_FILES = 78
 MAX_PACK_CHARS = 44_000
 FULL_FILE_CHARS = 13_000
 MAX_SNIPPETS_PER_FILE = 12
-MAX_FINDINGS = 14
+MAX_FINDINGS = 18
 REQUEST_TIMEOUT = 150
 
 RISK_PATTERNS = [
@@ -123,18 +131,18 @@ def _resolve_root(project_dir: str | None) -> Path | None:
 
 
 def _has_project_sources(path: Path) -> bool:
-    for suffix in ("*.sol", "*.vy", "*.cairo", "*.rs", "*.move", "*.go"):
-        try:
-            if any(path.rglob(suffix)):
+    try:
+        for source in _iter_source_paths(path):
+            if source.suffix.lower() in SOURCE_SUFFIXES:
                 return True
-        except OSError:
-            return False
+    except OSError:
+        return False
     return False
 
 
 def _discover_files(root: Path) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for path in root.rglob("*"):
+    for path in _iter_source_paths(root):
         if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
             continue
         try:
@@ -142,7 +150,7 @@ def _discover_files(root: Path) -> list[dict[str, Any]]:
             parts = {p.lower() for p in Path(rel).parts[:-1]}
             if parts & SKIP_DIRS:
                 continue
-            if path.name.lower().endswith((".t.sol", ".s.sol")):
+            if _skip_filename(path):
                 continue
             size = path.stat().st_size
             if size <= 0 or size > MAX_FILE_BYTES:
@@ -153,6 +161,9 @@ def _discover_files(root: Path) -> list[dict[str, Any]]:
         if path.suffix.lower() == ".sol" and _interface_only(text):
             continue
         if not _looks_like_logic(text):
+            continue
+        functions = [a or b for a, b in FUNC_RE.findall(text)][:80]
+        if not functions and not _has_entrypoint(text):
             continue
         score = _score_file(rel, text)
         if parts & LOW_VALUE_DIRS:
@@ -166,12 +177,45 @@ def _discover_files(root: Path) -> list[dict[str, Any]]:
                 "text": text,
                 "score": score,
                 "contracts": CONTRACT_RE.findall(text)[:8],
-                "functions": [a or b for a, b in FUNC_RE.findall(text)][:80],
+                "functions": functions,
                 "lines": text.splitlines(),
             }
         )
     out.sort(key=lambda item: (-int(item["score"]), str(item["rel"])))
     return out[:MAX_FILES]
+
+
+def _iter_source_paths(root: Path) -> Any:
+    for dirpath, dirnames, filenames in os.walk(root):
+        current = Path(dirpath)
+        try:
+            rel_parts = current.relative_to(root).parts
+        except ValueError:
+            rel_parts = ()
+        if any(part.lower() in SKIP_DIRS for part in rel_parts):
+            dirnames[:] = []
+            continue
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name.lower() not in SKIP_DIRS and not name.startswith(".")
+        ]
+        for name in filenames:
+            path = current / name
+            if path.suffix.lower() in SOURCE_SUFFIXES and not _skip_filename(path):
+                yield path
+
+
+def _skip_filename(path: Path) -> bool:
+    name = path.name.lower()
+    stem = path.stem.lower()
+    return (
+        name.endswith((".t.sol", ".s.sol"))
+        or stem in {"test", "tests", "mock", "mocks"}
+        or stem.endswith(("_test", "_tests", "test", "tests"))
+        or ".generated" in name
+        or "generated" in stem
+    )
 
 
 def _looks_like_logic(text: str) -> bool:
@@ -190,6 +234,22 @@ def _looks_like_logic(text: str) -> bool:
 def _interface_only(text: str) -> bool:
     return bool(re.search(r"\binterface\s+[A-Za-z_]", text)) and not bool(
         re.search(r"\b(?:contract|library|abstract\s+contract)\s+[A-Za-z_]", text)
+    )
+
+
+def _has_entrypoint(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "constructor(",
+            "fallback(",
+            "receive(",
+            "#[entry_point]",
+            "entry fun ",
+            "public entry fun ",
+            "execute(",
+        )
     )
 
 

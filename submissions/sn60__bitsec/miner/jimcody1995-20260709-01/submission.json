@@ -5,6 +5,6 @@
   "submission_id": "jimcody1995-20260709-01",
   "created_at": "2026-07-09T17:40:00+00:00",
   "author": "jimcody1995",
-  "title": "Hot-function triage miner (king-aligned, screening-safe)",
-  "notes": "Builds on current king triage+batch flow with static hot-function digest hints and generic audit prompts. No fingerprint branches."
+  "title": "Graph-ranked triage miner with static probes",
+  "notes": "Import-graph centrality, zero-call static probes, adaptive batches, multi-language (.sol/.vy/.rs), matcher location hints. Three LLM calls."
 }

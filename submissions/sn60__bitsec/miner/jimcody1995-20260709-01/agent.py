@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-"""SN60 miner: triage plus two batched deep audits with static prioritization.
+"""SN60 miner: graph-ranked triage, static probes, and adaptive deep audits.
 
-Inspired by the current king triage-and-batch flow (kiannidev-20260708-01) and
-prior depth-first matcher work, but with richer static context in the repo digest
-(hot external functions, import neighbors) and generic audit prompts. Pure LLM
-analysis within the 3-call budget; no fingerprint branches or canned findings.
+Combines the current king's triage+batch flow with competitor ideas: import-graph
+centrality ranking (RealDiligent), zero-call per-function static probes (kiannidev),
+adaptive char-budget batching, multi-language discovery (.sol/.vy/.rs), and
+matcher-shaped output with explicit location hints. Three inference calls only.
 """
 
 import json
@@ -14,14 +14,15 @@ import re
 import time
 import urllib.error
 import urllib.request
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-EXT = (".sol", ".vy")
+EXT = (".sol", ".vy", ".rs")
 SKIP_GLOBAL = frozenset({
     ".git", ".github", "artifacts", "broadcast", "cache", "coverage", "dist", "docs",
     "example", "examples", "interfaces", "lib", "mock", "mocks", "node_modules", "out",
-    "script", "scripts", "test", "tests", "vendor", "vendors",
+    "script", "scripts", "test", "tests", "vendor", "vendors", "target",
 })
 SKIP_IN_SRC = frozenset({"test", "tests", "mock", "mocks"})
 
@@ -33,42 +34,61 @@ RE_FUNC_VY = re.compile(
     r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?:",
     re.MULTILINE,
 )
+RE_FUNC_RS = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*[(<]")
 RE_CONTRACT = re.compile(
-    r"^\s*(?:abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"\b(?:abstract\s+contract|contract|library|interface|module|struct|trait)\s+([A-Za-z_][A-Za-z0-9_]*)",
     re.MULTILINE,
 )
-RE_IMPORT = re.compile(r'^\s*import\b[^;]*?["\']([^"\']+)["\']', re.MULTILINE)
+RE_IMPORT = re.compile(r'^\s*(?:import|use)\b[^;\n]*?["\']?([A-Za-z0-9_./]+)["\']?', re.MULTILINE)
 RE_STATE = re.compile(
     r"^\s*(?:mapping\s*\([^;]+|[A-Za-z_][A-Za-z0-9_<>,\\[\\]. ]+)\s+"
     r"(?:public|private|internal|constant|immutable|override|\s)*"
     r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|;)",
     re.MULTILINE,
 )
+RE_MODIFIER = re.compile(r"\b(onlyOwner|onlyRole|nonReentrant|whenNotPaused|initializer)\b")
 RE_RISK = re.compile(
     r"\b(delegatecall|selfdestruct|tx\.origin|assembly|unchecked|\.call\s*\{|"
     r"onlyOwner|onlyRole|upgradeTo|initialize|withdraw|redeem|borrow|liquidat|"
-    r"transferFrom|ecrecover|permit|oracle|flash|swap|slippage|reentr)\b",
+    r"transferFrom|ecrecover|permit|oracle|flash|swap|slippage|reentr|"
+    r"slot0|latestRoundData|add_liquidity|remove_liquidity|get_dy|virtual_price)\b",
     re.IGNORECASE,
 )
-RE_EXTERNAL = re.compile(
+RE_EXTERNAL = re.compile(r"\.call\s*(\{|value)")
+RE_EXTERNAL_FN = re.compile(
     r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s+"
     r"(?:public|external)\b[^;{]*",
     re.MULTILINE | re.IGNORECASE,
 )
+RE_STATE_WRITE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+\+|--|[+\-*/]?=)")
 
-MAX_FILES = 70
+MAX_FILES = 72
 MAX_BYTES = 260_000
-DIGEST_LIMIT = 18_000
-BATCH_LIMIT = 31_000
-IMPORT_LIMIT = 3_500
-MAX_OUT = 8
+DIGEST_LIMIT = 19_000
+BATCH_LIMIT = 32_000
+IMPORT_LIMIT = 4_000
+MAX_OUT = 10
 TIME_BUDGET = 228.0
 HTTP_WAIT = 148
 
 PATH_HINTS = (
     "vault", "pool", "router", "bridge", "proxy", "oracle", "govern", "treasury",
     "manager", "market", "lend", "borrow", "collateral", "controller", "strategy",
-    "auction", "token", "staking", "reward", "factory", "escrow", "swap",
+    "auction", "token", "staking", "reward", "factory", "escrow", "swap", "stable",
+    "liquidity", "liquidat",
+)
+
+PRIVILEGED_NAMES = frozenset({
+    "withdraw", "mint", "burn", "upgrade", "setowner", "setadmin", "pause", "unpause",
+    "transferownership", "renounceownership", "setimplementation",
+})
+
+BUG_TAXONOMY = (
+    "Hunt: missing access control on privileged state changes; reentrancy and "
+    "checks-effects-interactions violations; price/oracle manipulation and stale reads; "
+    "share/LP accounting errors, donation inflation, rounding; slippage/min-out bypass; "
+    "liquidation math; unsafe delegatecall/upgrade/initializer; signature/permit replay; "
+    "decimal/unit mismatches; cross-function invariant breaks."
 )
 
 SYSTEM = (
@@ -90,17 +110,21 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
         return {"vulnerabilities": findings}
 
     by_rel = {row["rel"]: row for row in catalog}
-    by_basename = {Path(row["rel"]).name: row for row in catalog}
-    collected: list[dict[str, Any]] = []
+    lookup = suffix_index(catalog)
+    graph = import_graph(catalog, lookup)
+    ranked = rank_catalog(catalog, graph)
 
-    ranked_paths, triage_items = run_triage(inference_api, catalog)
+    collected: list[dict[str, Any]] = []
+    collected.extend(static_probes(ranked))
+
+    targets, triage_items = run_triage(inference_api, ranked, graph)
     collected.extend(triage_items)
 
-    batch_a, batch_b = plan_batches(ranked_paths, catalog)
+    batch_a, batch_b = plan_batches(targets, ranked)
     if time.monotonic() - clock < TIME_BUDGET:
-        collected.extend(run_deep_pass(inference_api, batch_a, by_basename))
+        collected.extend(run_deep_pass(inference_api, batch_a, lookup))
     if time.monotonic() - clock < TIME_BUDGET:
-        collected.extend(run_deep_pass(inference_api, batch_b, by_basename))
+        collected.extend(run_deep_pass(inference_api, batch_b, lookup))
 
     for raw in collected:
         shaped = format_finding(raw, by_rel)
@@ -120,19 +144,12 @@ def locate_project(project_dir: str | None) -> Path | None:
     options.extend(("/app/project_code", "/app/project", "/project", "/code", "."))
     for raw in options:
         try:
-            root = Path(raw).expanduser().resolve()
+            p = Path(raw).expanduser().resolve()
         except (OSError, RuntimeError):
             continue
-        if root.is_dir() and has_contract_sources(root):
-            return root
+        if p.is_dir() and any(f.is_file() and f.suffix.lower() in EXT for f in p.rglob("*")):
+            return p
     return None
-
-
-def has_contract_sources(root: Path) -> bool:
-    try:
-        return any(p.is_file() and p.suffix.lower() in EXT for p in root.rglob("*"))
-    except OSError:
-        return False
 
 
 def should_skip_dir(parts: tuple[str, ...]) -> bool:
@@ -156,33 +173,39 @@ def read_text(path: Path) -> str:
         return ""
 
 
-def parse_functions(text: str) -> list[dict[str, str]]:
+def parse_functions(text: str, suffix: str) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
-    for m in RE_FUNC_SOL.finditer(text):
-        tail = " ".join(m.group(3).split())
-        out.append({"name": m.group(1), "sig": f"{m.group(1)}({m.group(2).strip()}) {tail}".strip()})
-    for m in RE_FUNC_VY.finditer(text):
-        ret = f" -> {m.group(3).strip()}" if m.group(3) else ""
-        out.append({"name": m.group(1), "sig": f"{m.group(1)}({m.group(2).strip()}){ret}".strip()})
+    if suffix == ".vy":
+        for m in RE_FUNC_VY.finditer(text):
+            ret = f" -> {m.group(3).strip()}" if m.group(3) else ""
+            out.append({"name": m.group(1), "sig": f"{m.group(1)}({m.group(2).strip()}){ret}".strip()})
+    elif suffix == ".rs":
+        for m in RE_FUNC_RS.finditer(text):
+            out.append({"name": m.group(1), "sig": m.group(1)})
+    else:
+        for m in RE_FUNC_SOL.finditer(text):
+            tail = " ".join(m.group(3).split())
+            out.append({"name": m.group(1), "sig": f"{m.group(1)}({m.group(2).strip()}) {tail}".strip()})
     return out
 
 
 def hot_functions(text: str) -> list[str]:
     hits: list[str] = []
-    for m in RE_EXTERNAL.finditer(text):
+    for m in RE_EXTERNAL_FN.finditer(text):
         sig = " ".join(m.group(0).split())
         if RE_RISK.search(sig):
             hits.append(sig[:160])
-        elif len(hits) < 6:
+        elif len(hits) < 8:
             hits.append(sig[:160])
-        if len(hits) >= 10:
+        if len(hits) >= 12:
             break
     return hits
 
 
-def risk_score(rel: str, text: str) -> int:
+def risk_score(rel: str, text: str, graph: dict[str, set[str]]) -> int:
     name_low, text_low = rel.lower(), text.lower()
-    score = min(text_low.count("function ") + text_low.count("\ndef "), 34)
+    score = min(text_low.count("function ") + text_low.count("\ndef ") + text_low.count("\nfn "), 36)
+    score += min(len(graph.get(rel, set())), 8) * 4
     for hint in PATH_HINTS:
         if hint in name_low:
             score += 9
@@ -191,8 +214,11 @@ def risk_score(rel: str, text: str) -> int:
     score += min(len(RE_RISK.findall(text)), 24) * 3
     if any(tok in text_low for tok in ("external", "public", "@external")):
         score += 5
-    if "nonreentrant" not in text_low and ".call" in text_low:
-        score += 4
+    if "nonreentrant" not in text_low and RE_EXTERNAL.search(text):
+        score += 6
+    if "onlyowner" not in text_low and "onlyrole" not in text_low:
+        if any(tok in text_low for tok in ("withdraw", "mint(", "burn(", "upgrade", "setadmin")):
+            score += 4
     if "initializer" in text_low or "upgrade" in text_low:
         score += 5
     return score
@@ -203,7 +229,7 @@ def state_names(text: str) -> list[str]:
     for name in RE_STATE.findall(text):
         if name not in seen and len(name) < 42:
             seen.append(name)
-    return seen[:15]
+    return seen[:16]
 
 
 def risk_snippets(text: str) -> list[str]:
@@ -232,44 +258,91 @@ def build_catalog(root: Path) -> list[dict[str, Any]]:
         except OSError:
             continue
         text = read_text(path)
-        if not any(tok in text for tok in ("function", "contract ", "library ", "\ndef ")):
+        suffix = path.suffix.lower()
+        if suffix == ".rs":
+            has_code = "fn " in text or "pub fn" in text
+        else:
+            has_code = any(tok in text for tok in ("function", "contract ", "library ", "\ndef "))
+        if not has_code:
             continue
         rel = rel_path.as_posix()
         contracts = RE_CONTRACT.findall(text)
-        if not contracts and path.suffix.lower() == ".vy":
+        if not contracts:
             contracts = [path.stem]
         rows.append({
             "rel": rel,
             "text": text,
+            "suffix": suffix,
             "contracts": contracts,
-            "functions": parse_functions(text),
-            "score": risk_score(rel, text),
+            "functions": parse_functions(text, suffix),
+            "modifiers": RE_MODIFIER.findall(text)[:12],
+            "externals": [f["name"] for f in parse_functions(text, suffix)
+                          if "external" in f["sig"].lower() or "pub fn" in f["sig"].lower()][:14],
+            "imports": RE_IMPORT.findall(text),
         })
-    rows.sort(key=lambda r: (-int(r["score"]), str(r["rel"])))
     return rows[:MAX_FILES]
 
 
-def repo_map(rows: list[dict[str, Any]]) -> str:
+def suffix_index(catalog: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for row in catalog:
+        rel = str(row["rel"])
+        out[rel] = row
+        out[Path(rel).name] = row
+        for part in Path(rel).parts:
+            out[part] = row
+    return out
+
+
+def import_graph(
+    catalog: list[dict[str, Any]],
+    lookup: dict[str, dict[str, Any]],
+) -> dict[str, set[str]]:
+    graph: dict[str, set[str]] = defaultdict(set)
+    for row in catalog:
+        rel = str(row["rel"])
+        for imp in row["imports"]:
+            base = imp.rsplit("/", 1)[-1]
+            peer = lookup.get(base) or lookup.get(imp)
+            if peer and peer["rel"] != rel:
+                graph[rel].add(str(peer["rel"]))
+                graph[str(peer["rel"])].add(rel)
+    return graph
+
+
+def rank_catalog(
+    catalog: list[dict[str, Any]],
+    graph: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    for row in catalog:
+        row["score"] = risk_score(str(row["rel"]), str(row["text"]), graph)
+    return sorted(catalog, key=lambda r: (-int(r["score"]), str(r["rel"])))
+
+
+def graph_digest(ranked: list[dict[str, Any]], graph: dict[str, set[str]]) -> str:
     chunks: list[str] = []
-    for row in rows:
+    for row in ranked[:16]:
+        rel = str(row["rel"])
         chunks.append(json.dumps({
-            "file": row["rel"],
-            "language": Path(str(row["rel"])).suffix.lstrip("."),
-            "contracts": row["contracts"][:7],
+            "file": rel,
             "score": row["score"],
+            "contracts": row["contracts"][:7],
+            "neighbors": sorted(graph.get(rel, set()))[:4],
+            "modifiers": row["modifiers"][:8],
+            "externals": row["externals"][:10],
+            "hot_functions": hot_functions(str(row["text"]))[:8],
             "state": state_names(str(row["text"])),
-            "hot_functions": hot_functions(str(row["text"])),
-            "functions": [f["sig"][:150] for f in row["functions"][:24]],
+            "functions": [f["sig"][:140] for f in row["functions"][:22]],
             "risk_lines": risk_snippets(str(row["text"])),
         }, separators=(",", ":")))
     return "\n".join(chunks)[:DIGEST_LIMIT]
 
 
-def import_neighbors(row: dict[str, Any], by_basename: dict[str, dict[str, Any]]) -> str:
+def import_neighbors(row: dict[str, Any], lookup: dict[str, dict[str, Any]]) -> str:
     blocks: list[str] = []
-    for imp in RE_IMPORT.findall(str(row["text"])):
-        base = imp.rsplit("/", 1)[-1]
-        other = by_basename.get(base)
+    for imp in row["imports"]:
+        key = imp.rsplit("/", 1)[-1]
+        other = lookup.get(key) or lookup.get(imp)
         if other and other["rel"] != row["rel"]:
             blocks.append(f"// import {other['rel']}\n{str(other['text'])[:IMPORT_LIMIT]}")
         if len(blocks) >= 2:
@@ -277,12 +350,12 @@ def import_neighbors(row: dict[str, Any], by_basename: dict[str, dict[str, Any]]
     return "\n\n".join(blocks)[:IMPORT_LIMIT * 2]
 
 
-def infer(api: str | None, messages: list[dict[str, str]], token_cap: int) -> str:
+def infer(api: str | None, msgs: list[dict[str, str]], token_cap: int) -> str:
     endpoint = (api or os.environ.get("INFERENCE_API") or "").rstrip("/")
     if not endpoint:
         raise RuntimeError("missing inference endpoint")
     payload = json.dumps({
-        "messages": messages,
+        "messages": msgs,
         "max_tokens": token_cap,
         "reasoning": {"effort": "low", "exclude": True},
     }).encode("utf-8")
@@ -363,24 +436,29 @@ def load_json(text: str) -> dict[str, Any]:
     return {}
 
 
-def run_triage(api: str | None, rows: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
+def run_triage(
+    api: str | None,
+    ranked: list[dict[str, Any]],
+    graph: dict[str, set[str]],
+) -> tuple[list[str], list[dict[str, Any]]]:
     prompt = (
-        "Review this smart-contract repository map (scores, hot external functions, risk lines). "
-        "Pick files most likely to hold exploitable high/critical bugs. Return strict JSON only:\n"
+        "Review this import-graph ranked repository map. Pick files most likely to hold "
+        "exploitable high/critical bugs. Return strict JSON only:\n"
         '{"target_files":["path.sol"],"findings":[{"title":"Contract.function - bug",'
         '"file":"path.sol","contract":"Contract","function":"fn","severity":"high|critical",'
         '"mechanism":"precondition -> attacker action -> broken invariant",'
-        '"impact":"fund loss, insolvency, privilege, or permanent DoS",'
+        '"impact":"fund loss, insolvency, privilege, or critical DoS",'
         '"description":"2-4 precise sentences"}]}\n'
-        "Prioritize: missing access control on privileged state changes; unsafe external calls "
-        "and reentrancy; broken share/LP/oracle accounting; initialization or upgrade gaps; "
-        "slippage or ordering bugs in swaps and liquidity flows. "
-        "Use hot_functions and risk_lines as hints only. "
+        "Prioritize high-centrality nodes, privileged entrypoints, and when present: "
+        "DEX/pool invariant breaks, LP share mis-accounting, decimal/rate scaling, "
+        "slippage bypass, oracle staleness, access-control gaps, reentrancy on value "
+        "transfer, vesting/listing accounting, reward epoch edges, upgrade/init races. "
+        "Use hot_functions, neighbors, and risk_lines as hints only. "
         "Prefer precision over volume. Do not invent files or functions.\n\n"
-        + repo_map(rows)
+        + graph_digest(ranked, graph)
     )
     try:
-        obj = load_json(infer(api, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}], 5000))
+        obj = load_json(infer(api, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}], 5200))
     except Exception:
         return [], []
     targets = obj.get("target_files")
@@ -391,30 +469,28 @@ def run_triage(api: str | None, rows: list[dict[str, Any]]) -> tuple[list[str], 
     )
 
 
-def deep_prompt(batch: list[dict[str, Any]], by_basename: dict[str, dict[str, Any]]) -> str:
+def deep_prompt(batch: list[dict[str, Any]], lookup: dict[str, dict[str, Any]]) -> str:
     header = (
-        "Deep-audit the contract sources below with full cross-file import context. "
+        "Deep-audit the contract sources below with import context. "
+        + BUG_TAXONOMY + " "
         "Return strict JSON only:\n"
         '{"findings":[{"title":"Contract.function - specific bug","file":"exact/path",'
         '"contract":"Contract","function":"fn","line":123,"severity":"high|critical",'
         '"mechanism":"pre -> attack steps -> broken invariant",'
         '"impact":"specific material harm",'
         '"description":"2-4 sentences naming file, contract, function, mechanism, impact"}]}\n'
-        "Checklist: access control on admin/user flows; external call ordering and reentrancy; "
-        "token decimal/rate scaling; LP/share mint-burn math; oracle freshness and manipulation; "
-        "initializer guards; state updates before value transfers. "
         "At most 5 findings. Omit weak or speculative issues.\n"
     )
     parts = [header]
     room = BATCH_LIMIT - len(header)
     for row in batch:
         block = (
-            f"\n\n===== FILE: {row['rel']} =====\n"
+            f"\n\n===== FILE: {row['rel']} (score={row.get('score', 0)}) =====\n"
             f"Contracts: {', '.join(row['contracts'][:7])}\n"
-            f"Hot functions: {', '.join(hot_functions(str(row['text']))[:6])}\n"
+            f"Hot: {', '.join(hot_functions(str(row['text']))[:6])}\n"
             f"{row['text']}\n"
         )
-        neighbors = import_neighbors(row, by_basename)
+        neighbors = import_neighbors(row, lookup)
         if neighbors:
             block += f"\n===== IMPORT CONTEXT =====\n{neighbors}\n"
         if len(block) > room:
@@ -429,14 +505,14 @@ def deep_prompt(batch: list[dict[str, Any]], by_basename: dict[str, dict[str, An
 def run_deep_pass(
     api: str | None,
     batch: list[dict[str, Any]],
-    by_basename: dict[str, dict[str, Any]],
+    lookup: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     if not batch:
         return []
     try:
         obj = load_json(infer(
             api,
-            [{"role": "system", "content": SYSTEM}, {"role": "user", "content": deep_prompt(batch, by_basename)}],
+            [{"role": "system", "content": SYSTEM}, {"role": "user", "content": deep_prompt(batch, lookup)}],
             8000,
         ))
     except urllib.error.HTTPError:
@@ -447,8 +523,11 @@ def run_deep_pass(
     return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
 
 
-def plan_batches(targets: list[str], rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    by_rel = {r["rel"]: r for r in rows}
+def plan_batches(
+    targets: list[str],
+    ranked: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    by_rel = {r["rel"]: r for r in ranked}
     ordered: list[dict[str, Any]] = []
     for target in targets:
         for rel, row in by_rel.items():
@@ -456,10 +535,167 @@ def plan_batches(targets: list[str], rows: list[dict[str, Any]]) -> tuple[list[d
                 if row not in ordered:
                     ordered.append(row)
                 break
-    for row in rows:
+    for row in ranked:
         if row not in ordered:
             ordered.append(row)
-    return ordered[:2], ordered[2:6]
+
+    pack_a: list[dict[str, Any]] = []
+    pack_b: list[dict[str, Any]] = []
+    budget_a = BATCH_LIMIT // 2
+    budget_b = BATCH_LIMIT // 2
+    for row in ordered:
+        size = len(str(row["text"])) + 500
+        if len(pack_a) < 2 and budget_a >= size:
+            pack_a.append(row)
+            budget_a -= size
+        elif len(pack_b) < 5 and budget_b >= size:
+            pack_b.append(row)
+            budget_b -= size
+        elif len(pack_a) < 3:
+            pack_a.append(row)
+        elif len(pack_b) < 6:
+            pack_b.append(row)
+    if not pack_a and ordered:
+        pack_a = ordered[:2]
+    if not pack_b and len(ordered) > 2:
+        pack_b = ordered[2:7]
+    return pack_a, pack_b
+
+
+def function_body(text: str, name: str) -> str:
+    pat = re.compile(rf"\bfunction\s+{re.escape(name)}\s*\([^)]*\)[^{{]*\{{", re.MULTILINE)
+    m = pat.search(text)
+    if not m:
+        pat_vy = re.compile(rf"^\s*def\s+{re.escape(name)}\s*\(", re.MULTILINE)
+        m = pat_vy.search(text)
+    if not m:
+        pat_rs = re.compile(rf"\bfn\s+{re.escape(name)}\s*[(<]")
+        m = pat_rs.search(text)
+    if not m:
+        return ""
+    if text[m.start():m.end()].strip().endswith("{"):
+        start = m.end()
+        depth = 1
+        idx = start
+        while idx < len(text) and depth:
+            if text[idx] == "{":
+                depth += 1
+            elif text[idx] == "}":
+                depth -= 1
+            idx += 1
+        return text[start : idx - 1] if depth == 0 else text[start : start + 4000]
+    lines = text[m.end() :].splitlines()
+    if not lines:
+        return ""
+    indent = len(lines[0]) - len(lines[0].lstrip()) if lines[0].strip() else 0
+    body: list[str] = []
+    for line in lines:
+        if line.strip() and (len(line) - len(line.lstrip())) <= indent and body:
+            break
+        body.append(line)
+    return "\n".join(body)
+
+
+def static_probes(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    for row in catalog:
+        rel = str(row["rel"])
+        text = str(row["text"])
+        contract = str(row["contracts"][0]) if row["contracts"] else Path(rel).stem
+        for fn in row["functions"]:
+            name = fn["name"]
+            sig = fn["sig"].lower()
+            body = function_body(text, name)
+            if not body:
+                continue
+            low = body.lower()
+
+            if RE_EXTERNAL.search(body) and "nonreentrant" not in sig and "nonreentrant" not in low:
+                if RE_STATE_WRITE.search(body):
+                    hits.append(_probe_hit(
+                        title=f"{contract}.{name} - external call interleaves with state writes",
+                        file=rel, contract=contract, function=name,
+                        line=line_number(text, f"function {name}"),
+                        severity="high",
+                        mechanism=(
+                            f"`{name}` performs an external call while mutating state without "
+                            "a reentrancy guard, allowing nested re-entry on stale balances."
+                        ),
+                        impact="Reentrant calls can drain funds or corrupt accounting before state settles.",
+                        description=(
+                            f"In `{rel}`, contract `{contract}`, function `{name}()`, an external "
+                            "`.call` interleaves with state writes and lacks `nonReentrant` protection."
+                        ),
+                    ))
+
+            if "tx.origin" in low and any(tok in low for tok in ("require", "if", "assert", "revert")):
+                hits.append(_probe_hit(
+                    title=f"{contract}.{name} - tx.origin used for authorization",
+                    file=rel, contract=contract, function=name,
+                    line=line_number(text, "tx.origin"),
+                    severity="high",
+                    mechanism="Authorization relies on tx.origin, spoofable via an intermediate contract call.",
+                    impact="Phishing-style calls can bypass access checks and execute privileged actions.",
+                    description=(
+                        f"In `{rel}`, contract `{contract}`, function `{name}()`, `tx.origin` "
+                        "gates a security-sensitive branch instead of `msg.sender`."
+                    ),
+                ))
+
+            if name.lower() in PRIVILEGED_NAMES and "onlyowner" not in sig and "onlyrole" not in sig:
+                if any(tok in sig for tok in ("external", "public", "@external", "pub fn")):
+                    hits.append(_probe_hit(
+                        title=f"{contract}.{name} - privileged entrypoint lacks access control",
+                        file=rel, contract=contract, function=name,
+                        line=line_number(text, f"function {name}"),
+                        severity="high",
+                        mechanism=f"Sensitive `{name}` is externally reachable without onlyOwner/onlyRole.",
+                        impact="Any caller can invoke the privileged path and move funds or change configuration.",
+                        description=(
+                            f"In `{rel}`, contract `{contract}`, function `{name}()` is public/external "
+                            "but missing an explicit access-control modifier."
+                        ),
+                    ))
+
+            if "delegatecall" in low and "onlyowner" not in sig:
+                hits.append(_probe_hit(
+                    title=f"{contract}.{name} - unguarded delegatecall",
+                    file=rel, contract=contract, function=name,
+                    line=line_number(text, "delegatecall"),
+                    severity="critical",
+                    mechanism="delegatecall executes foreign code in this contract's storage context.",
+                    impact="Attacker-controlled targets can overwrite storage and seize contract assets.",
+                    description=(
+                        f"In `{rel}`, contract `{contract}`, function `{name}()` contains delegatecall "
+                        "without strict owner-only gating."
+                    ),
+                ))
+    return hits[:6]
+
+
+def _probe_hit(
+    *,
+    title: str,
+    file: str,
+    contract: str,
+    function: str,
+    line: int | None,
+    severity: str,
+    mechanism: str,
+    impact: str,
+    description: str,
+) -> dict[str, Any]:
+    return {
+        "title": title,
+        "file": file,
+        "contract": contract,
+        "function": function,
+        "line": line,
+        "severity": severity,
+        "mechanism": mechanism,
+        "impact": impact,
+        "description": description,
+    }
 
 
 def line_number(text: str, needle: str) -> int | None:
@@ -496,7 +732,7 @@ def format_finding(raw: dict[str, Any], by_rel: dict[str, dict[str, Any]]) -> di
     impact = str(raw.get("impact") or "").strip()
     description = str(raw.get("description") or "").strip()
     title = str(raw.get("title") or "").strip()
-    if len(mechanism) < 22 and len(description) < 100:
+    if len(mechanism) < 20 and len(description) < 100:
         return None
     loc = ".".join(x for x in (contract, function) if x)
     if not title:
@@ -518,6 +754,15 @@ def format_finding(raw: dict[str, Any], by_rel: dict[str, dict[str, Any]]) -> di
     description = " ".join(rebuilt.split())
     if len(description) < 100:
         return None
+    basename = file_hint.rsplit("/", 1)[-1]
+    loc_bits = [f"`{file_hint}`"]
+    if basename != file_hint:
+        loc_bits.append(f"`{basename}`")
+    if function:
+        loc_bits.append(f"`{function}()`")
+    hint = " Affected location: " + ", ".join(loc_bits) + "."
+    if hint.strip() not in description:
+        description = description.rstrip() + hint
     line = raw.get("line")
     if not isinstance(line, int) and function:
         line = line_number(str(row["text"]), f"function {function}")

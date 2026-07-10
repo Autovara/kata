@@ -21,9 +21,9 @@ IGNORED_DIRECTORY_NAMES = {
 }
 MAX_SOURCE_BYTES = 240_000
 MAX_FILES_CONSIDERED = 60
-MAX_FILES_PER_BATCH = 3
-MAX_BATCHES = 2
-MAX_BATCH_CHARACTERS = 26_000
+MAX_FILES_PER_BATCH = 6
+MAX_BATCHES = 3
+MAX_BATCH_CHARACTERS = 45_000
 MAX_FINDINGS_RETURNED = 8
 MAX_RUNTIME_SECONDS = 200
 REQUEST_TIMEOUT_SECONDS = 140
@@ -91,11 +91,14 @@ SPECULATIVE_HEDGE_RE = re.compile(
 )
 
 AUDIT_SYSTEM_PROMPT = (
-    "You are a precise smart-contract security auditor reviewing unfamiliar source code. "
-    "Report only concrete, high-confidence high or critical severity vulnerabilities with a "
-    "clear exploit path grounded in the exact code shown. Do not speculate about malicious "
-    "external actors, malicious tokens, or hypothetical future changes. Do not report style, "
-    "gas, or informational issues. Respond with strict JSON only."
+    "You are an experienced smart-contract security auditor reviewing unfamiliar source code "
+    "for real high or critical severity bugs. Think through state transitions, access control, "
+    "accounting, and arithmetic carefully before answering - many real bugs are subtle and easy "
+    "to miss on a quick read. Report every vulnerability you can ground in the exact code shown, "
+    "including ones that require tracing a multi-step call path. Do not invent bugs that depend "
+    "on a malicious admin, a malicious token, or a compromised external contract - those need "
+    "actual evidence in the code. Do not report style, gas, or purely informational issues. "
+    "Respond with strict JSON only."
 )
 
 
@@ -319,17 +322,19 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 def _batch_prompt(batch: list[dict[str, Any]]) -> str:
     instructions = (
-        "Review the source files below for real, exploitable high or critical severity "
-        "vulnerabilities. Focus on state-changing bugs: incorrect access control, unsafe "
-        "external calls before state updates, unchecked arithmetic, oracle or price misuse, "
-        "signature or allowance replay, and accounting errors that let value be stolen, "
-        "duplicated, or permanently locked. Every finding must name the exact file, the "
-        "function it lives in, and quote or closely paraphrase the specific lines that cause "
-        "the bug. Skip anything you are not confident about.\n\n"
+        "Review every source file below for real, exploitable high or critical severity "
+        "vulnerabilities. Examine each file in turn: incorrect access control, unsafe external "
+        "calls before state updates, unchecked or mismatched arithmetic, oracle or price misuse, "
+        "signature or allowance/permission handling, and accounting errors that let value be "
+        "stolen, duplicated, or permanently locked - including bugs that only appear when you "
+        "trace how one function's output feeds another. Report a finding whenever you can point "
+        "to the specific lines that cause it, even if it takes careful reasoning to see - do not "
+        "hold back a real, code-grounded bug just because it is subtle. Every finding must name "
+        "the exact file, the function it lives in, and the lines responsible.\n\n"
         'Respond with strict JSON only: {"findings":[{"file":"path","function":"name",'
         '"line":123,"severity":"high|critical","title":"short bug summary",'
         '"description":"2-4 sentences: the flaw, how it is triggered, and the impact"}]}\n'
-        "Return at most 4 findings.\n\n"
+        "Return up to 6 findings, one per distinct bug.\n\n"
     )
     sections = []
     for entry in batch:
@@ -342,7 +347,7 @@ def _batch_prompt(batch: list[dict[str, Any]]) -> str:
 
 def _audit_batch(inference_api: str | None, batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
     try:
-        raw_text = _call_model(inference_api, _batch_prompt(batch), max_tokens=6500)
+        raw_text = _call_model(inference_api, _batch_prompt(batch), max_tokens=7000)
     except Exception as exc:
         _stderr(f"batch audit failed: {exc}")
         return []

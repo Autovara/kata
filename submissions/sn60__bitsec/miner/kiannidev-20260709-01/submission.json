@@ -4,7 +4,7 @@
   "submission_id": "kiannidev-20260709-01",
   "created_at": "2026-07-09T17:45:00+00:00",
   "author": "kiannidev",
-  "title": "Graph-ranked probes with adaptive dual-batch audit",
-  "notes": "Import-graph ranking, hot-function triage, zero-call probes (reentrancy, reward weights), risk-compacted dual-batch audits within the 3-call budget.",
+  "title": "Stable graph-ranked probes with high-input dual audit",
+  "notes": "Tuned for July 2026 rules: 2/3 replica pass scoring, smoke-safe execution, 150k input budget, graph-ranked triage plus zero-call probes and dual deep audits.",
   "subnet_pack": "sn60__bitsec"
 }

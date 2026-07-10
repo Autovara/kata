@@ -65,14 +65,14 @@ RE_RISKY_BODY = re.compile(
 
 CAP_FILES = 75
 CAP_BYTES = 270_000
-DIGEST_LIMIT = 19_500
-BATCH_LIMIT = 33_000
-FILE_FULL = 12_000
-FILE_COMPACT = 11_000
-CTX_LIMIT = 4_200
+DIGEST_LIMIT = 22_000
+BATCH_LIMIT = 92_000
+FILE_FULL = 14_000
+FILE_COMPACT = 13_000
+CTX_LIMIT = 5_000
 MAX_OUT = 12
-TIME_BUDGET = 228.0
-HTTP_WAIT = 148
+TIME_BUDGET = 218.0
+HTTP_WAIT = 140
 
 PATH_WEIGHTS = (
     "vault", "pool", "router", "bridge", "proxy", "oracle", "govern", "market",
@@ -100,6 +100,14 @@ SYSTEM_AUDITOR = (
 
 def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict:
     empty: list[dict[str, Any]] = []
+    try:
+        return _execute(project_dir, inference_api)
+    except Exception:
+        return {"vulnerabilities": empty}
+
+
+def _execute(project_dir: str | None, inference_api: str | None) -> dict:
+    empty: list[dict[str, Any]] = []
     t0 = time.monotonic()
     root = _resolve_root(project_dir)
     if root is None:
@@ -119,14 +127,17 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
     collected: list[dict[str, Any]] = []
     collected.extend(_probe_files(catalog))
     collected.extend(_probe_reward_weights(catalog))
+    collected.extend(_probe_division_by_zero(catalog))
 
     targets, triage_rows = _run_triage(inference_api, ranked, graph)
+    if not targets:
+        targets = [str(row["rel"]) for row in ranked[:7]]
     collected.extend(triage_rows)
 
     batch_a, batch_b = _split_batches(targets, ranked, graph, by_rel)
     if time.monotonic() - t0 < TIME_BUDGET:
         collected.extend(_audit_batch(inference_api, batch_a, by_suffix))
-    if time.monotonic() - t0 < TIME_BUDGET:
+    if time.monotonic() - t0 < TIME_BUDGET and batch_b:
         collected.extend(_audit_batch(inference_api, batch_b, by_suffix))
 
     normalized: list[dict[str, Any]] = []
@@ -134,7 +145,11 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
         item = _shape_finding(raw, by_rel, valid_funcs)
         if item is not None:
             normalized.append(item)
-    return {"vulnerabilities": _rank_unique(normalized)}
+    out = _rank_unique(normalized)
+    if out:
+        return {"vulnerabilities": out}
+    # Smoke test and replicas: always return a valid list object, never crash.
+    return {"vulnerabilities": empty}
 
 
 def _resolve_root(project_dir: str | None) -> Path | None:
@@ -496,10 +511,11 @@ def _run_triage(
         '"file":"path.sol","contract":"Contract","function":"fn","severity":"high|critical",'
         '"mechanism":"precondition -> attacker action -> broken state",'
         '"impact":"fund loss, insolvency, privilege, or critical DoS",'
-        '"description":"2-4 precise sentences"}]}\n'
+        '"description":"2-4 precise sentences (>=80 chars)"}]}\n'
         "Prioritize highly imported modules and hot_functions. "
         + BUG_TAXONOMY
-        + " Prefer precision over volume. Do not invent symbols.\n\n"
+        + " Prefer precision over volume. Do not invent symbols. "
+        "Each finding needs file/contract/function and a concrete mechanism.\n\n"
         + _repo_map(catalog, graph)
     )
     try:
@@ -618,22 +634,22 @@ def _split_batches(
     pack_b: list[dict[str, Any]] = []
     used: set[str] = set()
 
-    for row in ordered[:2]:
+    for row in ordered[:3]:
         pack_a.append(row)
         used.add(str(row["rel"]))
         for dep in list(graph.get(str(row["rel"]), ()))[:1]:
             dep_row = by_rel.get(dep)
-            if dep_row and dep not in used and len(pack_a) < 3:
+            if dep_row and dep not in used and len(pack_a) < 4:
                 pack_a.append(dep_row)
                 used.add(dep)
 
-    budget_b = BATCH_LIMIT // 2
-    for row in ordered[2:]:
+    budget_b = BATCH_LIMIT
+    for row in ordered[3:]:
         rel = str(row["rel"])
         if rel in used:
             continue
-        size = min(len(str(row["text"])), FILE_COMPACT) + 500
-        if len(pack_b) < 4 and budget_b >= size:
+        size = min(len(str(row["text"])), FILE_COMPACT) + 600
+        if len(pack_b) < 5 and budget_b >= size:
             pack_b.append(row)
             used.add(rel)
             budget_b -= size
@@ -797,6 +813,47 @@ def _probe_reward_weights(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]
                 description=(
                     f"In `{rel}`, contract `{contract}`, function `{fn['name']}()`, reward weight "
                     "accounting updates the total without clearing the disabled entity's stored weight."
+                ),
+            ))
+            break
+    return hits[:2]
+
+
+def _probe_division_by_zero(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Generic farm/reward bugs: divide by weights or shares that may be zero."""
+    hits: list[dict[str, Any]] = []
+    for row in catalog:
+        rel = str(row["rel"])
+        text = str(row["text"])
+        contract = str(row["contracts"][0]) if row["contracts"] else Path(rel).stem
+        for fn in row["functions"]:
+            body = _function_body(text, fn["name"])
+            if not body:
+                continue
+            low = body.lower()
+            if not any(tok in low for tok in ("claim", "reward", "epoch", "weight", "share", "harvest")):
+                continue
+            if not re.search(r"/\s*[A-Za-z_][\w]*", body):
+                continue
+            if re.search(r"require\s*\([^)]*!=\s*0|==\s*0|>\s*0", body):
+                continue
+            if not re.search(r"(weight|share|total|supply|balance)", low):
+                continue
+            hits.append(_make_hit(
+                title=f"{contract}.{fn['name']} - division uses value that may be zero",
+                file=rel,
+                contract=contract,
+                function=fn["name"],
+                line=_line_number(text, f"function {fn['name']}") or _line_number(text, f"fn {fn['name']}"),
+                severity="high",
+                mechanism=(
+                    f"Function `{fn['name']}` divides by a weight, share, or balance without "
+                    "guarding against zero, so claims or reward distribution can revert or misallocate."
+                ),
+                impact="Users may be unable to claim rewards, or accounting can skew when denominators hit zero.",
+                description=(
+                    f"In `{rel}`, contract `{contract}`, function `{fn['name']}()`, a division "
+                    "uses a dynamic denominator that is not validated as non-zero before use."
                 ),
             ))
             break

@@ -10,7 +10,8 @@ A general smart-contract security auditor (no memorized benchmark answers). It:
      delegatecall, access-control surfaces, oracle/price reads, unchecked math,
      mint/burn, upgrade/init, signatures) so the limited model budget is spent
      where high/critical bugs actually live;
-  3. runs budget-bounded (<=3 model calls / ~24k tokens per problem) DEEP audits
+  3. runs budget-bounded (<=3 model calls; the 150k input-token budget lets it send
+     whole source, so files go at FULL depth split into focused per-call) DEEP audits
      over the top contracts with WHOLE-file context plus their imported
      dependencies, driven by an auditor prompt carrying a concrete vulnerability
      taxonomy (access control, reentrancy, price/oracle manipulation, share &
@@ -68,17 +69,17 @@ RISK_PATTERNS = (
 
 # --- budgets ---------------------------------------------------------------
 MAX_MODEL_CALLS = 3
-MAX_FILE_BYTES = 240_000
-MAX_FILES = 60
-# Depth-first budget: send the top risk-ranked contracts at FULL depth. The prior
-# version compacted every file to a few KB and starved the model of the exact
-# order/accounting logic where bugs live (a 20KB contract cut to 3KB loses 85%).
-# Now a call carries whole files up to MAX_CALL_CHARS; only a single file that
-# alone exceeds the budget is compacted (risky bodies kept, boilerplate collapsed).
-MAX_CALL_CHARS = 17_000       # source context per audit call (~4.5k tokens)
-MAX_FILE_FULL = 11_000        # files <= this are sent WHOLE (most contracts)
-MAX_FILE_COMPACT = 11_000     # a larger file is compacted to this (risky bodies kept),
-                              # capped so two contracts can share a call for breadth
+MAX_FILE_BYTES = 400_000
+MAX_FILES = 90
+# Budget: the validator allows 150k INPUT tokens / problem across 3 calls (~50k/call)
+# and 24k output tokens. So input is NOT the constraint — send whole source at full
+# depth. Prior versions compacted to ~17k chars/call (<10% of budget) and starved the
+# model of the exact logic where bugs live. Now each call carries whole files up to
+# ~35k tokens (~140k chars); 3 calls stay well under the 150k input cap while covering
+# essentially the entire codebase. Only a single monster file is compacted.
+MAX_CALL_CHARS = 140_000      # ~35k input tokens/call; 3 calls << 150k cap
+MAX_FILE_FULL = 120_000       # send whole files (nearly always)
+MAX_FILE_COMPACT = 120_000    # only a huge single file is compacted (risky bodies kept)
 MAX_FINDINGS = 10
 MAX_RUNTIME_SECONDS = 205.0
 REQUEST_TIMEOUT_SECONDS = 150
@@ -238,29 +239,34 @@ def _compact(text: str, cap: int) -> str:
 
 
 def _batches(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Pack the highest-risk contracts into up to MAX_MODEL_CALLS calls, at full depth.
-    Best-fit by risk order: each call greedily takes the highest-ranked remaining file
-    that still fits, so a large top file doesn't leave a call half-empty — maximizing
-    both depth (whole files) and how many distinct contracts get audited within budget."""
+    """Distribute the risk-ranked contracts across all MAX_MODEL_CALLS calls at FULL
+    depth. The 150k-input-token budget lets us send whole source, so we don't compact
+    to save space — we split the codebase into focused per-call audits (each call a
+    balanced share, capped at MAX_CALL_CHARS) so every call does real work and the
+    model's attention isn't diluted across the entire repo at once. Highest-risk files
+    are placed first; each new file goes to the least-loaded call that still fits."""
     for rec in records:
         rec["ctx"] = _compact(rec["text"], MAX_FILE_COMPACT)
-    pending = list(records)  # already risk-sorted
-    batches: list[list[dict[str, Any]]] = []
-    for _ in range(MAX_MODEL_CALLS):
-        if not pending:
-            break
-        cur: list[dict[str, Any]] = []
-        used = 0
-        i = 0
-        while i < len(pending):
-            clen = len(pending[i]["ctx"])
-            if not cur or used + clen <= MAX_CALL_CHARS:
-                cur.append(pending.pop(i))
-                used += clen
-            else:
-                i += 1
-        batches.append(cur)
-    return batches
+    # keep the top files that fit the total input budget (3 calls worth)
+    budget = MAX_CALL_CHARS * MAX_MODEL_CALLS
+    chosen: list[dict[str, Any]] = []
+    used_total = 0
+    for rec in records:  # risk-sorted
+        clen = len(rec["ctx"])
+        if used_total + clen > budget:
+            continue
+        chosen.append(rec)
+        used_total += clen
+    if not chosen:
+        chosen = records[:1]
+    # balance chosen files across the calls (least-loaded-first, risk order preserved)
+    loads = [0] * MAX_MODEL_CALLS
+    buckets: list[list[dict[str, Any]]] = [[] for _ in range(MAX_MODEL_CALLS)]
+    for rec in chosen:
+        j = min(range(MAX_MODEL_CALLS), key=lambda k: loads[k])
+        buckets[j].append(rec)
+        loads[j] += len(rec["ctx"])
+    return [b for b in buckets if b]
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,8 @@ Your PR is ready when all of these are true:
 - `agent_main()` can be called with no arguments.
 - `agent_main` returns a dict with top-level `vulnerabilities`.
 - The agent does real analysis. It is not an empty stub or canned constant report.
-- The bundle has no helper files, symlinks, hardcoded secrets, provider URLs, or
+- Optional Python helper files live under `helpers/` only.
+- The bundle has no symlinks, hardcoded secrets, provider URLs, or
   benchmark-answer replay logic.
 - The bundle passes local validation:
 
@@ -152,7 +153,9 @@ Use this contract:
   `{"messages": [...], "max_tokens": 4000}`
 - Response: read `choices[0].message.content`
 - Do not use `Authorization: Bearer`
-- Do not set `model`, `temperature`, `top_p`, `seed`, or other sampling knobs
+- You may include normal request fields, but the relay ignores/strips `model`,
+  `temperature`, `top_p`, `top_k`, `seed`, and similar sampling knobs.
+  Do not rely on them for behavior.
 
 Current validation inference uses the pinned Qwen model:
 
@@ -165,6 +168,7 @@ Per problem, the relay enforces:
 - up to 3 successful model calls
 - up to 150,000 input tokens total
 - up to 24,000 output tokens total
+- each call is capped at 32,000 output tokens
 - further calls return HTTP `429`
 
 Handle failures and `429` by returning the findings you already have. Do not
@@ -217,8 +221,8 @@ clear hard failure:
 - `agent.py` has invalid Python syntax.
 - `agent_main` is missing, async, or cannot be called with no arguments.
 - The agent is a no-op stub or constant canned report.
-- The bundle contains unsupported files, helper files, symlinks, too many files,
-  or oversized files.
+- The bundle contains unsupported files, symlinks, too many files, or oversized
+  files. Python helpers are allowed only under `helpers/`.
 - The bundle contains hardcoded API keys, provider endpoints, or direct
   references to provider/validator secret env vars such as `OPENAI_API_KEY`,
   `OPENROUTER_API_KEY`, `CHUTES_API_KEY`, or `KATA_VALIDATOR_API_KEY`.
@@ -264,7 +268,10 @@ In each round:
 
 - Kata snapshots open candidate PRs at their current commits.
 - Only one open PR per contributor is allowed.
-- Each candidate is re-screened on the locked commit.
+- The current commit must match the commit that passed intake screening.
+- If enabled, each candidate runs one real executable smoke test before scoring.
+  This checks that the agent runs and returns a valid `vulnerabilities` report.
+  It does not require a true-positive finding.
 - The king and all candidates are scored on the same randomly sampled SN60
   benchmark problems.
 - In SN60-compatible production mode, each selected project runs 3 times and a

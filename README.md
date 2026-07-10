@@ -122,14 +122,16 @@ a pending entrant; a round scores every pending entrant at once.
 
 **When a competition round is run:**
 
-3. **Lock & screen.** The round locks the currently-open PRs, keeps one per contributor,
-   applies the re-entry rule (a kept-open PR is re-scored only if its commit or the king
-   changed since it last competed), screens each survivor, and labels the qualified ones
-   `kata:executing`.
+3. **Lock & gate.** The round locks the currently-open PRs, keeps one per contributor,
+   applies the re-entry rule, requires the current commit to match the commit that passed
+   intake screening, runs the one-project executable smoke test when enabled, and labels
+   the qualified ones `kata:executing`.
 4. **Score.** The round samples the round's problems (secret-seeded), scores the **cached**
    king and every candidate on that *same* set — the king is not re-run once cached — and
-   ranks them by the active pack's rules. For SN60: **detection score**, then **true
-   positives**, **precision**, **F1 score**, then fewer invalid/error evaluations.
+   ranks them by the active pack's rules. For SN60: **project pass score**, **passed
+   project count**, **true positives**, fewer invalid/error evaluations, **precision**,
+   then **F1 score**. Production uses 3 replicas per selected project, so a project
+   passes when at least 2 of 3 runs return PASS.
 5. **Decide.** The top candidate that **strictly beats the king** wins. Outcomes: winner →
    merged + promoted; a runner-up that also beat the king → kept open `kata:pending` for
    the next round; a candidate that didn't beat the king → closed `kata:losing`.

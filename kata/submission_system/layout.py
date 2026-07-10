@@ -135,7 +135,7 @@ def default_submission_notes() -> str:
         "- author: your GitHub username",
         f"- submission_id: {SUBMISSION_ID_CONVENTION}",
         "- implement a real agent in agent.py before opening the PR",
-        "- SN60 miner submissions in V1 must stay self-contained in agent.py",
+        "- optional Python helpers may live under helpers/",
     ]
     return "\n".join(lines) + "\n"
 

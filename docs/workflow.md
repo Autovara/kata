@@ -85,28 +85,36 @@ Validation checks the candidate bundle before any expensive sandbox work:
 - `agent.py` defines a valid synchronous `agent_main`
 - Python sources compile
 - the target lane exists and is active
-- the bundle is self-contained and within size limits
-- obvious secret leakage, benchmark-answer leakage, and sampling overrides are
-  rejected
+- the bundle uses the supported small bundle layout and stays within size limits
+- obvious secret leakage and benchmark-answer leakage are rejected
+- model/sampling fields are handled by the relay at runtime, not rejected just
+  because they appear in source
 - benchmark-specific answer replay is rejected; agents may use general reusable
   analysis heuristics, but must not recognize known benchmark projects and return
   prewritten findings
 
 ### 2. Screening
 
-Screening has two parts, and **only the static part can close a PR**:
+Screening has two parts:
 
 **Static screening — runs during PR intake/update, before pending.** Cheap, source-only
-checks (no model calls). If any fail, the PR is closed immediately with the reason and
-never receives `kata:pending`:
+checks (no model calls). If a hard rule fails, the PR is closed immediately with the
+reason and never receives `kata:pending`:
 
-- helper files in SN60 V1 bundles
 - hardcoded provider keys or validator-secret env references
 - benchmark-answer leakage indicators
 - benchmark-specific answer replay, including exact project fingerprints, known
   finding IDs, or prewritten findings for known benchmark projects
 - async or non-callable `agent_main`
 - a stub that directly returns `{"vulnerabilities": []}` without doing any analysis
+
+Static screening currently allows:
+
+- Python helper modules under `helpers/`
+- normal request fields such as `temperature`, `top_p`, `top_k`, and `seed`
+
+Those request fields are still ignored or stripped by the relay during execution, so
+they do not create a model-control advantage.
 
 **Optional screener project — runs BEFORE the duel when enabled.** Production can set
 `KATA_SN60_ENABLE_SCREENER_PROJECT=1` and optionally

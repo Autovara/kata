@@ -721,8 +721,8 @@ def summarize_project(
 def project_passes(*, pass_count: int, replica_count: int) -> bool:
     """Codebase-level binary PASS using the configured replica count.
 
-    The default production setting is one replica, so 1/1 passes. If operators
-    raise replicas, this preserves the historical two-thirds majority threshold.
+    Production uses 3 replicas per selected project, so 2/3 passes. Other replica
+    counts use the same two-thirds majority threshold.
     """
     if replica_count <= 0:
         return False

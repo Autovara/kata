@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-"""SN60 miner: import-graph expansion with three adaptive deep-audit passes.
+"""SN60 miner: import-graph expansion with graph-aware triage and deep audits.
 
-Builds a lightweight import adjacency graph, ranks Solidity/Vyper sources by risk
-heuristics plus graph centrality, then spends three inference calls auditing the
-seed file, its graph neighbors, and the next highest-priority uncovered files.
-Includes zero-call static probes. Self-contained stdlib; inference proxy only.
+Ranks Solidity/Vyper sources by risk heuristics and import-graph centrality,
+runs one graph-compact triage call to pick priority targets, then audits triage
+targets, graph neighbors, and top-ranked uncovered files. Includes zero-call static
+probes. Self-contained stdlib; inference proxy only.
 """
 
 import json
@@ -48,6 +48,7 @@ MAX_FILES = 75
 MAX_BYTES = 270_000
 PROMPT_BUDGET = 33_000
 RELATED_BUDGET = 3_200
+GRAPH_DIGEST_CHARS = 14_000
 MAX_FINDINGS = 8
 RUN_BUDGET = 228.0
 HTTP_WAIT = 148
@@ -85,6 +86,9 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
     collected.extend(_static_probes(catalog))
     audited: set[str] = set()
 
+    triage_targets, triage_hits = _graph_triage(inference_api, ranked, graph)
+    collected.extend(triage_hits)
+
     def audit_rows(rows: list[dict[str, Any]]) -> None:
         if not rows or time.monotonic() - started >= RUN_BUDGET:
             return
@@ -94,11 +98,11 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
         collected.extend(_deep_audit(inference_api, fresh[:3], by_name))
         audited.update(row["rel"] for row in fresh[:3])
 
-    seed = ranked[0]
-    audit_rows([seed])
+    triage_rows = _resolve_target_rows(triage_targets, by_rel, ranked)
+    audit_rows(triage_rows[:3])
 
-    neighbors = _graph_neighbors(seed["rel"], graph, by_rel)
-    audit_rows(neighbors)
+    for row in triage_rows[:2]:
+        audit_rows(_graph_neighbors(row["rel"], graph, by_rel))
 
     remaining = [row for row in ranked if row["rel"] not in audited]
     audit_rows(remaining[:4])
@@ -246,6 +250,78 @@ def _graph_neighbors(
     by_rel: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     return [by_rel[n] for n in sorted(graph.get(rel, set())) if n in by_rel]
+
+
+def _graph_digest(
+    ranked: list[dict[str, Any]],
+    graph: dict[str, set[str]],
+    *,
+    limit: int = 14,
+) -> str:
+    lines: list[str] = []
+    for row in ranked[:limit]:
+        rel = row["rel"]
+        neighbors = sorted(graph.get(rel, set()))[:4]
+        lines.append(json.dumps({
+            "file": rel,
+            "score": row.get("score", 0),
+            "contracts": row["contracts"][:5],
+            "neighbors": neighbors,
+            "functions": [fn["sig"][:100] for fn in row["functions"][:16]],
+            "risk_hits": len(RE_RISK.findall(row["text"])),
+        }, separators=(",", ":")))
+    return "\n".join(lines)[:GRAPH_DIGEST_CHARS]
+
+
+def _resolve_target_rows(
+    targets: list[str],
+    by_rel: dict[str, dict[str, Any]],
+    ranked: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    ordered: list[dict[str, Any]] = []
+    for target in targets:
+        for rel, row in by_rel.items():
+            if target == rel or rel.endswith(target) or target.endswith(rel):
+                if row not in ordered:
+                    ordered.append(row)
+                break
+    for row in ranked:
+        if row not in ordered:
+            ordered.append(row)
+    return ordered
+
+
+def _graph_triage(
+    inference_api: str | None,
+    ranked: list[dict[str, Any]],
+    graph: dict[str, set[str]],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    prompt = (
+        "Given this import-graph ranked repository map, pick files most likely to "
+        "contain exploitable high or critical bugs. Return strict JSON only:\n"
+        '{"target_files":["path/to/File.sol"],"findings":[{"title":"Contract.function - bug",'
+        '"file":"path/to/File.sol","contract":"Contract","function":"functionName",'
+        '"severity":"high|critical","mechanism":"precondition -> action -> effect",'
+        '"impact":"material loss or privilege impact",'
+        '"description":"2-4 precise sentences"}]}\n'
+        "Prioritize high-centrality nodes, privileged entrypoints, external calls, and "
+        "oracle/accounting logic. Do not invent files.\n\n"
+        + _graph_digest(ranked, graph)
+    )
+    try:
+        obj = _parse_json(_request(
+            inference_api,
+            [{"role": "system", "content": AUDITOR}, {"role": "user", "content": prompt}],
+            4500,
+        ))
+    except Exception:
+        return [], []
+    targets = obj.get("target_files")
+    findings = obj.get("findings") or obj.get("vulnerabilities") or []
+    return (
+        [str(item) for item in targets if isinstance(item, str)] if isinstance(targets, list) else [],
+        [item for item in findings if isinstance(item, dict)] if isinstance(findings, list) else [],
+    )
 
 
 def _function_body(text: str, name: str) -> str:

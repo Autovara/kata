@@ -314,7 +314,7 @@ def sn60_lane_benchmark_is_current(
 
     Currency is gated on the benchmark snapshot version (scorer + sandbox
     commit) only. It deliberately does NOT compare the per-run
-    ``freshness_fingerprint`` (which bundles the randomly sampled project keys):
+    ``freshness_fingerprint`` (which bundles the sampled project keys):
     that fingerprint differs on every duel and is never committed to the lane
     state, so comparing it against the committed state would flag every winner as
     "stale" and block promotion forever. King and submission identity are

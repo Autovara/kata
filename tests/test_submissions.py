@@ -895,10 +895,6 @@ def test_evaluate_submission_samples_benchmark_project_keys_from_env(
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "2")
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SECRET", "validator-secret")
     monkeypatch.setattr(
-        "kata.validator_system.project_selection.secrets.token_hex",
-        lambda _size: "nonce-1",
-    )
-    monkeypatch.setattr(
         "kata.submission_system.workflow.run_sn60_challenge",
         fake_run_sn60_challenge,
     )
@@ -914,7 +910,7 @@ def test_evaluate_submission_samples_benchmark_project_keys_from_env(
         sorted(benchmark_keys),
         sample_size=2,
         sample_secret="validator-secret",
-        sample_nonce="nonce-1",
+        sample_nonce="",
         king_artifact_hash=hash_submission_bundle(king_root),
         candidate_artifact_hash=hash_submission_bundle(submission_root),
         candidate_submission_id="alice-20260702-06",

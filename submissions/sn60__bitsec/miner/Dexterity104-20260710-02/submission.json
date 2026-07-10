@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "Dexterity104-20260710-02",
+  "created_at": "2026-07-10T00:00:00+00:00",
+  "author": "Dexterity104",
+  "title": "General multi-language miner: wide coverage with two-pass contiguous-depth audit",
+  "notes": "A general vulnerability detector with no project-specific or benchmark-specific content. It parses Solidity, Vyper, Rust, Move and Cairo source, ranks the project's own contracts by generic risk (down-ranking interface-only, bodiless, test and generated-binding files), then spends the 3-call inference budget on: (1) a deep contiguous audit of the three highest-risk files (up to 15k chars each); (2) a second independent audit of those top files together with the next two, because the model is non-deterministic and a second pass over the contracts where bugs concentrate recovers real high/critical issues a single pass misses; (3) a wide coverage pass over the remaining top files, with enough char budget that every one is shown, so breadth on many-contract projects is preserved. Findings are verified against the real source (file and function must exist), matcher-shaped, and a truncated model reply is salvaged element-by-element; a small model-free structural fallback fires only if the model returns nothing. Respects the per-problem budget (3 calls / 24k tokens), stops on HTTP 429, and never crashes."
+}

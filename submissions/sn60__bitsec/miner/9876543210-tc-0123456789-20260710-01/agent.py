@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -25,29 +26,41 @@ SKIP_DIRS = {
     "dist",
     "coverage",
     "__pycache__",
+    "test",
+    "tests",
+    "mock",
+    "mocks",
+    "interface",
+    "interfaces",
+    "cmd",
+    "cli",
 }
-LOW_VALUE_DIRS = {"test", "tests", "mock", "mocks", "example", "examples", "script", "scripts"}
-MAX_FILE_BYTES = 260_000
-MAX_FILES = 28
-MAX_PACK_CHARS = 46_000
-MAX_SNIPPETS_PER_FILE = 9
-MAX_FINDINGS = 8
+LOW_VALUE_DIRS = {"example", "examples", "script", "scripts"}
+MAX_FILE_BYTES = 340_000
+MAX_FILES = 78
+MAX_PACK_CHARS = 44_000
+FULL_FILE_CHARS = 13_000
+MAX_SNIPPETS_PER_FILE = 12
+MAX_FINDINGS = 14
 REQUEST_TIMEOUT = 150
 
 RISK_PATTERNS = [
     r"\b(call|delegatecall|staticcall)\s*(\{|[(])",
     r"\bsafeApprove\b|\bapprove\b|\bsafeIncreaseAllowance\b",
     r"\btransferFrom\b|\bsafeTransferFrom\b|\bsafeTransfer\b|\btransfer\b",
-    r"\bwithdraw\b|\bredeem\b|\bclaim\b|\bsweep\b|\brescue\b",
-    r"\bliquidat|\bborrow\b|\brepay\b|\bcollateral\b|\bmargin\b|\bhealth\b",
-    r"\bprice\b|\boracle\b|\bquote\b|\btwap\b|\bslot0\b|\blatestRoundData\b",
-    r"\bsignature\b|\becrecover\b|\bpermit\b|\bnonce\b|\bdeadline\b|\bdomain",
+    r"\bdeposit\b|\bwithdraw\b|\bredeem\b|\bclaim\b|\bharvest\b|\bsweep\b|\brescue\b",
+    r"\bliquidat|\bborrow\b|\brepay\b|\bcollateral\b|\bmargin\b|\bhealth\b|\bdebt\b",
+    r"\bprice\b|\boracle\b|\bquote\b|\btwap\b|\bslot0\b|\blatestRoundData\b|\bgetReserves\b",
+    r"\bsignature\b|\becrecover\b|\bpermit\b|\bnonce\b|\bdeadline\b|\bdomain\b|\bhashTypedData\b",
     r"\binitialize\b|\bupgradeTo\b|\bset[A-Z]|\bowner\b|\badmin\b|\brole\b",
     r"\bunchecked\b|\bassembly\b|\bselfdestruct\b|\btx\.origin\b",
     r"\bentry\b|\bread\s*\(|\bwrite\s*\(|\bassert\b|\bpanic\b",
     r"\bkill\w*\b|\bdisable\w*\b|\bdeactivate\w*\b|\brevive\w*\b",
     r"\bdistribute\w*\b|\bnotifyRewardAmount\b|\bclaimable\b|\bemission\b",
     r"\btotalWeight\w*\b|\bweightsPerEpoch\b|\bindex\b|\bepoch\b",
+    r"\bfee\b|\bshares?\b|\btotalSupply\b|\bconvertToShares\b|\bpreviewDeposit\b|\bpreviewRedeem\b",
+    r"\bslippage\b|\bamountOutMin\b|\bminAmount\b|\bminOut\b|\badd_liquidity\b|\bremove_liquidity\b",
+    r"\bget_dy\b|\bvirtual_price\b|\bliquidity\b|\bmint\b|\bburn\b|\bvesting\b|\bescrow\b",
 ]
 RISK_RE = [re.compile(p, re.IGNORECASE) for p in RISK_PATTERNS]
 FUNC_RE = re.compile(
@@ -74,23 +87,19 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
     findings.extend(static_findings)
 
     endpoint = _endpoint(inference_api)
-    first_pack = _build_source_pack(files[:18], max_chars=MAX_PACK_CHARS)
-    second_pack = _build_source_pack(_diverse_files(files), max_chars=MAX_PACK_CHARS)
+    primary_pack = _build_full_pack(files[:12], max_chars=MAX_PACK_CHARS)
+    wide_pack = _build_source_pack(files[:36], max_chars=MAX_PACK_CHARS)
+    diverse_pack = _build_source_pack(_diverse_files(files), max_chars=MAX_PACK_CHARS)
 
-    for prompt in (_audit_prompt(first_pack, "primary"), _audit_prompt(second_pack, "secondary")):
-        if len(findings) >= MAX_FINDINGS:
-            break
+    for prompt in (
+        _audit_prompt(primary_pack, "primary whole-file"),
+        _audit_prompt(wide_pack, "wide risk-surface"),
+        _audit_prompt(diverse_pack, "cross-file invariant"),
+    ):
         text = _ask(endpoint, prompt)
         findings.extend(_parse_items(text))
 
     findings = _dedupe(_normalize_all(findings, files))
-    if findings:
-        verifier_pack = _verification_pack(findings, files)
-        verified = _ask(endpoint, _verify_prompt(verifier_pack, findings))
-        refined = _dedupe(_normalize_all(_parse_items(verified), files))
-        if refined:
-            findings = _dedupe(static_findings + refined)
-
     return {"vulnerabilities": findings[:MAX_FINDINGS]}
 
 
@@ -133,17 +142,23 @@ def _discover_files(root: Path) -> list[dict[str, Any]]:
             parts = {p.lower() for p in Path(rel).parts[:-1]}
             if parts & SKIP_DIRS:
                 continue
+            if path.name.lower().endswith((".t.sol", ".s.sol")):
+                continue
             size = path.stat().st_size
             if size <= 0 or size > MAX_FILE_BYTES:
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        if path.suffix.lower() == ".sol" and _interface_only(text):
+            continue
         if not _looks_like_logic(text):
             continue
         score = _score_file(rel, text)
         if parts & LOW_VALUE_DIRS:
             score -= 30
+        if path.suffix.lower() == ".go" and score < 24:
+            continue
         out.append(
             {
                 "path": path,
@@ -169,7 +184,12 @@ def _looks_like_logic(text: str) -> bool:
         or "contract " in lowered
         or "impl " in lowered
         or "module " in lowered
-        or "package " in lowered
+    )
+
+
+def _interface_only(text: str) -> bool:
+    return bool(re.search(r"\binterface\s+[A-Za-z_]", text)) and not bool(
+        re.search(r"\b(?:contract|library|abstract\s+contract)\s+[A-Za-z_]", text)
     )
 
 
@@ -187,9 +207,16 @@ def _score_file(rel: str, text: str) -> int:
         "order",
         "swap",
         "pool",
+        "liquidity",
+        "fee",
+        "share",
         "bridge",
         "token",
+        "mint",
+        "burn",
         "staking",
+        "vesting",
+        "escrow",
         "liquidation",
         "manager",
         "controller",
@@ -210,6 +237,10 @@ def _score_file(rel: str, text: str) -> int:
     score += min(text.count("\nfn "), 30)
     score += min(text.count("\nfun "), 30)
     score += min(text.count("\nfunc "), 30)
+    if re.search(r"\binterface\s+[A-Za-z_]", text) and not re.search(r"\b(contract|library)\s+[A-Za-z_]", text):
+        score -= 45
+    if Path(rel).suffix.lower() == ".go":
+        score -= 18
     score -= max(0, rel.count("/") - 4) * 2
     return score
 
@@ -234,16 +265,41 @@ def _build_source_pack(files: list[dict[str, Any]], *, max_chars: int) -> str:
         if remaining <= 800:
             break
         rel = str(item["rel"])
-        header = (
-            f"\n\n--- FILE: {rel}\n"
-            f"contracts_or_modules: {', '.join(item['contracts'])}\n"
-            f"functions: {', '.join(item['functions'][:35])}\n"
-        )
+        header = _pack_header(item, rel)
         body = _risk_snippets(item, max_chars=max(1200, min(6500, remaining - len(header))))
         chunk = header + body
         chunks.append(chunk)
         remaining -= len(chunk)
     return "".join(chunks)
+
+
+def _build_full_pack(files: list[dict[str, Any]], *, max_chars: int) -> str:
+    chunks: list[str] = []
+    remaining = max_chars
+    for item in files:
+        if remaining <= 1200:
+            break
+        rel = str(item["rel"])
+        header = _pack_header(item, rel)
+        body_budget = max(1000, min(FULL_FILE_CHARS, remaining - len(header)))
+        text = str(item["text"])
+        if len(text) <= body_budget:
+            body = _numbered(text)
+        else:
+            body = _risk_snippets(item, max_chars=body_budget)
+        chunk = header + body
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return "".join(chunks)
+
+
+def _pack_header(item: dict[str, Any], rel: str) -> str:
+    return (
+        f"\n\n--- FILE: {rel}\n"
+        f"score: {item.get('score', 0)}\n"
+        f"contracts_or_modules: {', '.join(item['contracts'])}\n"
+        f"functions: {', '.join(item['functions'][:45])}\n"
+    )
 
 
 def _risk_snippets(item: dict[str, Any], *, max_chars: int) -> str:
@@ -296,6 +352,17 @@ def _line_risk_weight(line: str) -> int:
         ("index", 4),
         ("epoch", 4),
         ("safetransfer", 4),
+        ("liquidity", 5),
+        ("amountoutmin", 7),
+        ("minout", 7),
+        ("latestrounddata", 7),
+        ("getreserves", 6),
+        ("converttoshares", 6),
+        ("previewredeem", 6),
+        ("totalsupply", 4),
+        ("nonce", 4),
+        ("ecrecover", 6),
+        ("permit", 4),
     ):
         if word in lowered:
             weight += bonus
@@ -405,6 +472,7 @@ def _detect_deactivation_weight_mismatch(item: dict[str, Any]) -> dict[str, Any]
         "line": line,
         "function": kill_name,
         "impact": "Wrong reward/emission distribution after disabling a weighted receiver",
+        "type": "accounting",
         "confidence": 0.86,
     }
 
@@ -479,7 +547,7 @@ def _ask(endpoint: str, user_prompt: str) -> str:
                 },
                 {"role": "user", "content": user_prompt},
             ],
-            "max_tokens": 9000,
+            "max_tokens": 8000,
         }
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -518,20 +586,25 @@ def _audit_prompt(source_pack: str, pass_name: str) -> str:
     return (
         f"Audit pass: {pass_name}.\n"
         "Find the most likely high/critical vulnerabilities in this source pack. "
-        "Focus on: arbitrary external calls and lingering approvals; malicious target "
-        "or calldata control; missing validation before accounting updates; public "
-        "payment or transfer helpers that can pull from arbitrary users; oracle signer "
-        "or price validation gaps; signature replay or missing caller binding; asset, "
-        "position, share, collateral, and fee accounting errors; upgrade/init privilege "
-        "mistakes; Cairo storage reads that default to zero and are then trusted.\n\n"
+        "Focus on: access-control bypasses; arbitrary external calls and lingering "
+        "approvals; missing validation before accounting updates; oracle freshness, "
+        "spot-price, or decimal mistakes; signature replay or missing caller binding; "
+        "asset, share, collateral, liquidation, reward, fee, mint/burn, and liquidity "
+        "accounting errors; slippage/min-output failures; upgrade/init privilege "
+        "mistakes; Rust or Move authorization/storage mistakes; Cairo storage reads "
+        "that default to zero and are then trusted.\n\n"
         "For every finding, include an actual exploit path. If a candidate cannot steal "
         "value, corrupt state, bypass authorization, or cause durable denial of service, "
-        "do not include it.\n\n"
+        "do not include it. Prefer a few exact true positives over broad speculation, "
+        "but do not drop a concrete high-impact bug just because the fix is simple.\n\n"
         "Return JSON only:\n"
         '{"vulnerabilities":[{"title":"","description":"","severity":"high",'
-        '"file":"","line":null,"function":"","impact":"","confidence":0.0}]}\n\n'
-        "Description must name the file, function, root cause, attacker steps, and impact.\n"
-        "Use only files/functions present in the source pack.\n"
+        '"file":"","line":null,"function":"","type":"accounting|oracle|access-control|'
+        'signature|reentrancy|slippage|upgrade|denial-of-service|logic",'
+        '"impact":"","confidence":0.0}]}\n\n'
+        "The title should include the vulnerable contract or function name. The description "
+        "must name the exact file, exact function, root cause, attacker steps, broken "
+        "invariant, and impact. Use only files/functions present in the source pack.\n"
         f"{source_pack}"
     )
 
@@ -619,16 +692,20 @@ def _loads_json_object(text: str) -> Any:
 def _normalize_all(items: list[dict[str, Any]], files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rels = {str(item["rel"]) for item in files}
     by_name = {Path(str(item["rel"])).name: str(item["rel"]) for item in files}
+    by_rel = {str(item["rel"]): item for item in files}
     out: list[dict[str, Any]] = []
     for item in items:
-        norm = _normalize_one(item, rels, by_name)
+        norm = _normalize_one(item, rels, by_name, by_rel)
         if norm:
             out.append(norm)
     return out
 
 
 def _normalize_one(
-    item: dict[str, Any], rels: set[str], by_name: dict[str, str]
+    item: dict[str, Any],
+    rels: set[str],
+    by_name: dict[str, str],
+    by_rel: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     severity = str(item.get("severity") or "high").strip().lower()
     if severity not in {"high", "critical"}:
@@ -642,6 +719,28 @@ def _normalize_one(
     desc = _clean(str(item.get("description") or ""))
     impact = _clean(str(item.get("impact") or ""))
     func = _clean(str(item.get("function") or item.get("function_name") or ""))
+    func = func.strip("`(). ")
+    if "." in func:
+        func = func.split(".")[-1].strip("`(). ")
+    rec = by_rel.get(file_path, {})
+    valid_funcs = {str(name) for name in rec.get("functions", []) if str(name)}
+    if func and valid_funcs and func not in valid_funcs:
+        haystack = f"{title} {desc}"
+        replacement = next((name for name in valid_funcs if re.search(rf"\b{re.escape(name)}\b", haystack)), "")
+        if replacement:
+            func = replacement
+    vtype = _clean(str(item.get("type") or item.get("vulnerability_type") or "logic")).lower()
+    if len(vtype) > 60 or not re.search(r"[a-z]", vtype):
+        vtype = "logic"
+    loc = f"In `{file_path}`"
+    if func:
+        loc += f", function `{func}`"
+    if desc and loc.lower() not in desc.lower():
+        desc = f"{loc}. {desc}"
+    if impact and "impact:" not in desc.lower():
+        desc = f"{desc} Impact: {impact}."
+    if func and func.lower() not in title.lower():
+        title = f"{func} - {title}"
     if len(desc) < 90:
         detail = []
         if func:
@@ -655,6 +754,8 @@ def _normalize_one(
         line = int(item.get("line")) if item.get("line") is not None else None
     except (TypeError, ValueError):
         line = None
+    if line is None and func:
+        line = _line_for_function(rec, func)
     try:
         confidence = float(item.get("confidence", 0.75))
     except (TypeError, ValueError):
@@ -666,9 +767,28 @@ def _normalize_one(
         "file": file_path,
         "line": line,
         "function": func[:120],
+        "type": vtype[:80],
         "impact": impact[:500],
         "confidence": max(0.0, min(1.0, confidence)),
     }
+
+
+def _line_for_function(item: dict[str, Any], func: str) -> int | None:
+    text = str(item.get("text") or "")
+    if not text or not func:
+        return None
+    patterns = (
+        rf"\bfunction\s+{re.escape(func)}\b",
+        rf"^\s*def\s+{re.escape(func)}\b",
+        rf"^\s*(?:public\s+entry\s+|public\s+|entry\s+)?fun\s+{re.escape(func)}\b",
+        rf"^\s*fn\s+{re.escape(func)}\b",
+        rf"^\s*func\s+(?:\([^)]*\)\s*)?{re.escape(func)}\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.MULTILINE)
+        if match:
+            return text.count("\n", 0, match.start()) + 1
+    return None
 
 
 def _clean(value: str) -> str:

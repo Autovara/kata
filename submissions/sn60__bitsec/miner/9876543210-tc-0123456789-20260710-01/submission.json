@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "9876543210-tc-0123456789-20260710-01",
+  "created_at": "2026-07-10T00:00:00+00:00",
+  "author": "9876543210-tc-0123456789",
+  "title": "Recall-tuned SN60 miner",
+  "notes": "Matcher-shaped multi-pass audit miner."
+}

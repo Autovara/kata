@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""SN60 miner: heuristic file ranking with three full deep-audit inference passes.
+"""SN60 miner: zero-call static probes plus three deep-audit inference passes.
 
-Ranks Solidity/Vyper/Rust sources with static risk heuristics, then spends every
-inference call on deep audits of the highest-priority files (no separate triage
-call). Self-contained stdlib; uses the validator inference proxy only.
+Runs generic per-function static probes (no model calls), ranks Solidity/Vyper/Rust
+sources, then spends every inference call on deep audits of the highest-priority
+files (no separate triage call). Self-contained stdlib; validator inference proxy only.
 """
 
 import json
@@ -41,14 +41,21 @@ RISK_TOKEN = re.compile(
     r"transferFrom|ecrecover|permit|unsafe|unchecked)\b",
     re.IGNORECASE,
 )
+EXTERNAL_CALL = re.compile(r"\.call\s*(\{|value)")
+STATE_MUTATION = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+\+|--|[+\-*/]?=)")
 
 MAX_SCAN_FILES = 80
 MAX_FILE_BYTES = 280_000
 CONTEXT_SLICE = 34_000
 RELATED_SLICE = 2_800
 MAX_OUTPUT = 7
-WALL_CLOCK_BUDGET = 210.0
-HTTP_TIMEOUT = 140
+WALL_CLOCK_BUDGET = 225.0
+HTTP_TIMEOUT = 145
+
+SENSITIVE_FUNCTIONS = frozenset({
+    "withdraw", "mint", "burn", "upgrade", "setowner", "setadmin", "pause", "unpause",
+    "transferownership", "renounceownership", "setimplementation", "rescue", "sweep",
+})
 
 PRIORITY_TERMS = (
     "vault", "pool", "router", "bridge", "proxy", "upgrade", "oracle", "govern",
@@ -86,6 +93,7 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
     ]
 
     collected: list[dict[str, Any]] = []
+    collected.extend(_static_probe_catalog(catalog))
     for group in audit_groups:
         if time.monotonic() - started >= WALL_CLOCK_BUDGET:
             break
@@ -186,6 +194,178 @@ def _priority_score(rel: str, text: str) -> int:
     if ".call" in text_lower and "nonreentrant" not in text_lower:
         score += 4
     return score
+
+
+def _function_body(text: str, name: str, suffix: str) -> str:
+    if suffix == ".vy":
+        pattern = re.compile(
+            rf"^\s*def\s+{re.escape(name)}\s*\([^)]*\)[^:]*:",
+            re.MULTILINE,
+        )
+    else:
+        pattern = re.compile(
+            rf"\bfunction\s+{re.escape(name)}\s*\([^)]*\)[^{{;]*\{{",
+            re.MULTILINE,
+        )
+    match = pattern.search(text)
+    if not match:
+        return ""
+    start = match.end()
+    if suffix == ".vy":
+        lines = text[start:].splitlines()
+        if not lines:
+            return ""
+        base_indent = len(lines[0]) - len(lines[0].lstrip())
+        body_lines: list[str] = []
+        for line in lines:
+            if line.strip() and (len(line) - len(line.lstrip())) <= base_indent and body_lines:
+                break
+            body_lines.append(line)
+        return "\n".join(body_lines)
+    depth = 1
+    index = start
+    while index < len(text) and depth:
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+        index += 1
+    return text[start : index - 1] if depth == 0 else ""
+
+
+def _static_hit(
+    *,
+    title: str,
+    file: str,
+    contract: str,
+    function: str,
+    line: int | None,
+    severity: str,
+    mechanism: str,
+    impact: str,
+    description: str,
+) -> dict[str, Any]:
+    return {
+        "title": title,
+        "file": file,
+        "contract": contract,
+        "function": function,
+        "line": line,
+        "severity": severity,
+        "mechanism": mechanism,
+        "impact": impact,
+        "description": description,
+    }
+
+
+def _static_probe_row(row: dict[str, Any]) -> list[dict[str, Any]]:
+    suffix = str(row["suffix"])
+    if suffix == ".rs":
+        return []
+    rel = str(row["rel"])
+    text = str(row["text"])
+    contract = str(row["contracts"][0]) if row["contracts"] else Path(rel).stem
+    hits: list[dict[str, Any]] = []
+    for fn in row["functions"]:
+        name = fn["name"]
+        sig = fn["sig"].lower()
+        body = _function_body(text, name, suffix)
+        if not body:
+            continue
+        body_lower = body.lower()
+
+        if (
+            EXTERNAL_CALL.search(body)
+            and "nonreentrant" not in sig
+            and "nonreentrant" not in body_lower
+            and STATE_MUTATION.search(body)
+        ):
+            hits.append(_static_hit(
+                title=f"{contract}.{name} - external call with mutable state lacks reentrancy guard",
+                file=rel,
+                contract=contract,
+                function=name,
+                line=_line_number(text, f"function {name}"),
+                severity="high",
+                mechanism=(
+                    f"`{name}` issues an external `.call` while updating contract state "
+                    "without a reentrancy guard, allowing nested re-entry on stale balances."
+                ),
+                impact="Reentrant calls can drain funds or corrupt accounting before state settles.",
+                description=(
+                    f"In `{rel}`, contract `{contract}`, function `{name}()`, an external call "
+                    "interleaves with state writes and no `nonReentrant` protection is present."
+                ),
+            ))
+
+        if "tx.origin" in body_lower and any(
+            token in body_lower for token in ("require", "if", "assert", "revert")
+        ):
+            hits.append(_static_hit(
+                title=f"{contract}.{name} - tx.origin used for authorization",
+                file=rel,
+                contract=contract,
+                function=name,
+                line=_line_number(text, "tx.origin"),
+                severity="high",
+                mechanism=(
+                    "Authorization checks `tx.origin`, which a malicious contract can spoof "
+                    "via an intermediate call chain."
+                ),
+                impact="Phishing-style delegate calls can bypass access checks and seize privileges.",
+                description=(
+                    f"In `{rel}`, contract `{contract}`, function `{name}()`, `tx.origin` "
+                    "gates a security-sensitive branch instead of `msg.sender`."
+                ),
+            ))
+
+        if name.lower() in SENSITIVE_FUNCTIONS and "onlyowner" not in sig and "onlyrole" not in sig:
+            if "external" in sig or "public" in sig or "@external" in sig:
+                hits.append(_static_hit(
+                    title=f"{contract}.{name} - sensitive entrypoint missing access-control modifier",
+                    file=rel,
+                    contract=contract,
+                    function=name,
+                    line=_line_number(text, f"function {name}"),
+                    severity="high",
+                    mechanism=(
+                        f"Externally reachable `{name}` lacks onlyOwner/onlyRole protection "
+                        "despite performing a privileged operation."
+                    ),
+                    impact="Any caller can invoke the privileged path and move funds or change config.",
+                    description=(
+                        f"In `{rel}`, contract `{contract}`, function `{name}()` is public/external "
+                        "without an explicit access-control modifier on the signature."
+                    ),
+                ))
+
+        if "delegatecall" in body_lower and "onlyowner" not in sig:
+            hits.append(_static_hit(
+                title=f"{contract}.{name} - delegatecall without owner-only guard",
+                file=rel,
+                contract=contract,
+                function=name,
+                line=_line_number(text, "delegatecall"),
+                severity="critical",
+                mechanism=(
+                    f"`{name}` forwards execution with `delegatecall` while lacking "
+                    "an onlyOwner guard on the entrypoint."
+                ),
+                impact="Arbitrary delegatecall targets can overwrite storage and seize contract control.",
+                description=(
+                    f"In `{rel}`, contract `{contract}`, function `{name}()` performs "
+                    "`delegatecall` without restricting callers to a trusted owner role."
+                ),
+            ))
+    return hits
+
+
+def _static_probe_catalog(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for row in catalog:
+        output.extend(_static_probe_row(row))
+    return output
 
 
 def _risk_snippets(text: str) -> list[str]:

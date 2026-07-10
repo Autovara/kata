@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "renzomxd-20260710-01",
+  "created_at": "2026-07-10T14:04:07.088001+00:00",
+  "author": "renzomxd",
+  "title": "Heuristic triage + LLM audit",
+  "notes": "Risk-scored file ranking narrows the search, then batched LLM audits confirm concrete high/critical findings with speculative-hedge filtering.",
+  "subnet_pack": "sn60__bitsec"
+}

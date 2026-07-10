@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "peter-rango-20260710-01",
+  "created_at": "2026-07-10T00:00:00+00:00",
+  "author": "peter-rango",
+  "title": "Source-aware deep audit",
+  "notes": "Self-contained SN60 miner using repository triage, targeted source slices, and validator-provided inference.",
+  "subnet_pack": "sn60__bitsec"
+}

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import secrets
 
 from kata.evaluators.sn60_bitsec import (
     load_sn60_benchmark_project_keys,
@@ -64,7 +63,7 @@ def resolve_sn60_project_keys(
         benchmark_keys,
         sample_size=sample_size,
         sample_secret=sample_secret.strip(),
-        sample_nonce=secrets.token_hex(16),
+        sample_nonce="",
         king_artifact_hash=king_artifact_hash or "",
         candidate_artifact_hash=candidate_artifact_hash or "",
         candidate_submission_id=candidate_submission_id or "",

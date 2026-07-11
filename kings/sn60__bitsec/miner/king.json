@@ -1,8 +1,8 @@
 {
   "repo_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "kiannidev-20260708-01",
-  "challenge_run_id": "candidate-only-c8b24890ba46",
-  "king_artifact_hash": "c8b24890ba4605afafcd2830ebf27554a71ba3ac4fef190ea29425350b9de84b",
-  "candidate_artifact_hash": "c8b24890ba4605afafcd2830ebf27554a71ba3ac4fef190ea29425350b9de84b"
+  "submission_id": "daedalus-Icarus-20260710-01",
+  "challenge_run_id": "sn60-duel-20260711T005557Z-2bcb7e",
+  "king_artifact_hash": "a24175dd6d7e5123d812c129f1a6e6f02040175656e66feb1df9a50b847d022a",
+  "candidate_artifact_hash": "484f91d848887985d875049f3d40fc011e92f17afb3fc1a954d7013f7f69a8d1"
 }

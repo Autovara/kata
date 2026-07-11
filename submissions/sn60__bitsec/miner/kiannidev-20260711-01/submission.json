@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "kiannidev-20260711-01",
+  "created_at": "2026-07-11T12:19:47.425375+00:00",
+  "author": "kiannidev",
+  "title": null,
+  "notes": "Recommended conventions:\n- author: your GitHub username\n- submission_id: <github-username>-YYYYMMDD-NN\n- implement a real agent in agent.py before opening the PR\n- optional Python helpers may live under helpers/\n",
+  "subnet_pack": "sn60__bitsec"
+}

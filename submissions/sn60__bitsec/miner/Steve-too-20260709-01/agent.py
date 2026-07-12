@@ -70,15 +70,20 @@ MAP_CHARS = 30_000
 FULL_BATCH_CHARS = 45_000
 FOCUS_BATCH_CHARS = 48_000
 RELATED_CHARS = 6_000
-MAX_FINDINGS = 18
+MAX_FINDINGS = 10
 RUN_BUDGET = 230.0
 HTTP_TIMEOUT = 155
 
 AUDITOR = (
     "You are a senior smart-contract security auditor in a competitive audit. "
-    "Return only concrete high or critical exploits with a plausible attacker, "
-    "triggering path, violated invariant, and material loss/privilege impact. "
-    "No style, gas, informational, or low-confidence reports. Strict JSON only."
+    "Return ONLY concrete high or critical exploits where you can identify: "
+    "(1) a specific attacker (external user, anyone holding a token, etc.), "
+    "(2) the exact transaction/call sequence that triggers the bug, "
+    "(3) the violated invariant, and "
+    "(4) the material loss or privilege escalation impact. "
+    "Do NOT report style issues, gas issues, informational findings, "
+    "centralization concerns without an unauthorized path, or anything you "
+    "are not highly confident about. Quality over quantity. Strict JSON only."
 )
 
 
@@ -97,14 +102,15 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
     by_name = {Path(str(r["rel"])).name: r for r in records}
     raw: list[dict[str, Any]] = []
 
-    targets, first_hits = _triage(inference_api, records)
-    raw.extend(first_hits)
+    # Triage is used ONLY for target selection, not for raw findings
+    # (triage from a digest without full source has too many false positives)
+    targets, _ = _triage(inference_api, records)
     ordered = _ordered_targets(targets, records)
 
     if time.monotonic() - started < RUN_BUDGET:
         raw.extend(_audit_full(inference_api, ordered[:9], by_name))
     if time.monotonic() - started < RUN_BUDGET:
-        raw.extend(_audit_focused(inference_api, ordered, by_name))
+        raw.extend(_audit_category(inference_api, ordered, by_name))
 
     for item in raw:
         norm = _normalize(item, rel_map)
@@ -395,37 +401,29 @@ def _parse_json(text: str) -> dict[str, Any]:
 
 
 def _triage(inference_api: str | None, records: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Triage is used ONLY for target file selection, not for raw findings.
+    Findings from a digest without full source context have too many false positives."""
     prompt = (
-        "Repository map follows. Choose the highest-value audit targets and report any "
-        "obvious high/critical bugs you can already justify from names, signatures, "
-        "state, and risk lines.\n"
-        "Return strict JSON: "
-        '{"target_files":["path"],"findings":[{"title":"specific bug","file":"path",'
-        '"contract":"Contract","function":"fn","line":1,"severity":"high|critical",'
-        '"mechanism":"preconditions -> attacker action -> effect",'
-        '"impact":"fund loss, insolvency, permanent lock, or privilege takeover",'
-        '"description":"2-4 precise sentences"}]}\n'
-        "Use this checklist: missing access control on privileged state/fund moves; "
-        "reentrancy before accounting; oracle or share-price manipulation; bad "
-        "rounding/accounting in deposit/withdraw/borrow/liquidate; unsafe upgrades or "
-        "initializers; signature replay/domain mistakes; unchecked external-call results; "
-        "delegatecall storage confusion; flash-loan amplified paths; cross-contract trust "
-        "assumptions. Prefer concrete exploit paths over volume.\n\n"
+        "Repository map follows. Choose the 10-15 highest-value audit targets "
+        "based on risk patterns, function complexity, and contract names. "
+        "Return strict JSON: {\"target_files\":[\"path1\",\"path2\",...]}\n"
+        "Prioritize files with: delegatecall, selfdestruct, tx.origin, low-level calls, "
+        "oracle/price patterns, fund flows (withdraw/deposit/swap/borrow), "
+        "upgrade/init patterns, and admin/privileged functions.\n\n"
         + _digest(records)
     )
     try:
         obj = _parse_json(_request(
             inference_api,
-            [{"role": "system", "content": AUDITOR}, {"role": "user", "content": prompt}],
-            6000,
+            [{"role": "system", "content": "You are a security audit target selector. Return only the target_files list."}, {"role": "user", "content": prompt}],
+            3000,
         ))
     except Exception:
         return [], []
     targets = obj.get("target_files")
-    findings = obj.get("findings") or obj.get("vulnerabilities") or []
     return (
         [str(x) for x in targets if isinstance(x, str)] if isinstance(targets, list) else [],
-        [x for x in findings if isinstance(x, dict)] if isinstance(findings, list) else [],
+        [],  # No findings from triage - only target selection
     )
 
 
@@ -487,7 +485,7 @@ def _full_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]
         '"contract":"Contract","function":"functionName","line":123,"severity":"high|critical",'
         '"mechanism":"preconditions -> attacker transaction(s) -> violated invariant",'
         '"impact":"specific material impact","description":"2-5 sentences with exact path"}]}\n'
-        "Report up to 12 distinct real issues. Include line/function when possible. "
+        "Report up to 6 distinct real issues. Include line/function when possible. "
         "Reject missing events, centralization complaints without an unauthorized path, and guesses.\n"
     )
     parts = [header]
@@ -513,19 +511,22 @@ def _full_prompt(batch: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]
     return "".join(parts)
 
 
-def _audit_focused(
+def _audit_category(
     inference_api: str | None,
     ordered: list[dict[str, Any]],
     by_name: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """Second-pass audit focused on specific vulnerability categories per file.
+    Instead of a broad 'second lens', we target 2-3 specific high-value categories
+    per file to reduce overlap and false positives."""
     if not ordered:
         return []
-    prompt = _focused_prompt(ordered, by_name)
+    prompt = _category_prompt(ordered, by_name)
     try:
         obj = _parse_json(_request(
             inference_api,
             [{"role": "system", "content": AUDITOR}, {"role": "user", "content": prompt}],
-            9000,
+            8000,
         ))
     except Exception:
         return []
@@ -533,30 +534,54 @@ def _audit_focused(
     return [x for x in findings if isinstance(x, dict)] if isinstance(findings, list) else []
 
 
-def _focused_prompt(ordered: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]) -> str:
+def _category_prompt(ordered: list[dict[str, Any]], by_name: dict[str, dict[str, Any]]) -> str:
+    """Build a focused per-category audit prompt. For each file, we specify
+    which vulnerability categories to check based on its risk patterns."""
     header = (
-        "Second-pass audit with a different lens. Focus on files not fully covered, "
-        "large functions, and interactions among vaults/pools/oracles/tokens/admin modules. "
-        "For every proposed bug, spell out why existing modifiers/checks do not stop it. "
+        "Targeted category audit. For each file, check ONLY the specific vulnerability "
+        "categories listed for that file. For every proposed bug, you MUST spell out:\n"
+        "1. The exact attacker (who can call this?)\n"
+        "2. The exact call sequence (what transactions?)\n"
+        "3. Why existing checks/modifiers do NOT prevent it\n"
+        "4. The exact invariant violated and funds/privilege at risk\n"
         "Return strict JSON only: "
-        '{"findings":[{"title":"specific exploit","file":"exact/path","contract":"Contract",'
-        '"function":"functionName","line":123,"severity":"high|critical",'
+        '{"findings":[{"title":"Contract.function - specific exploit","file":"exact/path",'
+        '"contract":"Contract","function":"functionName","line":123,"severity":"high|critical",'
         '"mechanism":"preconditions -> attacker action -> effect",'
-        '"impact":"specific loss/lock/privilege impact","description":"2-5 sentences"}]}\n'
-        "Hunt especially for: access control gaps; reentrancy and callbacks; stale/manipulable "
-        "prices; share inflation/deflation and rounding theft; liquidation math; unsafe "
-        "initialization/upgrades; signature replay; unchecked token behavior; delegatecall misuse; "
-        "DoS that permanently blocks funds. Report up to 14 issues only if concrete.\n"
+        '"impact":"specific loss/lock/privilege impact","description":"3-5 sentences with exact path"}]}\n'
+        "Report up to 5 issues ONLY if you are highly confident. No guesses.\n"
     )
-    parts = [header, "\n===== REPOSITORY SUMMARY =====\n", _digest(ordered)[:18_000]]
-    remaining = FOCUS_BATCH_CHARS - sum(len(p) for p in parts)
-    selected = ordered[5:18] + ordered[:5]
+    parts = [header]
+    remaining = FOCUS_BATCH_CHARS - len(header)
+
+    # Select files for category audit - prioritize files not fully covered in full audit
+    selected = ordered[7:20] + ordered[:7]
     for rec in selected:
+        risk_kinds = _risk_kinds(str(rec["text"]))
+        # Build specific category checklist per file
+        categories = []
+        if "delegatecall" in risk_kinds or "upgrade/init" in risk_kinds:
+            categories.append("unsafe delegatecall/upgrade: storage collision, unguarded upgrade, initializer bypass")
+        if "oracle" in risk_kinds or "swap" in risk_kinds:
+            categories.append("price manipulation: stale oracle, flash-loan amplifiable spot price, share inflation/deflation")
+        if "low-level call" in risk_kinds or "raw call" in risk_kinds:
+            categories.append("unchecked call return values, call injection, reentrancy via external calls")
+        if "fund flow" in risk_kinds or "lending" in risk_kinds:
+            categories.append("accounting errors: rounding theft, missing balance checks, withdraw-before-update")
+        if "signature/auth" in risk_kinds:
+            categories.append("signature replay, missing nonce/domain separator, unauthorized meta-transactions")
+        if "tx.origin" in risk_kinds or "privileged path" in risk_kinds:
+            categories.append("access control: missing onlyOwner/onlyRole on privileged state changes, tx.origin for auth")
+        if not categories:
+            categories.append("reentrancy, access control gaps, unchecked external calls")
+
         text = _compact_source(str(rec["text"]), 8_500)
+        cat_str = "; ".join(categories[:4])
         block = (
-            f"\n\n===== FOCUSED FILE: {rec['rel']} =====\n"
+            f"\n\n===== CATEGORY AUDIT: {rec['rel']} =====\n"
             f"Contracts: {', '.join(rec['contracts'][:8])}\n"
-            f"Risk: {', '.join(_risk_kinds(str(rec['text'])))}\n{text}\n"
+            f"Check for: {cat_str}\n"
+            f"Risk patterns: {', '.join(risk_kinds)}\n{text}\n"
         )
         related = _related(rec, by_name)
         if related:
@@ -641,6 +666,12 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
     impact = str(raw.get("impact") or "").strip()
     description = str(raw.get("description") or "").strip()
     title = str(raw.get("title") or "").strip()
+    # Require a concrete attacker path: mechanism must describe a sequence
+    if len(mechanism) < 30:
+        return None
+    # Must contain an arrow or action verb indicating a sequence
+    if not any(tok in mechanism.lower() for tok in ("->", "attacker", "call", "trigger", "invoke", "send", "front-run")):
+        return None
     if len(mechanism) < 25 and len(description) < 110:
         return None
     if not any(word in (impact + " " + description).lower() for word in (
@@ -668,7 +699,7 @@ def _normalize(raw: dict[str, Any], rel_map: dict[str, dict[str, Any]]) -> dict[
     if description:
         rebuilt += description
     description = " ".join(rebuilt.split())
-    if len(description) < 120:
+    if len(description) < 150:
         return None
 
     line = raw.get("line")

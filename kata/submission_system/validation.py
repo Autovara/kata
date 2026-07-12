@@ -97,8 +97,6 @@ def validate_submission_candidate(
     if metadata.mode == "miner":
         screening_decision = screen_submission(
             submission_root=submission_root,
-            changed_paths=[],
-            repo_root=submission_root,
             public_root=Path(public_root).expanduser().resolve() if public_root else None,
             mode=metadata.mode,
             repo_pack=metadata.repo_pack,

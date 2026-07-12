@@ -30,10 +30,7 @@ REVIEW_MODE_ENV = "KATA_SCREENING_REVIEW_MODE"
 def screen_submission(
     *,
     submission_root: Path,
-    changed_paths: list[str] | None = None,
-    repo_root: Path | None = None,
     public_root: Path | None = None,
-    pr_author: str | None = None,
     mode: str = "miner",
     repo_pack: str | None = None,
     enable_review: bool | None = None,
@@ -41,11 +38,8 @@ def screen_submission(
 ) -> ScreeningDecision:
     """Run the screening subsystem for a candidate submission.
 
-    Phase 1 intentionally preserves current behavior: it wraps the existing SN60
-    static screening checks in a structured decision object. The extra arguments
-    are part of the stable subsystem API and will be used by later layers.
+    Wraps the SN60 static screening checks in a structured decision object.
     """
-    del changed_paths, repo_root, pr_author
     if mode != "miner":
         return ScreeningDecision(status="pass")
 

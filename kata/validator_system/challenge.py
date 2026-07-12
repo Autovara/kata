@@ -811,6 +811,66 @@ def _sn60_variant_progress(summary: Sn60VariantSummary) -> dict[str, object]:
     }
 
 
+def _write_progress_atomic(
+    progress: dict[str, object], progress_path: str | None
+) -> None:
+    """Write the live round-progress file atomically.
+
+    The dashboard polls this file, and problems now finish in bursts, so a plain
+    write could be read half-serialized. Write to a temp sibling and rename
+    (atomic on the same filesystem).
+    """
+    if not progress_path:
+        return
+    progress["updated_at"] = datetime.now(UTC).isoformat()
+    path = Path(progress_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(
+        json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(tmp_path, path)
+
+
+def _apply_running_metrics(
+    target: dict[str, object], acc: dict, replica_result: Sn60ReplicaResult
+) -> None:
+    """Fold one replica result into a variant's running metric accumulator.
+
+    Accumulates detection/precision/F1 and a growing per-problem list for whichever
+    variant is scoring, so the dashboard detail pages (king AND each candidate) fill
+    their metric bars and problem rows live, not only at the end.
+    """
+    acc["tp"] += replica_result.true_positives
+    acc["expected"] += replica_result.total_expected
+    acc["found"] += replica_result.total_found
+    if replica_result.evaluation_status != "success":
+        acc["invalid"] += 1
+    acc["projects"].append(
+        {
+            "project_key": replica_result.project_key,
+            "passed": replica_result.result == "PASS",
+            "detection_rate": replica_result.detection_rate,
+            "true_positives": replica_result.true_positives,
+            "total_expected": replica_result.total_expected,
+            "total_found": replica_result.total_found,
+            "precision": replica_result.precision,
+            "f1_score": replica_result.f1_score,
+        }
+    )
+    detection = acc["tp"] / acc["expected"] if acc["expected"] else 0.0
+    precision = acc["tp"] / acc["found"] if acc["found"] else 0.0
+    f1 = 2 * precision * detection / (precision + detection) if (precision + detection) else 0.0
+    target["aggregated_score"] = detection
+    target["precision"] = precision
+    target["f1_score"] = f1
+    target["true_positives"] = acc["tp"]
+    target["total_expected"] = acc["expected"]
+    target["total_found"] = acc["found"]
+    target["invalid_runs"] = acc["invalid"]
+    target["projects"] = list(acc["projects"])
+
+
 def run_sn60_round(
     *,
     king_artifact_path: str,
@@ -898,54 +958,9 @@ def run_sn60_round(
     }
 
     def emit_progress() -> None:
-        if not progress_path:
-            return
-        progress["updated_at"] = datetime.now(UTC).isoformat()
-        path = Path(progress_path).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Write atomically: the dashboard polls this file, and problems now finish
-        # in bursts, so a plain write could be read half-serialized. Write to a temp
-        # sibling and rename (atomic on the same filesystem).
-        tmp_path = path.with_name(f"{path.name}.tmp")
-        tmp_path.write_text(
-            json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        os.replace(tmp_path, path)
+        _write_progress_atomic(progress, progress_path)
 
-    # Accumulate running detection/precision/F1 and a growing per-problem list for
-    # whichever variant is scoring, so the dashboard detail pages (king AND each
-    # candidate) fill their metric bars and problem rows live, not only at the end.
-    def apply_running(
-        target: dict[str, object], acc: dict, replica_result: Sn60ReplicaResult
-    ) -> None:
-        acc["tp"] += replica_result.true_positives
-        acc["expected"] += replica_result.total_expected
-        acc["found"] += replica_result.total_found
-        if replica_result.evaluation_status != "success":
-            acc["invalid"] += 1
-        acc["projects"].append(
-            {
-                "project_key": replica_result.project_key,
-                "passed": replica_result.result == "PASS",
-                "detection_rate": replica_result.detection_rate,
-                "true_positives": replica_result.true_positives,
-                "total_expected": replica_result.total_expected,
-                "total_found": replica_result.total_found,
-                "precision": replica_result.precision,
-                "f1_score": replica_result.f1_score,
-            }
-        )
-        detection = acc["tp"] / acc["expected"] if acc["expected"] else 0.0
-        precision = acc["tp"] / acc["found"] if acc["found"] else 0.0
-        f1 = 2 * precision * detection / (precision + detection) if (precision + detection) else 0.0
-        target["aggregated_score"] = detection
-        target["precision"] = precision
-        target["f1_score"] = f1
-        target["true_positives"] = acc["tp"]
-        target["total_expected"] = acc["expected"]
-        target["total_found"] = acc["found"]
-        target["invalid_runs"] = acc["invalid"]
-        target["projects"] = list(acc["projects"])
+    apply_running = _apply_running_metrics
 
     king_acc = {"tp": 0, "expected": 0, "found": 0, "invalid": 0, "projects": []}
 
@@ -1185,48 +1200,9 @@ def run_sn60_candidate_only_round(
     }
 
     def emit_progress() -> None:
-        if not progress_path:
-            return
-        progress["updated_at"] = datetime.now(UTC).isoformat()
-        path = Path(progress_path).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_name(f"{path.name}.tmp")
-        tmp_path.write_text(
-            json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        os.replace(tmp_path, path)
+        _write_progress_atomic(progress, progress_path)
 
-    def apply_running(
-        target: dict[str, object], acc: dict, replica_result: Sn60ReplicaResult
-    ) -> None:
-        acc["tp"] += replica_result.true_positives
-        acc["expected"] += replica_result.total_expected
-        acc["found"] += replica_result.total_found
-        if replica_result.evaluation_status != "success":
-            acc["invalid"] += 1
-        acc["projects"].append(
-            {
-                "project_key": replica_result.project_key,
-                "passed": replica_result.result == "PASS",
-                "detection_rate": replica_result.detection_rate,
-                "true_positives": replica_result.true_positives,
-                "total_expected": replica_result.total_expected,
-                "total_found": replica_result.total_found,
-                "precision": replica_result.precision,
-                "f1_score": replica_result.f1_score,
-            }
-        )
-        detection = acc["tp"] / acc["expected"] if acc["expected"] else 0.0
-        precision = acc["tp"] / acc["found"] if acc["found"] else 0.0
-        f1 = 2 * precision * detection / (precision + detection) if (precision + detection) else 0.0
-        target["aggregated_score"] = detection
-        target["precision"] = precision
-        target["f1_score"] = f1
-        target["true_positives"] = acc["tp"]
-        target["total_expected"] = acc["expected"]
-        target["total_found"] = acc["found"]
-        target["invalid_runs"] = acc["invalid"]
-        target["projects"] = list(acc["projects"])
+    apply_running = _apply_running_metrics
 
     def make_progress_callback(candidate_entry: dict[str, object]):
         cand_acc = {"tp": 0, "expected": 0, "found": 0, "invalid": 0, "projects": []}

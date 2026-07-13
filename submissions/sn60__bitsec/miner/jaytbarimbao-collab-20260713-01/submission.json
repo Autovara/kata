@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "jaytbarimbao-collab-20260713-01",
+  "created_at": "2026-07-13T18:48:09.782813+00:00",
+  "author": "jaytbarimbao-collab",
+  "title": "Static-detector + LLM depth miner",
+  "notes": "Self-contained stdlib agent. Combines generic (non-project-specific) static detectors for common high/critical vulnerability classes (missing access control, unprotected initializer, reentrancy, unchecked low-level call, unsafe delegatecall, tx.origin auth, unprotected selfdestruct) with up to 3 budgeted LLM depth/breadth passes. Emits matcher-shaped findings; degrades gracefully on 429/errors.",
+  "subnet_pack": "sn60__bitsec"
+}

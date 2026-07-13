@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from kata.ast_utils import (
+    count_module_function_defs,
     find_module_async_function_def,
     find_module_function_def,
     function_supports_no_arg_invocation,
@@ -303,55 +304,74 @@ def screen_sn60_static_bundle(bundle_files: dict[str, str]) -> list[ScreeningFin
             )
         ]
 
-    agent_main = find_module_function_def(tree, "agent_main")
-    if agent_main is None:
-        if find_module_async_function_def(tree, "agent_main") is not None:
+    agent_main_def_count = count_module_function_defs(tree, "agent_main")
+    if agent_main_def_count > 1:
+        # Python binds the LAST top-level agent_main, but the structural checks
+        # below inspect the FIRST (find_module_function_def). A submission could
+        # otherwise pass a clean decoy definition through screening while the
+        # sandbox executes a cheating/no-op one defined later. Reject the
+        # ambiguity outright so the screened function is the executed function.
+        findings.append(
+            reject_finding(
+                "sn60.agent_main_duplicate",
+                "SN60 screening rejected an ambiguous agent: agent.py defines "
+                f"agent_main {agent_main_def_count} times at module level. Python "
+                "runs the last definition, so the anti-cheat checks cannot verify "
+                "the function the sandbox actually executes. Define agent_main "
+                "exactly once.",
+                path=AGENT_ENTRY_FILENAME,
+            )
+        )
+    else:
+        agent_main = find_module_function_def(tree, "agent_main")
+        if agent_main is None:
+            if find_module_async_function_def(tree, "agent_main") is not None:
+                findings.append(
+                    reject_finding(
+                        "sn60.agent_main_async",
+                        "Submission agent_main must be a synchronous function; the SN60 "
+                        "sandbox runner calls agent_main() directly and does not await "
+                        "coroutines.",
+                        path=AGENT_ENTRY_FILENAME,
+                    )
+                )
+            else:
+                findings.append(
+                    reject_finding(
+                        "sn60.agent_main_missing",
+                        "Submission agent must define agent_main(...).",
+                        path=AGENT_ENTRY_FILENAME,
+                    )
+                )
+        elif not function_supports_no_arg_invocation(agent_main):
             findings.append(
                 reject_finding(
-                    "sn60.agent_main_async",
-                    "Submission agent_main must be a synchronous function; the SN60 "
-                    "sandbox runner calls agent_main() directly and does not await "
-                    "coroutines.",
+                    "sn60.agent_main_args",
+                    "Submission agent must support no-argument invocation: agent_main().",
                     path=AGENT_ENTRY_FILENAME,
+                    line=agent_main.lineno,
                 )
             )
-        else:
+        elif agent_main_returns_direct_empty_report(agent_main):
             findings.append(
                 reject_finding(
-                    "sn60.agent_main_missing",
-                    "Submission agent must define agent_main(...).",
+                    "sn60.direct_empty_report",
+                    "SN60 screening rejected a no-op agent: agent_main returns an empty "
+                    "`vulnerabilities` list without doing any analysis.",
                     path=AGENT_ENTRY_FILENAME,
+                    line=agent_main.lineno,
                 )
             )
-    elif not function_supports_no_arg_invocation(agent_main):
-        findings.append(
-            reject_finding(
-                "sn60.agent_main_args",
-                "Submission agent must support no-argument invocation: agent_main().",
-                path=AGENT_ENTRY_FILENAME,
-                line=agent_main.lineno,
+        elif agent_main_returns_direct_constant_report(agent_main):
+            findings.append(
+                reject_finding(
+                    "sn60.direct_constant_report",
+                    "SN60 screening rejected a fake agent: agent_main returns a constant "
+                    "canned vulnerability report without reading project input.",
+                    path=AGENT_ENTRY_FILENAME,
+                    line=agent_main.lineno,
+                )
             )
-        )
-    elif agent_main_returns_direct_empty_report(agent_main):
-        findings.append(
-            reject_finding(
-                "sn60.direct_empty_report",
-                "SN60 screening rejected a no-op agent: agent_main returns an empty "
-                "`vulnerabilities` list without doing any analysis.",
-                path=AGENT_ENTRY_FILENAME,
-                line=agent_main.lineno,
-            )
-        )
-    elif agent_main_returns_direct_constant_report(agent_main):
-        findings.append(
-            reject_finding(
-                "sn60.direct_constant_report",
-                "SN60 screening rejected a fake agent: agent_main returns a constant "
-                "canned vulnerability report without reading project input.",
-                path=AGENT_ENTRY_FILENAME,
-                line=agent_main.lineno,
-            )
-        )
 
     lowered_source = agent_source.lower()
     for token in BENCHMARK_LEAK_TOKENS:

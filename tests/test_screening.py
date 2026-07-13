@@ -598,6 +598,54 @@ def test_validate_sn60_static_screening_rejects_async_agent_main(
     assert any("must be a synchronous function" in reason for reason in reasons)
 
 
+def test_validate_sn60_static_screening_rejects_duplicate_agent_main(
+    tmp_path: Path,
+) -> None:
+    # A clean decoy agent_main defined FIRST passes the structural checks, but
+    # Python binds the LAST definition, so the sandbox would run the no-op
+    # cheat. Both definitions present must be rejected as ambiguous.
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
+        VALID_AGENT_SOURCE
+        + "def agent_main(project_dir=None, inference_api=None):\n"
+        "    return {'vulnerabilities': []}\n",
+    )
+
+    reasons = validate_sn60_static_screening(bundle_root)
+
+    assert any("defines agent_main" in reason for reason in reasons)
+
+
+def test_validate_sn60_static_screening_rejects_duplicate_agent_main_async_shadow(
+    tmp_path: Path,
+) -> None:
+    # The shadowing definition can be async; counting both def and async def
+    # closes the bypass regardless of the later definition's flavor.
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
+        VALID_AGENT_SOURCE
+        + "async def agent_main(project_dir=None, inference_api=None):\n"
+        "    return {'vulnerabilities': []}\n",
+    )
+
+    reasons = validate_sn60_static_screening(bundle_root)
+
+    assert any("defines agent_main" in reason for reason in reasons)
+
+
+def test_validate_sn60_static_screening_allows_single_agent_main(
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "candidate"
+    write_bundle(bundle_root, VALID_AGENT_SOURCE)
+
+    reasons = validate_sn60_static_screening(bundle_root)
+
+    assert not any("agent_main" in reason for reason in reasons)
+
+
 def test_validate_sn60_static_screening_rejects_constant_canned_report(
     tmp_path: Path,
 ) -> None:

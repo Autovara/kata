@@ -1,6 +1,10 @@
 from kata.promotion_system.king import (
+    CurrentKingInfo,
+    KingExportResult,
     LanePromotionResult,
+    export_lane_king,
     find_evaluator_pack_entry,
+    load_current_king_info,
     load_sn60_duel_summary,
     promote_lane_king,
     resolve_sn60_king_artifact,
@@ -9,8 +13,12 @@ from kata.promotion_system.king import (
 )
 
 __all__ = [
+    "CurrentKingInfo",
+    "KingExportResult",
     "LanePromotionResult",
+    "export_lane_king",
     "find_evaluator_pack_entry",
+    "load_current_king_info",
     "load_sn60_duel_summary",
     "promote_lane_king",
     "resolve_sn60_king_artifact",

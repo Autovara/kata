@@ -93,6 +93,44 @@ def _add_king_parser(subparsers) -> None:
     king_promote.add_argument("--json", action="store_true")
     king_promote.set_defaults(handler=handle_king_promote)
 
+    king_show = king_subparsers.add_parser(
+        "show", help="Show the current king for a lane."
+    )
+    king_show.add_argument(
+        "--lane-id",
+        required=True,
+        help="Lane id, e.g. sn60__bitsec.",
+    )
+    king_show.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional Kata root that owns lanes/ and kings/.",
+    )
+    king_show.add_argument("--json", action="store_true")
+    king_show.set_defaults(handler=handle_king_show)
+
+    king_export = king_subparsers.add_parser(
+        "export",
+        help="Export the current king bundle to a local directory for mining.",
+    )
+    king_export.add_argument(
+        "--lane-id",
+        required=True,
+        help="Lane id, e.g. sn60__bitsec.",
+    )
+    king_export.add_argument(
+        "--output",
+        required=True,
+        help="Destination directory for the exported king bundle.",
+    )
+    king_export.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional Kata root that owns lanes/ and kings/.",
+    )
+    king_export.add_argument("--json", action="store_true")
+    king_export.set_defaults(handler=handle_king_export)
+
 
 def _add_lane_parsers(subparsers) -> None:
     lane = subparsers.add_parser(
@@ -498,6 +536,70 @@ def handle_king_promote(args: argparse.Namespace) -> int:
         print(
             f"Promoted `{result.king.current_king_submission_id}` "
             f"as king of lane `{result.lane_id}`."
+        )
+    return 0
+
+
+def handle_king_show(args: argparse.Namespace) -> int:
+    from kata.promotion_system import load_current_king_info
+
+    public_root = str(Path(args.public_root).expanduser().resolve()) if args.public_root else None
+    try:
+        info = load_current_king_info(args.lane_id, public_root=public_root)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if args.json:
+        print_json(
+            {
+                "lane_id": info.lane_id,
+                "repo_pack": info.repo_pack,
+                "mode": info.mode,
+                "submission_id": info.submission_id,
+                "artifact_hash": info.artifact_hash,
+                "promotion_timestamp": info.promotion_timestamp,
+                "challenge_run_id": info.challenge_run_id,
+                "king_root": info.king_root,
+            }
+        )
+    else:
+        if info.submission_id is None:
+            print(f"Lane `{info.lane_id}` has no crowned king.")
+            return 2
+        print(f"Lane: {info.lane_id}")
+        print(f"King: {info.submission_id}")
+        print(f"Artifact hash: {info.artifact_hash}")
+        print(f"Promoted: {info.promotion_timestamp}")
+        if info.challenge_run_id:
+            print(f"Challenge run: {info.challenge_run_id}")
+        print(f"Path: {info.king_root}")
+    return 0 if info.submission_id is not None else 2
+
+
+def handle_king_export(args: argparse.Namespace) -> int:
+    from kata.promotion_system import export_lane_king
+
+    public_root = str(Path(args.public_root).expanduser().resolve()) if args.public_root else None
+    try:
+        result = export_lane_king(
+            args.lane_id,
+            output_path=args.output,
+            public_root=public_root,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if args.json:
+        print_json(
+            {
+                "lane_id": result.lane_id,
+                "submission_id": result.submission_id,
+                "output_path": result.output_path,
+                "artifact_hash": result.artifact_hash,
+            }
+        )
+    else:
+        print(
+            f"Exported king `{result.submission_id}` from lane `{result.lane_id}` "
+            f"to {result.output_path}"
         )
     return 0
 

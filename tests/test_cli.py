@@ -8,6 +8,8 @@ import pytest
 
 from kata.interfaces.cli import build_parser, main, parse_round_candidate
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_top_level_cli_exposes_agent_competition_commands() -> None:
     parser = build_parser()
@@ -157,6 +159,77 @@ def test_lane_cli_sync_registry_rebuilds_from_disk(tmp_path: Path, capsys) -> No
     assert main(["lane", "sync-registry", "--public-root", str(tmp_path), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["packs"] == ["sn60__bitsec"]
+
+
+def test_king_show_reports_current_king(capsys) -> None:
+    exit_code = main(
+        [
+            "king",
+            "show",
+            "--lane-id",
+            "sn60__bitsec",
+            "--public-root",
+            str(REPO_ROOT),
+            "--json",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["lane_id"] == "sn60__bitsec"
+    assert payload["repo_pack"] == "sn60__bitsec"
+    assert payload["mode"] == "miner"
+    assert payload["submission_id"] == "daedalus-Icarus-20260710-01"
+    assert payload["artifact_hash"]
+    assert payload["king_root"]
+
+
+def test_king_show_unknown_lane_errors() -> None:
+    with pytest.raises(SystemExit):
+        main(["king", "show", "--lane-id", "does-not-exist"])
+
+
+def test_king_export_copies_bundle(tmp_path: Path, capsys) -> None:
+    output_dir = tmp_path / "exported-king"
+    exit_code = main(
+        [
+            "king",
+            "export",
+            "--lane-id",
+            "sn60__bitsec",
+            "--output",
+            str(output_dir),
+            "--public-root",
+            str(REPO_ROOT),
+            "--json",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["submission_id"] == "daedalus-Icarus-20260710-01"
+    assert Path(payload["output_path"]) == output_dir.resolve()
+    assert (output_dir / "agent.py").exists()
+    assert (output_dir / "agent_manifest.json").exists()
+
+
+def test_king_show_no_king_lane(tmp_path: Path, capsys) -> None:
+    assert (
+        main(
+            [
+                "lane",
+                "init",
+                "--lane-id",
+                "empty-lane",
+                "--evaluator-id",
+                "sn60_bitsec",
+                "--public-root",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert main(["king", "show", "--lane-id", "empty-lane", "--public-root", str(tmp_path)]) == 2
+    assert "no crowned king" in capsys.readouterr().out
 
 
 def test_round_cli_unknown_evaluator_errors() -> None:

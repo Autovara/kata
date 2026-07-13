@@ -24,13 +24,36 @@ from kata.state_system.lane import (
     write_lane_king_state,
 )
 from kata.state_system.public_artifacts import (
+    KING_METADATA_FILENAME,
+    PublicKingMetadata,
     publish_public_king,
     resolve_kata_root,
     resolve_public_king_root,
 )
 from kata.submission_system import SUBMISSION_AGENT_FILENAME, SubmissionMetadata
+from kata.submission_system.bundle import load_bundle_files, replace_bundle_contents
 from kata.validator_system import ChallengeSummary
 from kata.validator_system.challenge import record_sn60_lane_provenance
+
+
+@dataclass(frozen=True)
+class CurrentKingInfo:
+    lane_id: str
+    repo_pack: str
+    mode: str
+    submission_id: str | None
+    artifact_hash: str | None
+    promotion_timestamp: str | None
+    challenge_run_id: str | None
+    king_root: str
+
+
+@dataclass(frozen=True)
+class KingExportResult:
+    lane_id: str
+    submission_id: str
+    output_path: str
+    artifact_hash: str
 
 
 @dataclass(frozen=True)
@@ -70,6 +93,88 @@ def validate_submission_lane(
     if not entry.active:
         return [f"Evaluator-backed lane is not active in the pack registry: {entry.lane_id}"]
     return []
+
+
+def load_current_king_info(
+    lane_id: str,
+    *,
+    public_root: str | None = None,
+) -> CurrentKingInfo:
+    """Load the current king metadata for a registered lane."""
+    registry = load_pack_registry(public_root=public_root)
+    entry = next((pack for pack in registry.packs if pack.lane_id == lane_id), None)
+    if entry is None:
+        raise ValueError(f"No lane is registered with id `{lane_id}`.")
+    king_root = resolve_public_king_root(
+        public_root=public_root,
+        repo_pack=entry.repo_pack,
+        mode=entry.mode,
+    )
+    lane_king = maybe_load_lane_king_state(lane_id, public_root=public_root)
+    public_metadata = maybe_load_public_king_metadata(king_root)
+    return CurrentKingInfo(
+        lane_id=lane_id,
+        repo_pack=entry.repo_pack,
+        mode=entry.mode,
+        submission_id=lane_king.current_king_submission_id if lane_king else None,
+        artifact_hash=lane_king.current_king_artifact_hash if lane_king else None,
+        promotion_timestamp=lane_king.promotion_timestamp if lane_king else None,
+        challenge_run_id=public_metadata.challenge_run_id if public_metadata else None,
+        king_root=str(king_root),
+    )
+
+
+def export_lane_king(
+    lane_id: str,
+    *,
+    output_path: str,
+    public_root: str | None = None,
+) -> KingExportResult:
+    """Copy the published king bundle to a local directory for mining."""
+    info = load_current_king_info(lane_id, public_root=public_root)
+    if info.submission_id is None:
+        raise ValueError(f"Lane `{lane_id}` has no crowned king to export.")
+    king_root = Path(info.king_root)
+    if not (king_root / SUBMISSION_AGENT_FILENAME).exists():
+        raise ValueError(
+            f"King artifact is missing at {king_root}. "
+            "Seed the current king under kings/<subnet-pack>/<mode>/ before exporting."
+        )
+    destination = Path(output_path).expanduser().resolve()
+    replace_bundle_contents(destination, load_bundle_files(king_root))
+    artifact_hash = info.artifact_hash or hash_bundle_root(destination)
+    return KingExportResult(
+        lane_id=lane_id,
+        submission_id=info.submission_id,
+        output_path=str(destination),
+        artifact_hash=artifact_hash,
+    )
+
+
+def maybe_load_lane_king_state(
+    lane_id: str,
+    *,
+    public_root: str | None,
+) -> LaneKingState | None:
+    path = lane_king_state_path(lane_id, public_root=public_root)
+    if not path.exists():
+        return None
+    return load_lane_king_state(lane_id, public_root=public_root)
+
+
+def maybe_load_public_king_metadata(king_root: Path) -> PublicKingMetadata | None:
+    metadata_path = king_root / KING_METADATA_FILENAME
+    if not metadata_path.exists():
+        return None
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return PublicKingMetadata(
+        repo_pack=str(payload["repo_pack"]),
+        mode=str(payload["mode"]),
+        submission_id=str(payload["submission_id"]),
+        challenge_run_id=str(payload["challenge_run_id"]),
+        king_artifact_hash=str(payload["king_artifact_hash"]),
+        candidate_artifact_hash=str(payload["candidate_artifact_hash"]),
+    )
 
 
 def resolve_sn60_lane_king_hash(

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "peter-rango-20260713-01",
+  "created_at": "2026-07-13T00:00:00+00:00",
+  "author": "peter-rango",
+  "title": "Evidence-first graph audit miner",
+  "notes": "Repository mapping plus independent value-flow and cross-module audits."
+}

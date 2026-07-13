@@ -8,7 +8,6 @@ from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import (
     DEFAULT_REPLICAS_PER_PROJECT,
-    hash_bundle_root,
 )
 from kata.state_system.lane import (
     LANE_METADATA_SCHEMA_VERSION,
@@ -39,9 +38,7 @@ from kata.validator_system import (
     load_challenge_summary,
     project_pass_threshold_label,
     render_challenge_summary,
-    resolve_sn60_project_keys,
     run_sn60_baseline_only,
-    run_sn60_round,
     sn60_pass_score,
 )
 
@@ -381,6 +378,11 @@ def _add_round_parser(subparsers) -> None:
         help="Score the king against several candidates on the same projects and rank them.",
     )
     round_cmd.add_argument(
+        "--evaluator",
+        default="sn60_bitsec",
+        help="Subnet evaluator id whose plugin runs the round (default: sn60_bitsec).",
+    )
+    round_cmd.add_argument(
         "--king-path",
         required=True,
         help="Path to the current lane king artifact.",
@@ -580,26 +582,30 @@ def parse_round_candidate(spec: str) -> tuple[str, str]:
 
 
 def handle_round(args: argparse.Namespace) -> int:
+    from kata.packages.dispatch import plugin_for_evaluator
+
     candidates = [parse_round_candidate(spec) for spec in args.candidate]
-    project_keys = args.sn60_project_key or resolve_sn60_project_keys(
-        configured_keys=None,
-        sandbox_root=args.sn60_sandbox_root,
-        benchmark_file=args.sn60_benchmark_file,
-        sandbox_commit=args.sn60_sandbox_commit,
-        king_artifact_hash=hash_bundle_root(Path(args.king_path).expanduser().resolve()),
-    )
-    result = run_sn60_round(
-        king_artifact_path=args.king_path,
+    plugin = plugin_for_evaluator(args.evaluator)
+    if plugin is None:
+        raise SystemExit(
+            f"No subnet plugin is registered for evaluator '{args.evaluator}'."
+        )
+    # Subnet-namespaced flags map to the plugin's problem-sampling config; the plugin
+    # resolves/samples the actual problem set.
+    config = {
+        "sandbox_root": args.sn60_sandbox_root,
+        "benchmark_file": args.sn60_benchmark_file,
+        "sandbox_commit": args.sn60_sandbox_commit,
+        "project_keys": args.sn60_project_key or None,
+        "replicas_per_project": args.sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
+    }
+    result = plugin.run_round(
+        king_agent_path=args.king_path,
         candidates=candidates,
-        project_keys=project_keys,
-        output_root=args.output_root,
-        replicas_per_project=args.sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
-        sandbox_root=args.sn60_sandbox_root,
-        benchmark_file=args.sn60_benchmark_file,
-        sandbox_commit=args.sn60_sandbox_commit,
-        king_scoreboard_path=args.king_scoreboard,
+        config=config,
+        output_root=args.output_root or "runs",
+        score_king=not args.candidate_only,
         progress_path=args.round_progress_path,
-        candidate_only=args.candidate_only,
     )
     runs_per_project = result.replicas_per_project
     if args.json:

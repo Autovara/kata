@@ -153,3 +153,33 @@ class SubnetPlugin(ABC):
     def static_screen(self, submission_path: str) -> object | None:
         """Optional subnet-specific static checks before running. Default: no extra checks."""
         return None
+
+    def run_round(
+        self,
+        *,
+        king_agent_path: str,
+        candidates: list[tuple[str, str]],
+        config: dict[str, Any],
+        output_root: str,
+        run_id: str | None = None,
+        score_king: bool = True,
+        progress_path: str | None = None,
+    ) -> object:
+        """Run one competition round for this subnet and return its result.
+
+        The default drives the generic orchestrator and returns a ``RoundOutcome``;
+        subnets that produce their own proof/summary files (e.g. SN60) override this
+        to write them and return their native result. Imported lazily to avoid a
+        module-load cycle with ``kata.core.round``.
+        """
+        from kata.core.round import run_plugin_round
+
+        return run_plugin_round(
+            self,
+            king_agent_path=king_agent_path,
+            candidates=candidates,
+            config=config,
+            output_root=output_root,
+            seed=run_id or "round",
+            score_king=score_king,
+        )

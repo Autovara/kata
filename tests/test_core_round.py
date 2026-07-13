@@ -78,6 +78,19 @@ def test_orchestrator_no_winner_when_king_unbeaten() -> None:
     assert [v.label for v in outcome.ranked] == ["b", "a"]
 
 
+def test_plugin_run_round_default_delegates_to_orchestrator() -> None:
+    # The interface's default run_round drives the generic orchestrator.
+    outcome = _NumPlugin().run_round(
+        king_agent_path="0.25",
+        candidates=[("a", "0.1"), ("b", "0.9")],
+        config={},
+        output_root="/unused",
+        run_id="r",
+    )
+    assert outcome.king is not None and outcome.king.card.comparable == 0.25
+    assert outcome.winner is not None and outcome.winner.label == "b"
+
+
 def test_orchestrator_candidate_only_skips_king() -> None:
     outcome = run_plugin_round(
         _NumPlugin(),

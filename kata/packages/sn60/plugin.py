@@ -215,3 +215,28 @@ class Sn60BitsecPlugin(SubnetPlugin):
             return candidate.payload.true_positives > 0
         decision = evaluate_sn60_promotion(king=king.payload, candidate=candidate.payload)
         return decision.promotion_ready
+
+    def run_round(
+        self,
+        *,
+        king_agent_path,
+        candidates,
+        config,
+        output_root,
+        run_id=None,
+        score_king=True,
+        progress_path=None,
+    ):
+        # Lazy import avoids the module-load cycle (round.py imports this module).
+        from .round import run_sn60_plugin_round
+
+        return run_sn60_plugin_round(
+            king_artifact_path=king_agent_path,
+            candidates=candidates,
+            config=config,
+            output_root=output_root,
+            run_id=run_id,
+            score_king=score_king,
+            plugin=self,
+            progress_path=progress_path,
+        )

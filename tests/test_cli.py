@@ -159,6 +159,21 @@ def test_lane_cli_sync_registry_rebuilds_from_disk(tmp_path: Path, capsys) -> No
     assert payload["packs"] == ["sn60__bitsec"]
 
 
+def test_round_cli_unknown_evaluator_errors() -> None:
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "round",
+                "--evaluator",
+                "does-not-exist",
+                "--king-path",
+                "/k",
+                "--candidate",
+                "a=/a",
+            ]
+        )
+
+
 def test_parse_round_candidate_accepts_id_path_pairs() -> None:
     assert parse_round_candidate("cand-1=/tmp/agent") == ("cand-1", "/tmp/agent")
     assert parse_round_candidate(" cand-2 = /tmp/x ") == ("cand-2", "/tmp/x")
@@ -171,7 +186,6 @@ def test_parse_round_candidate_rejects_malformed_specs() -> None:
 
 
 def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None:
-    import kata.interfaces.cli as cli
 
     fake_result = types.SimpleNamespace(
         run_id="sn60-round-x",
@@ -218,11 +232,13 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
     )
     captured: dict[str, object] = {}
 
-    def fake_run_sn60_round(**kwargs):
+    def fake_run_round(self, **kwargs):
         captured.update(kwargs)
         return fake_result
 
-    monkeypatch.setattr(cli, "run_sn60_round", fake_run_sn60_round)
+    monkeypatch.setattr(
+        "kata.packages.sn60.plugin.Sn60BitsecPlugin.run_round", fake_run_round
+    )
 
     exit_code = main(
         [
@@ -239,7 +255,7 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
 
     assert exit_code == 0
     assert captured["candidates"] == [("cand-b", "/c-b")]
-    assert captured["project_keys"] == ["project-alpha"]
+    assert captured["config"]["project_keys"] == ["project-alpha"]
     payload = json.loads(capsys.readouterr().out)
     assert payload["winner_submission_id"] == "cand-b"
     assert payload["promotion_ready"] is True
@@ -253,7 +269,6 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
 
 
 def test_round_cli_supports_candidate_only_mode(monkeypatch, capsys) -> None:
-    import kata.interfaces.cli as cli
 
     fake_result = types.SimpleNamespace(
         run_id="sn60-round-recovery",
@@ -289,11 +304,13 @@ def test_round_cli_supports_candidate_only_mode(monkeypatch, capsys) -> None:
     )
     captured: dict[str, object] = {}
 
-    def fake_run_sn60_round(**kwargs):
+    def fake_run_round(self, **kwargs):
         captured.update(kwargs)
         return fake_result
 
-    monkeypatch.setattr(cli, "run_sn60_round", fake_run_sn60_round)
+    monkeypatch.setattr(
+        "kata.packages.sn60.plugin.Sn60BitsecPlugin.run_round", fake_run_round
+    )
 
     exit_code = main(
         [
@@ -310,7 +327,7 @@ def test_round_cli_supports_candidate_only_mode(monkeypatch, capsys) -> None:
     )
 
     assert exit_code == 0
-    assert captured["candidate_only"] is True
+    assert captured["score_king"] is False
     payload = json.loads(capsys.readouterr().out)
     assert payload["competition_mode"] == "candidate_only"
     assert payload["king"] is None
@@ -320,7 +337,6 @@ def test_round_cli_supports_candidate_only_mode(monkeypatch, capsys) -> None:
 
 
 def test_round_cli_samples_problems_when_keys_omitted(tmp_path, monkeypatch, capsys) -> None:
-    import kata.interfaces.cli as cli
 
     benchmark = tmp_path / "sandbox" / "validator" / "curated-highs-only-2025-08-08.json"
     benchmark.parent.mkdir(parents=True)
@@ -340,7 +356,7 @@ def test_round_cli_samples_problems_when_keys_omitted(tmp_path, monkeypatch, cap
 
     captured: dict[str, object] = {}
 
-    def fake_run_sn60_round(**kwargs):
+    def fake_run_round(self, **kwargs):
         captured.update(kwargs)
         return types.SimpleNamespace(
             run_id="r",
@@ -367,7 +383,9 @@ def test_round_cli_samples_problems_when_keys_omitted(tmp_path, monkeypatch, cap
             entries=[],
         )
 
-    monkeypatch.setattr(cli, "run_sn60_round", fake_run_sn60_round)
+    monkeypatch.setattr(
+        "kata.packages.sn60.plugin.Sn60BitsecPlugin.run_round", fake_run_round
+    )
 
     exit_code = main(
         [
@@ -387,6 +405,5 @@ def test_round_cli_samples_problems_when_keys_omitted(tmp_path, monkeypatch, cap
     )
 
     assert exit_code == 0
-    sampled = captured["project_keys"]
-    assert len(sampled) == 3
-    assert set(sampled).issubset(set(keys))
+    # No explicit --sn60-project-key: the CLI passes None and the plugin samples.
+    assert captured["config"]["project_keys"] is None

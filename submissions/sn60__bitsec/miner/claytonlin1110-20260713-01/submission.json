@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "claytonlin1110-20260713-01",
+  "created_at": "2026-07-13T17:37:33.138628+00:00",
+  "author": "claytonlin1110",
+  "title": "Static heuristics plus focused LLM audit",
+  "notes": "Combines lightweight static checks for common access-control and call-surface bugs with up to two model audits on the highest-risk source files."
+}

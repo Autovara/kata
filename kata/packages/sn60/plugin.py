@@ -27,6 +27,7 @@ from kata.evaluators.sn60_bitsec import (
 )
 from kata.packages.plugin import (
     EnvSpec,
+    ProgressUpdate,
     RunContext,
     ScoreCard,
     ScoringProfile,
@@ -35,6 +36,8 @@ from kata.packages.plugin import (
 from kata.validator_system.challenge import (
     SN60_MINER_LANE_ID,
     SN60_VALIDATOR_MODEL,
+    _apply_running_metrics,
+    _sn60_variant_progress,
     evaluate_sn60_promotion,
     sn60_pass_score,
     sn60_variant_rank,
@@ -124,6 +127,28 @@ class Sn60BitsecPlugin(SubnetPlugin):
         evaluation_hook = self._evaluation_hook or build_default_evaluation_hook(source)
         artifact_root = Path(agent_path).expanduser().resolve()
         label = context.label
+
+        # Emit live per-replica progress through the generic callback, accumulating
+        # SN60's running metrics + per-problem breakdown so the board fills in live.
+        total = len(problems.project_keys) * problems.replicas_per_project
+        acc = {"tp": 0, "expected": 0, "found": 0, "invalid": 0, "projects": []}
+        running: dict[str, object] = {}
+        done = {"n": 0}
+
+        def _on_replica(_replica_context, replica_result) -> None:
+            done["n"] += 1
+            _apply_running_metrics(running, acc, replica_result)
+            if context.progress is not None:
+                context.progress(
+                    ProgressUpdate(
+                        variant=label,
+                        done=done["n"],
+                        total=total,
+                        state="scoring",
+                        metrics=dict(running),
+                    )
+                )
+
         replica_results = score_variant_on_projects(
             run_id=f"{problems.run_id}-{label}",
             run_root=Path(context.output_root) / label,
@@ -134,6 +159,7 @@ class Sn60BitsecPlugin(SubnetPlugin):
             sandbox_source=source,
             execution_hook=execution_hook,
             evaluation_hook=evaluation_hook,
+            progress_callback=_on_replica if context.progress is not None else None,
         )
         return Sn60RawRun(
             variant_name=label,
@@ -154,20 +180,13 @@ class Sn60BitsecPlugin(SubnetPlugin):
     @staticmethod
     def _score_card(summary: Sn60VariantSummary) -> ScoreCard:
         # The native SN60 summary drives compare()/beats_king(); it rides in `payload`
-        # (opaque to the core) so `metrics` stays JSON-serializable for proofs.
+        # (opaque to the core) so `metrics` stays JSON-serializable. `metrics` is the
+        # full board snapshot (scores + per-problem breakdown) so the final progress
+        # tick fills the dashboard's detail view.
         return ScoreCard(
             comparable=round(sn60_pass_score(summary), 8),
             passed=True,
-            metrics={
-                "aggregated_score": summary.aggregated_score,
-                "codebase_pass_count": summary.codebase_pass_count,
-                "true_positives": summary.true_positives,
-                "total_expected": summary.total_expected,
-                "total_found": summary.total_found,
-                "precision": summary.precision,
-                "f1_score": summary.f1_score,
-                "invalid_runs": summary.invalid_runs,
-            },
+            metrics=_sn60_variant_progress(summary),
             payload=summary,
         )
 

@@ -163,6 +163,49 @@ def test_run_sn60_plugin_round_matches_legacy_contract(tmp_path: Path) -> None:
     assert (Path(result.output_root) / "round_summary.json").exists()
 
 
+def test_run_sn60_plugin_round_writes_board_progress(tmp_path: Path) -> None:
+    # The plugin round must write round-progress.json in the same shape the board
+    # reads today (king + per-candidate entries, per-problem breakdowns, winner).
+    sandbox_root, benchmark_path, king_root, specs, paths = _build_inputs(tmp_path)
+    execute, evaluate = _detection_hooks()
+    progress_path = tmp_path / "round-progress.json"
+
+    run_sn60_plugin_round(
+        king_artifact_path=str(king_root),
+        candidates=[(name, paths[name]) for name, _ in specs],
+        config={
+            "sandbox_root": str(sandbox_root),
+            "benchmark_file": str(benchmark_path),
+            "sandbox_commit": "commit-progress",
+            "project_keys": ["project-alpha"],
+            "replicas_per_project": 1,
+        },
+        output_root=str(tmp_path / "generic"),
+        plugin=Sn60BitsecPlugin(execution_hook=execute, evaluation_hook=evaluate),
+        progress_path=str(progress_path),
+    )
+
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert progress["state"] == "completed"
+    assert progress["winner_submission_id"] == "cand-c"
+    assert {c["submission_id"] for c in progress["candidates"]} == {
+        "cand-a",
+        "cand-b",
+        "cand-c",
+    }
+    assert all(
+        c["done"] == c["total"] and c["state"] == "done" for c in progress["candidates"]
+    )
+    winner = next(c for c in progress["candidates"] if c["submission_id"] == "cand-c")
+    assert winner["aggregated_score"] == 0.75
+    assert winner["beats_king"] is True
+    assert isinstance(winner["projects"], list) and winner["projects"]
+    # The king is scored and published for the detail view.
+    assert progress["king"]["state"] == "done"
+    assert progress["king"]["aggregated_score"] == 0.25
+    assert isinstance(progress["king"]["projects"], list) and progress["king"]["projects"]
+
+
 def test_run_sn60_plugin_round_no_winner_when_king_unbeaten(tmp_path: Path) -> None:
     sandbox_root = tmp_path / "sandbox"
     benchmark_path = _write_benchmark(sandbox_root)

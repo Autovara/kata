@@ -85,15 +85,18 @@ def run_plugin_round(
     seed: str,
     score_king: bool = True,
     progress=None,
+    problems: ProblemSet = None,
 ) -> RoundOutcome:
     """Run one King-of-the-Hill round through ``plugin`` and return a generic outcome.
 
     ``candidates`` is a list of ``(label, agent_path)``. The king is scored once (unless
     ``score_king`` is False, e.g. candidate-only recovery), each candidate is scored,
     then they are ranked with ``plugin.compare`` and the winner is the top-ranked
-    challenger for which ``plugin.beats_king`` holds.
+    challenger for which ``plugin.beats_king`` holds. A pre-sampled ``problems`` may be
+    passed to avoid re-sampling (e.g. when the caller sized progress from it).
     """
-    problems = plugin.sample_problems(seed=seed, config=config)
+    if problems is None:
+        problems = plugin.sample_problems(seed=seed, config=config)
     identity = plugin.benchmark_identity(problems)
 
     king: ScoredVariant | None = None

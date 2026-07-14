@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from kata.screening_system.models import ScreeningFinding, dedupe_findings
+from kata.screening_system.mutation_canary import SOLIDITY_RESERVED
 
 SN60_SANDBOX_ROOT_ENV = "KATA_SN60_SANDBOX_ROOT"
 SN60_BENCHMARK_FILE_ENV = "KATA_SN60_BENCHMARK_FILE"
@@ -49,6 +50,17 @@ LONG_LOWERCASE_FINGERPRINT_MIN_CHARS = 12
 MAX_PROJECTS_FOR_DISTINCTIVE_TOKEN = 2
 STATIC_REPORT_BANK_MIN_FINDINGS = 3
 STATIC_REPORT_BANK_MIN_TEXT_CHARS = 1000
+
+# A branch that ANDs together several verbatim, identifier-shaped literals (e.g.
+# `_contains_all(low, ("amountclaimed", "totalamount", "releaserate", "stepsclaimed"))`)
+# to gate a canned finding is a project-specific answer bank keyed on the *candidate
+# project's own* source identifiers -- it needs no match against the curated benchmark
+# signature file to be suspicious, unlike find_project_fingerprint_branches. Kept
+# separate from that check because it fires on the shape of the gate alone.
+IDENTIFIER_GATE_MIN_TOKENS = 3
+IDENTIFIER_GATE_TOKEN_MIN_CHARS = 6
+IDENTIFIER_GATE_TOKEN_MAX_CHARS = 40
+IDENTIFIER_GATE_TOKEN_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # A "source-line probe" is a long, verbatim, code-like string literal that the
 # agent matches against project source (via `in`, str.find/index/..., or a
@@ -279,6 +291,7 @@ def find_ambiguous_replay_review_signals(
         findings.extend(find_static_report_bank(relative_path, content))
         findings.extend(find_hardcoded_source_line_probes(relative_path, content))
         findings.extend(find_project_fingerprint_branches(relative_path, content, signatures))
+        findings.extend(find_identifier_gate_branches(relative_path, content))
     return findings
 
 
@@ -450,6 +463,56 @@ def looks_like_source_line_literal(value: str) -> bool:
     return any(character in text for character in "();={}")
 
 
+def find_identifier_gate_branches(relative_path: str, content: str) -> list[ScreeningFinding]:
+    try:
+        tree = ast.parse(content, filename=relative_path)
+    except SyntaxError:
+        return []
+    findings: list[ScreeningFinding] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.If, ast.IfExp, ast.While)):
+            continue
+        tokens = {
+            child.value
+            for child in ast.walk(node.test)
+            if isinstance(child, ast.Constant)
+            and isinstance(child.value, str)
+            and looks_like_identifier_gate_token(child.value)
+        }
+        if len(tokens) < IDENTIFIER_GATE_MIN_TOKENS:
+            continue
+        if not branch_returns_report(node):
+            continue
+        findings.append(
+            ScreeningFinding(
+                rule_id="benchmark_replay.identifier_gate_branch",
+                severity="review",
+                path=relative_path,
+                line=getattr(node, "lineno", None),
+                reason=(
+                    "SN60 screening found a branch gated on multiple verbatim "
+                    "identifier-shaped literals that returns a canned finding; manual "
+                    "review is required to confirm it is not a source-specific answer "
+                    "bank."
+                ),
+                evidence=f"identifier_tokens={len(tokens)}; points=4",
+            )
+        )
+    return dedupe_findings(findings, by_reason=False)
+
+
+def looks_like_identifier_gate_token(value: str) -> bool:
+    text = value.strip()
+    if not (IDENTIFIER_GATE_TOKEN_MIN_CHARS <= len(text) <= IDENTIFIER_GATE_TOKEN_MAX_CHARS):
+        return False
+    if not IDENTIFIER_GATE_TOKEN_PATTERN.match(text):
+        return False
+    lowered = text.lower()
+    if lowered in FINGERPRINT_STOP_WORDS or lowered in SOLIDITY_RESERVED:
+        return False
+    return True
+
+
 def find_project_fingerprint_branches(
     relative_path: str,
     content: str,
@@ -525,6 +588,8 @@ def branch_returns_report(node: ast.If | ast.IfExp | ast.While) -> bool:
                 if return_value_looks_like_report(descendant.value):
                     return True
             if isinstance(descendant, ast.Assign) and value_looks_like_report(descendant.value):
+                return True
+            if isinstance(descendant, ast.Call) and finding_shaped_constant_call(descendant):
                 return True
     return False
 

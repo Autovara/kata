@@ -687,6 +687,49 @@ def test_screen_submission_rejects_source_line_probe_bank_in_strict_mode(
     )
 
 
+def test_screen_submission_reviews_identifier_gate_bank_without_known_signatures(
+    tmp_path: Path,
+) -> None:
+    # A candidate can gate a canned finding on several verbatim, case-folded
+    # identifiers pulled straight from the target project's own source (not from any
+    # known finding write-up), so it never matches find_project_fingerprint_branches'
+    # curated-signature lookup. That shape must still be flagged for review.
+    bundle_root = tmp_path / "candidate"
+    agent_source = (
+        "def _contains_all(text, needles):\n"
+        "    return all(needle in text for needle in needles)\n"
+        "def _make_finding(*, title, description, severity, file, function):\n"
+        "    return {'title': title, 'description': description, "
+        "'severity': severity, 'file': file, 'function': function}\n"
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    low = str(project_dir or '').lower()\n"
+        "    out = []\n"
+        "    if _contains_all(\n"
+        "        low,\n"
+        "        ('amountclaimed', 'totalamount', 'releaserate', 'stepsclaimed'),\n"
+        "    ):\n"
+        "        out.append(_make_finding(title='Vesting math', description=%r, "
+        "severity='high', file='Vesting.sol', function='transferVesting'))\n"
+        "    return {'vulnerabilities': out}\n"
+    ) % SCREENING_DESCRIPTION
+    write_bundle(bundle_root, agent_source)
+
+    decision = screen_submission(
+        submission_root=bundle_root,
+        public_root=None,
+        mode="miner",
+        enable_review=True,
+        strict_replay=True,
+    )
+
+    assert decision.status == "review"
+    assert decision.reject_reasons == []
+    assert any(
+        finding.rule_id == "benchmark_replay.identifier_gate_branch"
+        for finding in decision.review_reasons
+    )
+
+
 def test_screen_submission_allows_short_keyword_substring_probes(
     tmp_path: Path,
 ) -> None:

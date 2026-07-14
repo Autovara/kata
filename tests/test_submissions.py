@@ -1188,7 +1188,7 @@ def test_verify_sn60_registry_lane_detects_stale_benchmark_snapshot(
     assert verification.king_is_current
     assert not verification.benchmark_is_current
     assert not verification.auto_merge_ready
-    assert any("SN60 benchmark lane has changed" in reason for reason in verification.reasons)
+    assert any("benchmark lane has changed" in reason for reason in verification.reasons)
 
 
 def test_verify_sn60_registry_lane_ignores_superseded_challenge_fingerprint(

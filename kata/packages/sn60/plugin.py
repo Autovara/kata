@@ -243,6 +243,20 @@ class Sn60BitsecPlugin(SubnetPlugin):
     def hash_bundle(self, path) -> str:
         return hash_bundle_root(Path(path))
 
+    def benchmark_is_current(self, *, lane_id, summary, public_root=None) -> bool:
+        from kata.packages.sn60.verify import sn60_benchmark_is_current
+
+        return sn60_benchmark_is_current(
+            lane_id=lane_id, summary=summary, public_root=public_root
+        )
+
+    def extra_verification_reasons(self, *, lane_id, summary, public_root=None) -> list[str]:
+        from kata.packages.sn60.verify import sn60_extra_verification_reasons
+
+        return sn60_extra_verification_reasons(
+            lane_id=lane_id, summary=summary, public_root=public_root
+        )
+
     def run_round(
         self,
         *,

@@ -45,7 +45,6 @@ _WORKFLOW_EXPORTS = {
     "inspect_pull_request",
     "is_sn60_miner_metadata",
     "promote_submission_result",
-    "sn60_lane_benchmark_is_current",
     "validate_submission",
     "verify_submission_result",
 }
@@ -108,7 +107,6 @@ __all__ = [
     "render_submission_verification",
     "required_submission_entrypoint_reason",
     "resolve_submission_descriptor",
-    "sn60_lane_benchmark_is_current",
     "validate_changed_paths",
     "validate_submission",
     "validate_submission_candidate",

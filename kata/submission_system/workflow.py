@@ -6,9 +6,6 @@ from pathlib import Path
 
 from kata import validator_system as _validator_system
 from kata.packages.dispatch import plugin_for_evaluator
-from kata.packages.sn60.promotion import (
-    load_sn60_duel_summary as load_sn60_duel_summary,
-)
 from kata.promotion_system import LanePromotionResult
 from kata.promotion_system import (
     find_evaluator_pack_entry as find_evaluator_pack_entry,
@@ -17,22 +14,14 @@ from kata.promotion_system import (
     promote_lane_king as promote_lane_king,
 )
 from kata.promotion_system import (
-    resolve_sn60_king_artifact as resolve_sn60_king_artifact,
-)
-from kata.promotion_system import (
     resolve_sn60_lane_king_hash as resolve_sn60_lane_king_hash,
 )
 from kata.promotion_system import (
     validate_submission_lane as validate_submission_lane,
 )
-from kata.provenance import short_hash
 from kata.screening_system.rules import (
     find_bundle_symlink_paths,
     hash_submission_bundle,
-)
-from kata.state_system.lane import (
-    benchmark_snapshot_path,
-    load_benchmark_snapshot,
 )
 from kata.submission_system.bundle import (
     validate_agent_manifest,
@@ -257,31 +246,6 @@ def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
     return plugin_for_submission(metadata) is not None
 
 
-def sn60_lane_benchmark_is_current(
-    lane_id: str,
-    summary: ChallengeSummary,
-    *,
-    public_root: str | None = None,
-) -> bool:
-    """Freshness check against the lane's recorded benchmark snapshot version.
-
-    Currency is gated on the benchmark snapshot version (scorer + sandbox
-    commit) only. It deliberately does NOT compare the per-run
-    ``freshness_fingerprint`` (which bundles the randomly sampled project keys):
-    that fingerprint differs on every duel and is never committed to the lane
-    state, so comparing it against the committed state would flag every winner as
-    "stale" and block promotion forever. King and submission identity are
-    verified separately (king_is_current / submission_matches).
-    """
-    if not benchmark_snapshot_path(lane_id, public_root=public_root).exists():
-        return False
-    snapshot = load_benchmark_snapshot(lane_id, public_root=public_root)
-    expected_version = f"{snapshot.scorer_version}@{short_hash(snapshot.sandbox_commit_hash)}"
-    if summary.evaluator_version != expected_version:
-        return False
-    return True
-
-
 def inspect_pull_request(
     *,
     repo_root: str,
@@ -413,8 +377,12 @@ def verify_submission_result(
         )
         or ""
     )
-    lane_benchmark_is_current = sn60_lane_benchmark_is_current(
-        evaluator_entry.lane_id, summary, public_root=public_root
+    lane_benchmark_is_current = (
+        plugin.benchmark_is_current(
+            lane_id=evaluator_entry.lane_id, summary=summary, public_root=public_root
+        )
+        if plugin is not None
+        else True
     )
     submission_matches = (
         summary.mode == validation.metadata.mode
@@ -432,16 +400,15 @@ def verify_submission_result(
     if not king_is_current:
         reasons.append("Challenge result is stale because the king artifact has changed.")
     if not benchmark_is_current:
-        reasons.append("Challenge result is stale because the SN60 benchmark lane has changed.")
+        reasons.append("Challenge result is stale because the benchmark lane has changed.")
     if not current_promotion_ready:
         reasons.append(f"Challenge is not promotion-ready: {summary.promotion_reason}")
-    if summary.primary.competition_mode == "candidate_only":
-        duel_summary = load_sn60_duel_summary(summary.primary.run_summary_path)
-        if duel_summary.candidate.true_positives <= 0:
-            reasons.append(
-                "Candidate-only recovery promotion requires at least one true-positive "
-                "vulnerability."
+    if plugin is not None:
+        reasons.extend(
+            plugin.extra_verification_reasons(
+                lane_id=evaluator_entry.lane_id, summary=summary, public_root=public_root
             )
+        )
 
     return SubmissionVerificationResult(
         submission_path=validation.submission_path,
@@ -518,7 +485,7 @@ def decide_submission_action(
         )
     if not verification.benchmark_is_current:
         stale_reasons.append(
-            "Challenge result is stale because the SN60 benchmark lane has changed."
+            "Challenge result is stale because the benchmark lane has changed."
         )
     if stale_reasons:
         return SubmissionDecisionResult(

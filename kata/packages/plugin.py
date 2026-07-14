@@ -177,6 +177,17 @@ class SubnetPlugin(ABC):
 
         return hash_submission_bundle(Path(path))
 
+    def benchmark_is_current(self, *, lane_id, summary, public_root=None) -> bool:
+        """Whether a challenge summary's benchmark identity still matches the lane's.
+
+        Used by the generic verifier's staleness check. Default: always current.
+        """
+        return True
+
+    def extra_verification_reasons(self, *, lane_id, summary, public_root=None) -> list[str]:
+        """Extra subnet-specific reject reasons during verification. Default: none."""
+        return []
+
     def run_round(
         self,
         *,

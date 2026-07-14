@@ -41,7 +41,6 @@ from kata.submission_system.rendering import (
 
 _WORKFLOW_EXPORTS = {
     "decide_submission_action",
-    "evaluate_submission",
     "init_submission",
     "inspect_pull_request",
     "is_sn60_miner_metadata",
@@ -94,7 +93,6 @@ __all__ = [
     "SubmissionValidationResult",
     "SubmissionVerificationResult",
     "decide_submission_action",
-    "evaluate_submission",
     "init_submission",
     "inspect_pull_request",
     "is_sn60_miner_metadata",

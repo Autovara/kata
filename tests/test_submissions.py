@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from kata.packages.sn60.evaluate import evaluate_submission
 from kata.screening_system.rules import hash_submission_bundle
 from kata.state_system.lane import (
     KING_STATE_SCHEMA_VERSION,
@@ -26,7 +27,6 @@ from kata.submission_system import (
     PR_ACTION_MERGE,
     PR_ACTION_RERUN_STALE,
     decide_submission_action,
-    evaluate_submission,
     init_submission,
     inspect_pull_request,
     promote_submission_result,
@@ -787,7 +787,7 @@ def test_evaluate_submission_uses_seeded_lane_king_for_registry_lane(
         return sentinel
 
     monkeypatch.setattr(
-        "kata.submission_system.workflow.run_sn60_challenge",
+        "kata.packages.sn60.evaluate.run_sn60_challenge",
         fake_run_sn60_challenge,
     )
 
@@ -842,7 +842,7 @@ def test_evaluate_submission_uses_benchmark_project_keys_by_default(
 
     monkeypatch.delenv("KATA_SN60_PROJECT_KEYS", raising=False)
     monkeypatch.setattr(
-        "kata.submission_system.workflow.run_sn60_challenge",
+        "kata.packages.sn60.evaluate.run_sn60_challenge",
         fake_run_sn60_challenge,
     )
 
@@ -902,7 +902,7 @@ def test_evaluate_submission_samples_benchmark_project_keys_from_env(
         lambda _size: "nonce-1",
     )
     monkeypatch.setattr(
-        "kata.submission_system.workflow.run_sn60_challenge",
+        "kata.packages.sn60.evaluate.run_sn60_challenge",
         fake_run_sn60_challenge,
     )
 
@@ -1000,7 +1000,7 @@ def test_explicit_sn60_project_keys_override_sampling_env(
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "1")
     monkeypatch.delenv("KATA_SN60_PROJECT_SAMPLE_SECRET", raising=False)
     monkeypatch.setattr(
-        "kata.submission_system.workflow.run_sn60_challenge",
+        "kata.packages.sn60.evaluate.run_sn60_challenge",
         fake_run_sn60_challenge,
     )
 
@@ -1076,7 +1076,7 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
         return sentinel
 
     monkeypatch.setattr(
-        "kata.submission_system.workflow.run_sn60_challenge",
+        "kata.packages.sn60.evaluate.run_sn60_challenge",
         fake_run_sn60_challenge,
     )
 

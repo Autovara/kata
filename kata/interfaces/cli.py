@@ -9,6 +9,7 @@ from pathlib import Path
 from kata.evaluators.sn60_bitsec import (
     DEFAULT_REPLICAS_PER_PROJECT,
 )
+from kata.packages.sn60.evaluate import evaluate_submission
 from kata.state_system.lane import (
     LANE_METADATA_SCHEMA_VERSION,
     EvaluatorLaneMetadata,
@@ -21,7 +22,6 @@ from kata.state_system.lane import (
 from kata.submission_system import (
     SUPPORTED_SUBMISSION_MODES,
     decide_submission_action,
-    evaluate_submission,
     init_submission,
     inspect_pull_request,
     promote_submission_result,

@@ -262,6 +262,11 @@ class Sn60BitsecPlugin(SubnetPlugin):
 
         return sn60_benchmark_review(bundle_files, strict=strict)
 
+    def register_cli(self, subparsers) -> None:
+        from kata.packages.sn60.cli import register_sn60_cli
+
+        register_sn60_cli(subparsers)
+
     def add_round_arguments(self, parser) -> None:
         from kata.packages.sn60.cli import sn60_add_round_arguments
 

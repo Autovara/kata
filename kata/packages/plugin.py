@@ -196,6 +196,9 @@ class SubnetPlugin(ABC):
         """
         return [], [], 0.0
 
+    def register_cli(self, subparsers) -> None:
+        """Contribute this subnet's own top-level ``kata`` subcommands. Default: none."""
+
     def add_round_arguments(self, parser) -> None:
         """Register this subnet's ``kata round`` CLI arguments. Default: none."""
 

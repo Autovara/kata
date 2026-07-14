@@ -6,9 +6,6 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from kata.evaluators.sn60_bitsec import (
-    DEFAULT_REPLICAS_PER_PROJECT,
-)
 from kata.packages.sn60.evaluate import evaluate_submission
 from kata.state_system.lane import (
     LANE_METADATA_SCHEMA_VERSION,
@@ -36,10 +33,7 @@ from kata.submission_system import (
 )
 from kata.validator_system import (
     load_challenge_summary,
-    project_pass_threshold_label,
     render_challenge_summary,
-    run_sn60_baseline_only,
-    sn60_pass_score,
 )
 
 
@@ -55,7 +49,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lane_parsers(subparsers)
     _add_submission_parsers(subparsers)
     _add_round_parser(subparsers)
-    _add_sn60_baseline_parser(subparsers)
+    # Subnet plugins contribute their own subcommands (e.g. SN60's `sn60-baseline`).
+    from kata.packages.dispatch import load_builtin_plugins
+    from kata.packages.registry import all_plugins
+
+    load_builtin_plugins()
+    for plugin in all_plugins():
+        plugin.register_cli(subparsers)
     return parser
 
 
@@ -433,40 +433,6 @@ def _add_round_parser(subparsers) -> None:
     round_cmd.set_defaults(handler=handle_round)
 
 
-def _add_sn60_baseline_parser(subparsers) -> None:
-    baseline_cmd = subparsers.add_parser(
-        "sn60-baseline",
-        help="Score one proof-only SN60 baseline artifact without evaluating the Kata king.",
-    )
-    baseline_cmd.add_argument(
-        "--candidate",
-        required=True,
-        metavar="ID=PATH",
-        help="The baseline artifact as '<submission-id>=<artifact-path>'.",
-    )
-    baseline_cmd.add_argument(
-        "--sn60-project-key",
-        action="append",
-        required=True,
-        help="SN60 project key to score the baseline on. Repeat per project.",
-    )
-    baseline_cmd.add_argument(
-        "--output-root",
-        default=None,
-        help="Optional base directory for baseline artifacts. Defaults to ./runs.",
-    )
-    baseline_cmd.add_argument("--sn60-replicas-per-project", type=int, default=None)
-    baseline_cmd.add_argument("--sn60-sandbox-root", default=None)
-    baseline_cmd.add_argument("--sn60-benchmark-file", default=None)
-    baseline_cmd.add_argument("--sn60-sandbox-commit", default=None)
-    baseline_cmd.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit machine-readable JSON instead of text.",
-    )
-    baseline_cmd.set_defaults(handler=handle_sn60_baseline)
-
-
 def handle_king_promote(args: argparse.Namespace) -> int:
     summary = load_challenge_summary(args.challenge_run)
     # Default to None (not cwd) so promotion resolves the public root the same
@@ -597,73 +563,6 @@ def handle_round(args: argparse.Namespace) -> int:
     else:
         print(plugin.render_round_text(result))
     return 0
-
-
-def handle_sn60_baseline(args: argparse.Namespace) -> int:
-    from kata.packages.sn60.cli import sn60_variant_detail
-
-    submission_id, artifact_path = parse_round_candidate(args.candidate)
-    result = run_sn60_baseline_only(
-        submission_id=submission_id,
-        artifact_path=artifact_path,
-        project_keys=args.sn60_project_key,
-        output_root=args.output_root,
-        replicas_per_project=args.sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
-        sandbox_root=args.sn60_sandbox_root,
-        benchmark_file=args.sn60_benchmark_file,
-        sandbox_commit=args.sn60_sandbox_commit,
-    )
-    runs_per_project = result.replicas_per_project
-    if args.json:
-        print_json(
-            {
-                "run_id": result.run_id,
-                "baseline_summary_path": str(
-                    (Path(result.output_root) / "baseline_summary.json").resolve()
-                ),
-                "competition_mode": result.competition_mode,
-                "validator_replica_count": 1,
-                "runs_per_project": runs_per_project,
-                "project_pass_threshold": project_pass_threshold_label(runs_per_project),
-                "project_keys": result.project_keys,
-                "replicas_per_project": result.replicas_per_project,
-                "sandbox_source": {
-                    "sandbox_root": result.sandbox_source.sandbox_root,
-                    "benchmark_file": result.sandbox_source.benchmark_file,
-                    "benchmark_sha256": result.sandbox_source.benchmark_sha256,
-                    "sandbox_commit": result.sandbox_source.sandbox_commit,
-                    "scorer_version": result.sandbox_source.scorer_version,
-                },
-                "entries": [
-                    {
-                        "submission_id": result.submission_id,
-                        "beats_king": None,
-                        "selected_winner": False,
-                        "duel_run_id": result.run_id,
-                        **sn60_variant_detail(result.baseline),
-                    }
-                ],
-            }
-        )
-    else:
-        print(render_sn60_baseline_result(result))
-    return 0
-
-
-def render_sn60_baseline_result(result) -> str:  # type: ignore[no-untyped-def]
-    lines = [
-        f"SN60 baseline replay {result.run_id}",
-        "mode: baseline-only proof replay",
-        "kata king evaluated: no",
-        (
-            f"baseline pass score {sn60_pass_score(result.baseline):.3f} "
-            f"({result.baseline.codebase_pass_count}/"
-            f"{len(result.baseline.project_summaries)} projects, "
-            f"detection {result.baseline.aggregated_score:.3f}, "
-            f"tp {result.baseline.true_positives}/{result.baseline.total_expected})"
-        ),
-    ]
-    return "\n".join(lines)
 
 
 def handle_lane_init(args: argparse.Namespace) -> int:

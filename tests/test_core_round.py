@@ -15,7 +15,7 @@ from pathlib import Path
 from kata.core.round import run_plugin_round
 from kata.packages.plugin import EnvSpec, ScoreCard, ScoringProfile, SubnetPlugin
 from kata.packages.sn60 import Sn60BitsecPlugin
-from kata.validator_system import run_sn60_round
+from kata.packages.sn60.validator_system import run_sn60_round
 
 
 class _NumPlugin(SubnetPlugin):

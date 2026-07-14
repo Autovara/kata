@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from kata.validator_system.model_relay import (
+from kata.packages.sn60.validator_system.model_relay import (
     ADMIN_TOKEN_HEADER,
     AGENT_BUDGET,
     COST_METER,

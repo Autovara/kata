@@ -1,10 +1,10 @@
-"""Tests for the sealed-room (TEE) Kata-side logic in kata.validator_system.tee_room.
+"""Tests for the sealed-room (TEE) Kata-side logic in kata.packages.sn60.validator_system.tee_room.
 
 Uses fake launcher/verifier so the whole flow is testable without a real TEE.
 """
 import hashlib
 
-from kata.validator_system.tee_room import (
+from kata.packages.sn60.validator_system.tee_room import (
     RoomPolicy,
     RoomResult,
     VerifiedQuote,

@@ -33,7 +33,7 @@ from kata.packages.plugin import (
     ScoringProfile,
     SubnetPlugin,
 )
-from kata.validator_system.challenge import (
+from kata.packages.sn60.validator_system.challenge import (
     SN60_MINER_LANE_ID,
     SN60_VALIDATOR_MODEL,
     _apply_running_metrics,
@@ -42,7 +42,7 @@ from kata.validator_system.challenge import (
     sn60_pass_score,
     sn60_variant_rank,
 )
-from kata.validator_system.project_selection import resolve_sn60_project_keys
+from kata.packages.sn60.validator_system.project_selection import resolve_sn60_project_keys
 
 DEFAULT_SCORER_VERSION = "ScaBenchScorerV2"
 

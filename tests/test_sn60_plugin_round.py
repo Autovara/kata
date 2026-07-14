@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from kata.packages.sn60 import Sn60BitsecPlugin, run_sn60_plugin_round
-from kata.validator_system import run_sn60_round
+from kata.packages.sn60.validator_system import run_sn60_round
 
 
 def _write_detection_bundle(root: Path, detection: float) -> None:

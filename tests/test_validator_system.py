@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import Sn60SandboxSource
-from kata.validator_system.project_selection import (
+from kata.packages.sn60.validator_system.project_selection import (
     parse_sn60_project_keys_from_env,
     resolve_sn60_project_keys,
     sample_sn60_project_keys,
@@ -65,7 +65,7 @@ def test_resolve_sn60_project_keys_samples_benchmark(tmp_path: Path, monkeypatch
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "2")
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SECRET", "secret")
     monkeypatch.setattr(
-        "kata.validator_system.project_selection.secrets.token_hex",
+        "kata.packages.sn60.validator_system.project_selection.secrets.token_hex",
         lambda _size: "nonce",
     )
 
@@ -77,7 +77,7 @@ def test_resolve_sn60_project_keys_samples_benchmark(tmp_path: Path, monkeypatch
         scorer_version="ScaBenchScorerV2",
     )
     monkeypatch.setattr(
-        "kata.validator_system.project_selection.resolve_sn60_sandbox_source",
+        "kata.packages.sn60.validator_system.project_selection.resolve_sn60_sandbox_source",
         lambda **_kwargs: source,
     )
     selected = resolve_sn60_project_keys(

@@ -18,7 +18,7 @@ from kata.evaluators.sn60_bitsec import (
     hash_bundle_root,
     write_sn60_duel_summary,
 )
-from kata.validator_system.challenge import (
+from kata.packages.sn60.validator_system.challenge import (
     DEFAULT_SN60_ROUND_SCHEMA_VERSION,
     Sn60RoundEntry,
     Sn60RoundResult,
@@ -33,7 +33,7 @@ from kata.validator_system.challenge import (
     write_challenge_summary,
     write_sn60_round_summary,
 )
-from kata.validator_system.screening import screening_result_payload
+from kata.packages.sn60.validator_system.screening import screening_result_payload
 
 from .plugin import Sn60BitsecPlugin, Sn60Problems
 from .progress import Sn60RoundProgress

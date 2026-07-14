@@ -1,4 +1,4 @@
-from kata.validator_system.challenge import (
+from kata.packages.sn60.validator_system.challenge import (
     CHALLENGE_SUMMARY_SCHEMA_VERSION,
     DEFAULT_SN60_ROUND_SCHEMA_VERSION,
     SN60_ENABLE_SCREENER_PROJECT_ENV,
@@ -25,7 +25,7 @@ from kata.validator_system.challenge import (
     write_challenge_summary,
     write_sn60_round_summary,
 )
-from kata.validator_system.project_selection import (
+from kata.packages.sn60.validator_system.project_selection import (
     SN60_PROJECT_SAMPLE_SECRET_ENV,
     SN60_PROJECT_SAMPLE_SIZE_ENV,
     parse_sn60_project_keys_from_env,
@@ -33,7 +33,7 @@ from kata.validator_system.project_selection import (
     resolve_sn60_project_keys,
     sample_sn60_project_keys,
 )
-from kata.validator_system.screening import (
+from kata.packages.sn60.validator_system.screening import (
     DEFAULT_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS,
     SN60_SCREENING_SCHEMA_VERSION,
     SN60_SCREENING_STAGE_EXECUTION,

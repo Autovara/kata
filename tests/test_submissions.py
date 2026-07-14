@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from kata.packages.sn60.evaluate import evaluate_submission
+from kata.packages.sn60.validator_system import run_sn60_challenge, sample_sn60_project_keys
 from kata.screening_system.rules import hash_submission_bundle
 from kata.state_system.lane import (
     KING_STATE_SCHEMA_VERSION,
@@ -34,7 +35,6 @@ from kata.submission_system import (
     verify_submission_result,
 )
 from kata.submission_system.bundle import AGENT_MANIFEST_FILENAME, write_agent_manifest
-from kata.validator_system import run_sn60_challenge, sample_sn60_project_keys
 
 SCREENING_DESCRIPTION = (
     "A privileged state-changing function can be called by any account, "
@@ -898,7 +898,7 @@ def test_evaluate_submission_samples_benchmark_project_keys_from_env(
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "2")
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SECRET", "validator-secret")
     monkeypatch.setattr(
-        "kata.validator_system.project_selection.secrets.token_hex",
+        "kata.packages.sn60.validator_system.project_selection.secrets.token_hex",
         lambda _size: "nonce-1",
     )
     monkeypatch.setattr(

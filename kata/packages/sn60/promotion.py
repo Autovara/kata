@@ -17,7 +17,7 @@ from kata.evaluators.sn60_bitsec import (
     Sn60SandboxSource,
     Sn60VariantSummary,
 )
-from kata.validator_system.challenge import record_sn60_lane_provenance
+from kata.packages.sn60.validator_system.challenge import record_sn60_lane_provenance
 
 
 def record_sn60_promotion_provenance(

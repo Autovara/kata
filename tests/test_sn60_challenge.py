@@ -12,17 +12,17 @@ from kata.evaluators.sn60_bitsec import (
     Sn60VariantSummary,
 )
 from kata.packages.sn60.promotion import load_sn60_duel_summary
-from kata.state_system.lane import (
-    load_benchmark_snapshot,
-    load_challenge_state,
-    load_promotion_record,
-)
-from kata.validator_system import (
+from kata.packages.sn60.validator_system import (
     SN60_MINER_LANE_ID,
     evaluate_sn60_promotion,
     load_challenge_summary,
     run_sn60_challenge,
     run_sn60_round,
+)
+from kata.state_system.lane import (
+    load_benchmark_snapshot,
+    load_challenge_state,
+    load_promotion_record,
 )
 
 SCREENING_DESCRIPTION = (

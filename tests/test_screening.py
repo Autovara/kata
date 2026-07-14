@@ -4,6 +4,13 @@ import json
 from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import Sn60ReplicaContext, resolve_sn60_sandbox_source
+from kata.packages.sn60.validator_system.screening import (
+    SN60_SCREENING_STAGE_EXECUTION,
+    SN60_SCREENING_STAGE_STATIC,
+    run_sn60_screening,
+    validate_sn60_screening_report,
+    validate_sn60_static_screening,
+)
 from kata.screening_system import screen_submission
 from kata.screening_system.llm_review import resolve_llm_benchmark_file
 from kata.screening_system.models import ScreeningFinding
@@ -11,13 +18,6 @@ from kata.screening_system.rules import (
     MAX_SUBMISSION_BUNDLE_BYTES,
     MAX_SUBMISSION_FILE_BYTES,
     screen_submission_bundle_files,
-)
-from kata.validator_system.screening import (
-    SN60_SCREENING_STAGE_EXECUTION,
-    SN60_SCREENING_STAGE_STATIC,
-    run_sn60_screening,
-    validate_sn60_screening_report,
-    validate_sn60_static_screening,
 )
 
 SCREENING_DESCRIPTION = (

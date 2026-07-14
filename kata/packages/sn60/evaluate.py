@@ -10,14 +10,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import DEFAULT_REPLICAS_PER_PROJECT
-from kata.promotion_system import resolve_lane_king_artifact
-from kata.screening_system.rules import hash_submission_bundle
-from kata.submission_system.workflow import is_evaluable_submission, validate_submission
-from kata.validator_system import (
+from kata.packages.sn60.validator_system import (
     ChallengeSummary,
     resolve_sn60_project_keys,
     run_sn60_challenge,
 )
+from kata.promotion_system import resolve_lane_king_artifact
+from kata.screening_system.rules import hash_submission_bundle
+from kata.submission_system.workflow import is_evaluable_submission, validate_submission
 
 
 def evaluate_submission(

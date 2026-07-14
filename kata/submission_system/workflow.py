@@ -4,8 +4,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from kata import validator_system as _validator_system
 from kata.packages.dispatch import plugin_for_evaluator
+from kata.packages.sn60 import validator_system as _validator_system
 from kata.promotion_system import LanePromotionResult
 from kata.promotion_system import (
     find_evaluator_pack_entry as find_evaluator_pack_entry,

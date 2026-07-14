@@ -22,8 +22,8 @@ import os
 import re
 from pathlib import Path
 
-from kata.validator_system import run_sn60_round
-from kata.validator_system.challenge import run_sn60_candidate_only_round
+from kata.packages.sn60.validator_system import run_sn60_round
+from kata.packages.sn60.validator_system.challenge import run_sn60_candidate_only_round
 
 GOLDEN_DIR = Path(__file__).parent / "characterization"
 

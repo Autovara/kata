@@ -243,7 +243,8 @@ class HttpRoomLauncher:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"room HTTP {exc.code}: {exc.read().decode(errors='replace')[:400]}") from exc
+            body = exc.read().decode(errors="replace")[:400]
+            raise RuntimeError(f"room HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"could not reach room: {exc.reason}") from exc
         if "report" not in data or "quote" not in data:

@@ -7,6 +7,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from kata.packages.sn60.evaluate import evaluate_submission
+from kata.packages.sn60.validator_system import (
+    load_challenge_summary,
+    render_challenge_summary,
+)
 from kata.state_system.lane import (
     LANE_METADATA_SCHEMA_VERSION,
     EvaluatorLaneMetadata,
@@ -30,10 +34,6 @@ from kata.submission_system import (
     render_submission_verification,
     validate_submission,
     verify_submission_result,
-)
-from kata.validator_system import (
-    load_challenge_summary,
-    render_challenge_summary,
 )
 
 

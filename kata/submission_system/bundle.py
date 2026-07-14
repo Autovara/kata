@@ -9,6 +9,9 @@ from pathlib import Path
 
 AGENT_ENTRY_FILENAME = "agent.py"
 AGENT_MANIFEST_FILENAME = "agent_manifest.json"
+# The miner's inference key, sealed to the room (sealed-room / TEE execution). Ciphertext,
+# only openable inside the attested room -- safe to carry in the public submission bundle.
+SEALED_KEY_FILENAME = "sealed_inference_key"
 HELPERS_DIRNAME = "helpers"
 AGENT_MANIFEST_SCHEMA_VERSION = 1
 DEFAULT_AGENT_RUNTIME = "python"
@@ -75,7 +78,7 @@ def is_allowed_bundle_relative_path(relative_path: str) -> bool:
         return False
     if any(part in {"..", ""} for part in path.parts):
         return False
-    if path.as_posix() in {AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME}:
+    if path.as_posix() in {AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME, SEALED_KEY_FILENAME}:
         return True
     if not path.parts or path.parts[0] != HELPERS_DIRNAME:
         return False

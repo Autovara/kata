@@ -21,6 +21,10 @@ ProblemSet = Any
 RawRun = Any
 
 NetworkPolicy = Literal["none", "relay_only", "allowlist"]
+# Where a candidate runs: "sandbox" (local, validator-run) or "tee" (a remote sealed room the miner
+# pays for, e.g. the Phala confidential VM). The platform reads this to pick the execution backend
+# generically, so a subnet opts into miner-paid TEE execution by declaring it here.
+ExecutionBackend = Literal["sandbox", "tee"]
 
 
 class ScoringProfile(str, Enum):
@@ -47,6 +51,8 @@ class EnvSpec:
     required_secrets: tuple[str, ...] = ()
     # Per-subnet relay model; None means the platform default.
     pinned_model: str | None = None
+    # Execution backend the lane runs candidates in (see ExecutionBackend). Default: local sandbox.
+    execution: ExecutionBackend = "sandbox"
     resources: dict[str, Any] = field(default_factory=dict)
 
 

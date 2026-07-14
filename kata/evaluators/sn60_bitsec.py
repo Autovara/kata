@@ -897,6 +897,11 @@ def build_default_execution_hook(
     timeout_env_name: str = "KATA_SN60_EXECUTION_TIMEOUT_SECONDS",
     timeout_default: float = DEFAULT_EXECUTION_SUBPROCESS_TIMEOUT_SECONDS,
 ) -> Sn60ExecutionHook:
+    if _sn60_use_tee_room():
+        # Run candidates in a sealed room (miner pays, owner never sees the key) instead of
+        # the local sandbox. Opt-in via KATA_SN60_USE_TEE_ROOM; default stays the sandbox.
+        return build_tee_room_execution_hook(source)
+
     def _execute(context: Sn60ReplicaContext) -> dict[str, object]:
         proxy_network = resolve_sn60_proxy_network()
         # Scope the relay's per-agent inference budget to THIS problem: embed a
@@ -975,6 +980,78 @@ def build_default_execution_hook(
             "success": False,
             "error": "Bitsec execution command completed without writing report.json.",
         }
+
+    return _execute
+
+
+def _sn60_use_tee_room() -> bool:
+    return os.environ.get("KATA_SN60_USE_TEE_ROOM", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def resolve_sn60_room_url() -> str:
+    url = os.environ.get("KATA_SN60_ROOM_URL", "").strip()
+    if not url:
+        raise RuntimeError("KATA_SN60_USE_TEE_ROOM is set but KATA_SN60_ROOM_URL is empty")
+    return url
+
+
+def resolve_sn60_room_policy():
+    from kata.validator_system.tee_room import RoomPolicy
+
+    raw = os.environ.get("KATA_SN60_ROOM_MEASUREMENTS", "")
+    measurements = frozenset(m.strip() for m in raw.split(",") if m.strip())
+    if not measurements:
+        raise RuntimeError(
+            "KATA_SN60_ROOM_MEASUREMENTS must list the approved runner image measurement(s)"
+        )
+    return RoomPolicy(approved_measurements=measurements)
+
+
+def resolve_candidate_sealed_key(bundle_root: str) -> str:
+    """The candidate's sealed inference-key blob: from the submission bundle, else env."""
+    path = Path(bundle_root).expanduser().resolve() / "sealed_inference_key"
+    if path.exists():
+        return path.read_text(encoding="utf-8").strip()
+    return os.environ.get("KATA_SN60_SEALED_INFERENCE_KEY", "").strip()
+
+
+def build_tee_room_execution_hook(source: Sn60SandboxSource) -> Sn60ExecutionHook:
+    """Run a candidate inside a sealed room (Phala/dstack) instead of the local sandbox.
+
+    The miner pays the inference and the owner never sees the key; Kata verifies the room's
+    attestation and returns the verified report for the normal judge to score.
+    """
+    from kata.validator_system.tee_room import (
+        DcapQvlVerifier,
+        HttpRoomLauncher,
+        evaluate_candidate_in_room,
+    )
+
+    launcher = HttpRoomLauncher(resolve_sn60_room_url())
+    policy = resolve_sn60_room_policy()
+    verifier = DcapQvlVerifier()
+    seen_nonces: set = set()
+
+    def _execute(context: Sn60ReplicaContext) -> dict[str, object]:
+        sealed_key = resolve_candidate_sealed_key(context.bundle_root)
+        if not sealed_key:
+            return {"success": False, "error": "no sealed inference key for this candidate."}
+        outcome = evaluate_candidate_in_room(
+            candidate_id=context.variant_name,
+            agent_ref=context.bundle_root,
+            project_key=context.project_key,
+            sealed_key_ref=sealed_key,
+            nonce=os.urandom(20),
+            policy=policy,
+            launcher=launcher,
+            verifier=verifier,
+            seen_nonces=seen_nonces,
+        )
+        if not outcome.accepted:
+            return {"success": False, "error": f"sealed-room run rejected: {outcome.reason}"}
+        if isinstance(outcome.report, dict):
+            return outcome.report
+        return {"success": False, "error": "sealed-room report was not a JSON object."}
 
     return _execute
 

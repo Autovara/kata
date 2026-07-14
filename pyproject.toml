@@ -8,7 +8,10 @@ license = "MIT"
 authors = [
   { name = "Kata maintainers" }
 ]
-dependencies = []
+dependencies = [
+  # TDX quote verification for sealed-room (TEE) SN60 execution (KATA_SN60_USE_TEE_ROOM).
+  "dcap-qvl>=0.5",
+]
 
 [project.optional-dependencies]
 dev = [

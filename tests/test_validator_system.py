@@ -64,10 +64,6 @@ def test_resolve_sn60_project_keys_samples_benchmark(tmp_path: Path, monkeypatch
     benchmark = write_benchmark(sandbox_root)
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "2")
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SECRET", "secret")
-    monkeypatch.setattr(
-        "kata.validator_system.project_selection.secrets.token_hex",
-        lambda _size: "nonce",
-    )
 
     source = Sn60SandboxSource(
         sandbox_root=str(sandbox_root),
@@ -94,8 +90,41 @@ def test_resolve_sn60_project_keys_samples_benchmark(tmp_path: Path, monkeypatch
         ["proj-a", "proj-b", "proj-c", "proj-d"],
         sample_size=2,
         sample_secret="secret",
-        sample_nonce="nonce",
+        sample_nonce="",
         king_artifact_hash="king",
         candidate_artifact_hash="candidate",
         candidate_submission_id="alice-20260708-01",
     )
+
+
+def test_resolve_sn60_project_keys_is_reproducible_across_calls(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark = write_benchmark(sandbox_root)
+    monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "2")
+    monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SECRET", "secret")
+
+    source = Sn60SandboxSource(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark),
+        benchmark_sha256="benchmark",
+        sandbox_commit="sandbox",
+        scorer_version="ScaBenchScorerV2",
+    )
+    monkeypatch.setattr(
+        "kata.validator_system.project_selection.resolve_sn60_sandbox_source",
+        lambda **_kwargs: source,
+    )
+
+    kwargs = dict(
+        configured_keys=None,
+        sandbox_root=None,
+        benchmark_file=None,
+        sandbox_commit=None,
+        king_artifact_hash="king",
+        candidate_artifact_hash="candidate",
+        candidate_submission_id="alice-20260708-01",
+    )
+
+    assert resolve_sn60_project_keys(**kwargs) == resolve_sn60_project_keys(**kwargs)

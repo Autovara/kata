@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "nickmopen-20260713-01",
+  "created_at": "2026-07-13T00:00:00+00:00",
+  "author": "nickmopen",
+  "title": "Completion-safe depth-first multi-language auditor",
+  "notes": "Risk-ranked full-source audits at completion-safe context sizing (fits the 24k output budget), split across 3 focused calls; multi-language; findings localized to contract.function with mechanism + impact."
+}

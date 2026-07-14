@@ -1,39 +1,21 @@
-"""Tests: resolving the subnet plugin for a submission/lane.
+"""Tests: resolving the subnet plugin for a submission/lane, with no subnet installed.
 
-Uses the in-repo ``sn22`` stub as the concrete registered subnet (real subnets like SN60 live in
-their own repos and are discovered via entry points when installed).
+kata itself declares no subnet -- each real subnet lives in its own repo and is discovered via a
+``kata.subnets`` entry point. These check the negative paths that hold regardless of what is
+installed; discovery-with-a-real-subnet is tested in the subnet repos (e.g. kata-sn22).
 """
 
 from __future__ import annotations
 
-import pytest
-
 from kata.packages.dispatch import load_builtin_plugins, plugin_for_evaluator
-from kata.packages.registry import clear_registry, get_plugin_or_none
 
 
-@pytest.fixture(autouse=True)
-def _keep_builtins_registered():
-    yield
-    load_builtin_plugins()  # leave the registry in its normal (discovered) state
-
-
-def test_plugin_for_evaluator_resolves_registered() -> None:
-    plugin = plugin_for_evaluator("sn22_desearch")
-    assert plugin is not None
-    assert plugin.evaluator_id == "sn22_desearch"
+def test_load_builtin_plugins_no_subnet_installed_is_noop() -> None:
+    # With no subnet package installed, discovery finds nothing and must not raise.
+    load_builtin_plugins()
 
 
 def test_plugin_for_evaluator_unknown_or_blank() -> None:
     assert plugin_for_evaluator("does-not-exist") is None
     assert plugin_for_evaluator(None) is None
     assert plugin_for_evaluator("") is None
-
-
-def test_load_builtin_plugins_repairs_cleared_registry() -> None:
-    load_builtin_plugins()
-    assert get_plugin_or_none("sn22_desearch") is not None
-    clear_registry()
-    assert get_plugin_or_none("sn22_desearch") is None
-    load_builtin_plugins()  # defensively re-registers even after the module import cache
-    assert get_plugin_or_none("sn22_desearch") is not None

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "peter-rango-20260714-01",
+  "created_at": "2026-07-14T00:00:00+00:00",
+  "author": "peter-rango",
+  "title": "Graph-guided depth audit miner",
+  "notes": "Bounded repository mapping plus focused value-flow and cross-module audits."
+}

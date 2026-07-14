@@ -67,9 +67,6 @@ from kata.submission_system.validation import (
 )
 from kata.util import dedupe
 
-SN60_PROJECT_SAMPLE_SECRET_ENV = _validator_system.SN60_PROJECT_SAMPLE_SECRET_ENV
-SN60_PROJECT_SAMPLE_SIZE_ENV = _validator_system.SN60_PROJECT_SAMPLE_SIZE_ENV
-SN60_VALIDATOR_MODEL = _validator_system.SN60_VALIDATOR_MODEL
 ChallengeSummary = _validator_system.ChallengeSummary
 load_challenge_summary = _validator_system.load_challenge_summary
 
@@ -242,7 +239,7 @@ def plugin_for_submission(
 
 def is_evaluable_submission(metadata: SubmissionMetadata) -> bool:
     # A submission is evaluable when a subnet plugin is registered for its lane; the
-    # dispatch is by evaluator id, not a hardcoded SN60 check.
+    # dispatch is by evaluator id, not a hardcoded subnet check.
     return plugin_for_submission(metadata) is not None
 
 
@@ -366,7 +363,7 @@ def verify_submission_result(
     # Freshness is checked against the lane's plugin identity, not a hardcoded model.
     plugin = plugin_for_evaluator(evaluator_entry.evaluator_id)
     validator_identity = (
-        plugin.validator_identity if plugin is not None else SN60_VALIDATOR_MODEL
+        plugin.validator_identity if plugin is not None else ""
     )
     current_king_hash = (
         resolve_lane_king_hash(

@@ -34,10 +34,12 @@ SKIP_DIRS = frozenset({
 })
 
 RISK_WORDS = (
-    "withdraw", "redeem", "borrow", "repay", "liquidat", "claim", "stake", "deposit",
-    "mint", "burn", "swap", "bridge", "permit", "delegatecall", "assembly", "unchecked",
-    "tx.origin", "upgrade", "initialize", "onlyowner", "onlyrole", "oracle", "price",
-    "share", "collateral", "signature", "ecrecover", "nonce", "reentr", "slippage",
+    "withdraw", "redeem", "borrow", "repay", "liquidat", "claim", "stake", "unstake",
+    "deposit", "mint", "burn", "swap", "bridge", "permit", "delegatecall", "call{",
+    ".call", "assembly", "unchecked", "tx.origin", "selfdestruct", "upgrade",
+    "initialize", "onlyowner", "onlyrole", "oracle", "price", "share", "ratio",
+    "rounding", "fee", "collateral", "solvency", "signature", "ecrecover", "nonce",
+    "reentr", "slippage",
 )
 NAME_WORDS = (
     "vault", "pool", "router", "manager", "controller", "strategy", "market", "oracle",

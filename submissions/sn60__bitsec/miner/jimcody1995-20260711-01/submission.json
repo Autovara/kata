@@ -6,5 +6,5 @@
   "created_at": "2026-07-11T12:20:00+00:00",
   "author": "jimcody1995",
   "title": "Fast dual-audit miner to beat PR #124",
-  "notes": "165s runtime cap, os.walk discovery, structural probes, map triage, 3+4 file dual audits. Sol/Vy/Cairo."
+  "notes": "165s runtime cap, os.walk discovery, structural probes, map triage, 3+4 file dual audits. Sol/Vy/Cairo. Re-run after upstream benchmark-lane update (PR #125 hold)."
 }

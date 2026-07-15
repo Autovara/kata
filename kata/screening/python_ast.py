@@ -82,4 +82,9 @@ def normalize_python_source_for_similarity(source: str) -> str:
         tree = ast.parse(source)
     except SyntaxError:
         return "\n".join(line.strip() for line in source.splitlines() if line.strip())
-    return ast.dump(tree, include_attributes=False)
+    # ``ast.dump`` is not a stable similarity representation across supported
+    # Python versions: added AST fields change its length and can move an
+    # otherwise identical near-copy across the screening threshold.  ``unparse``
+    # gives the same canonical source for equivalent syntax while ignoring
+    # comments and irrelevant formatting.
+    return ast.unparse(tree)

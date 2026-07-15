@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "garis323-20260715-01",
+  "created_at": "2026-07-15T00:00:00+00:00",
+  "author": "garis323",
+  "title": "Structured multi-file security auditor",
+  "notes": "Reads project source and uses the miner-funded inference gateway for structured security analysis."
+}

@@ -42,11 +42,12 @@ contribution workflow, see `docs/workflow.md`.
 ## What belongs where
 
 - Engine changes: `kata/`
-- Round evaluation, ranking, and promotion: `kata/challenge.py` (`run_sn60_round`)
-- King score cache: `kata/evaluators/king_cache.py`
-- Lane and registry state schemas: `kata/lane_state.py`
-- Evaluator adapters: `kata/evaluators/`
-- Submission contract and validation: `kata/submissions.py`, `kata/screening.py`
+- Generic round evaluation and ranking: `kata/core/round.py`
+- Evaluator adapters and evaluator-owned cache policy: the subnet package (for
+  example, `kata-sn60`)
+- Lane and registry state schemas: `kata/state_system/`
+- Plugin contract and registry: `kata/packages/`
+- Submission contract and validation: `kata/submission_system/`, `kata/screening_system/`
 
 Miner submissions belong under `submissions/` via PR, not in engine code.
 

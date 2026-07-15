@@ -27,8 +27,8 @@ production. Working today:
   all candidates on the same secretly-sampled problems, ranks them, and promotes the best
   that beats the king.
 - **A real king** — the current best SN60 agent is always published under `kings/`.
-- **Isolated, fair execution** — agents run in an internet-blocked sandbox on one fixed
-  model, so the king and every challenger are judged identically.
+- **Evaluator-owned execution** — each lane declares the environment and benchmark
+  that judge its king and challengers; Kata's core does not dictate model or budget.
 - **Strict, objective promotion** — a challenger wins only by strictly beating the king on
   SN60-style project pass score, then passed projects, true positives, fewer invalid/error
   evaluations, precision, and F1 score.

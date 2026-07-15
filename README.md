@@ -60,11 +60,11 @@ optimized king agent, no ML expertise required.
   a fixed, versioned benchmark — never by PR size or reviewer opinion.
 - **Reproducible.** Every round records its provenance (benchmark hash, artifact
   hashes, engine version) so results stay comparable over time.
-- **Fair by design.** Contributors submit only an agent. The engine runs every agent
-  on the *same* pinned model in an isolated sandbox, so agents compete on skill — not
-  on private API access or a bigger budget.
-- **Budgeted inference.** For each problem, the relay allows up to 3 successful
-  calls, 150,000 input tokens, and 24,000 output tokens on the pinned Qwen model.
+- **Fair by design.** Contributors submit only an agent. The evaluator runs the king
+  and challengers under the same declared benchmark and execution contract.
+- **Inference-policy neutral core.** Kata does not prescribe a model, provider,
+  credentials, token budget, call limit, retry limit, or sampling policy. Those are
+  owned by the evaluator plugin, so miner-paid inference works without a core change.
 - **One engine, many subnets.** Adding a new subnet target should not require
   an engine rewrite — the same loop produces an optimized king for each.
 
@@ -81,13 +81,14 @@ Kata is a small set of focused components:
 | **kata-board** | Dashboard that reads current king state, the live current round, and the round-history highlights feed. |
 | **sandbox** | Pinned benchmark harness (agent runner + scorer) for the active competition target. Isolated and version-locked; never edited by Kata. |
 
-**Target model.** Each supported subnet target has its own benchmark, scoring rules,
-and current king. The public source of truth for the best promoted agent is `kings/`.
+**Target contract.** Each supported subnet target has its own benchmark, execution
+contract, scoring rules, and current king. The public source of truth for the best
+promoted agent is `kings/`.
 
-**Isolated, fair execution.** Agents run inside an internet-blocked sandbox and reach
-a model only through an endpoint the engine controls. The engine pins every agent to
-one fixed model (today `qwen/qwen3.6-35b-a3b`), so the king and every challenger are
-evaluated on identical footing.
+**Isolated, fair execution.** Agents run in the evaluator's declared execution
+environment. The plugin applies any subnet-specific network, credential, and runtime
+rules; Kata records the evaluator and benchmark provenance but does not choose the
+agent's model or inference budget.
 
 ```
  PR opened/pushed ─▶ intake: screen ─▶ label kata:pending   (no scoring yet)
@@ -97,7 +98,7 @@ evaluated on identical footing.
      ─▶ score all candidates vs the CACHED king on the same sampled problems
      ─▶ rank ─▶ best strictly beats the king? ─▶ merge + promote new king
                             │
-                  pinned, isolated sandbox
+                  evaluator-owned execution environment
 ```
 
 ---

@@ -1,6 +1,7 @@
-# SN60 Miner Submission Checklist
+# Miner Submission Checklist
 
-This is the contributor contract for the current Kata competition:
+This is the common Kata contributor contract. Each evaluator plugin adds its own
+task, report, and execution requirements; the active SN60 lane is one example:
 
 ```text
 sn60__bitsec / miner
@@ -29,8 +30,8 @@ Your PR is ready when all of these are true:
 - Optional Python helper files live under `helpers/` only.
 - Bundle size stays within the candidate limits: max 16 files, max 128 KiB per
   file, and max 256 KiB total.
-- The bundle has no symlinks, hardcoded secrets, provider URLs, or
-  benchmark-answer replay logic.
+- The bundle has no symlinks, hardcoded secrets, Kata platform-secret references,
+  or benchmark-answer replay logic.
 - The bundle passes local validation:
 
 ```bash
@@ -139,12 +140,16 @@ Requirements:
 - `submission_id` must match the directory name.
 - `author` must match the GitHub account that opened the PR.
 
-## Model Access
+## Evaluator-provided inference
 
-Miners do not bring API keys. Kata provides a sandbox inference proxy
-and pins the model for every agent.
+Kata's shared submission and screening systems do **not** impose a model, provider,
+credential source, input/output token limit, call limit, retry limit, or sampling
+policy. Miners may pay for and configure their own inference when the evaluator's
+execution contract supports it. The evaluator plugin documents the exact runtime
+interface for its lane.
 
-Use this contract:
+For an evaluator that provides an OpenAI-compatible inference endpoint, the contract
+may look like this:
 
 - Endpoint: `POST <inference_api>/inference`
 - `inference_api`: use the `agent_main(..., inference_api=...)` argument, or
@@ -154,27 +159,9 @@ Use this contract:
 - Request shape: OpenAI-style chat body, for example
   `{"messages": [...], "max_tokens": 4000}`
 - Response: read `choices[0].message.content`
-- Do not use `Authorization: Bearer`
-- You may include normal request fields, but the relay ignores/strips `model`,
-  `temperature`, `top_p`, `top_k`, `seed`, and similar sampling knobs.
-  Do not rely on them for behavior.
-
-Current validation inference uses the pinned Qwen model:
-
-```text
-qwen/qwen3.6-35b-a3b
-```
-
-Per problem, the relay enforces:
-
-- up to 3 successful model calls
-- up to 150,000 input tokens total
-- up to 24,000 output tokens total
-- each call is capped at 32,000 output tokens
-- further calls return HTTP `429`
-
-Handle failures and `429` by returning the findings you already have. Do not
-crash just because one model call failed.
+- Follow the evaluator's documentation for authentication and request fields.
+- Do not put a private API key in the bundle or its source. Use the evaluator's
+  encrypted or sealed secret mechanism where one is supplied.
 
 Minimal example:
 
@@ -226,9 +213,9 @@ clear hard failure:
 - The bundle contains unsupported files, symlinks, too many files, or oversized
   files. Current candidate limits are max 16 files, max 128 KiB per file, and
   max 256 KiB total. Python helpers are allowed only under `helpers/`.
-- The bundle contains hardcoded API keys, provider endpoints, or direct
-  references to provider/scoring secret env vars such as `OPENAI_API_KEY`,
-  `OPENROUTER_API_KEY`, `CHUTES_API_KEY`, or `KATA_VALIDATOR_API_KEY`.
+- The bundle contains a hardcoded API key or a direct reference to a Kata
+  platform-secret environment variable such as `KATA_VALIDATOR_API_KEY`.
+  An evaluator plugin may apply further subnet-specific secret or network rules.
 - The bundle includes benchmark-answer leakage tokens such as
   `expected_findings`, `ground_truth`, `answer_key`, `scabench`, or `hardsteer`.
 - The agent hardcodes benchmark project IDs, known finding IDs, known report

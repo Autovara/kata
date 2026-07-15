@@ -370,8 +370,8 @@ def _add_round_parser(subparsers) -> None:
     )
     round_cmd.add_argument(
         "--evaluator",
-        default="sn60_bitsec",
-        help="Subnet evaluator id whose plugin runs the round (default: sn60_bitsec).",
+        required=True,
+        help="Subnet evaluator id whose plugin runs the round.",
     )
     round_cmd.add_argument(
         "--king-path",
@@ -386,9 +386,9 @@ def _add_round_parser(subparsers) -> None:
         help="A competing candidate as '<submission-id>=<artifact-path>'. Repeat per entrant.",
     )
     round_cmd.add_argument(
-        "--king-scoreboard",
+        "--round-cache-path",
         default=None,
-        help="Optional path to the persistent per-project king score cache.",
+        help="Optional evaluator-owned cache path for this round.",
     )
     round_cmd.add_argument(
         "--candidate-only",
@@ -579,6 +579,8 @@ def handle_round(args: argparse.Namespace) -> int:
             f"No subnet plugin is registered for evaluator '{args.evaluator}'."
         )
     config = plugin.build_round_config(args)
+    if args.round_cache_path:
+        config["round_cache_path"] = str(Path(args.round_cache_path).expanduser().resolve())
     if args.round_config_json:
         try:
             overrides = json.loads(args.round_config_json)

@@ -17,8 +17,8 @@ For the exact miner bundle contract, see [submissions.md](submissions.md).
   the dashboard.
 - `kata-board` is the dashboard. It reads live round status, current king data, run artifacts,
   the round-history highlights feed, and PR history.
-- `sandbox` is the pinned SN60 Bitsec evaluator mirror. Kata reads and executes
-  against it, but Kata changes must not modify upstream subnet code.
+- An evaluator package owns its benchmark harness and execution environment. Kata
+  reads its plugin contract but does not modify upstream subnet code.
 
 ## Miner Submission Lifecycle
 
@@ -91,20 +91,16 @@ Screening has two parts:
 checks (no model calls). If a hard rule fails, the PR is closed immediately with the
 reason and never receives `kata:pending`:
 
-- hardcoded provider keys or validator-secret env references
+- hardcoded secrets or Kata platform-secret env references
 - benchmark-answer leakage indicators
 - benchmark-specific answer replay, including exact project fingerprints, known
   finding IDs, or prewritten findings for known benchmark projects
 - async or non-callable `agent_main`
 - a stub that directly returns `{"vulnerabilities": []}` without doing any analysis
 
-Static screening currently allows:
-
-- Python helper modules under `helpers/`
-- normal request fields such as `temperature`, `top_p`, `top_k`, and `seed`
-
-Those request fields are still ignored or stripped by the relay during execution, so
-they do not create a model-control advantage.
+The shared screen is intentionally inference-policy neutral: it permits provider
+endpoints and request fields. A subnet plugin may add its own task-specific checks;
+the shared core never mandates a model, token/call/retry limit, or sampling policy.
 
 **Round-start smoke test — runs before scoring when enabled.** Kata runs the candidate
 once on a real benchmark project before scoring. This gate checks only that the agent executes
@@ -128,9 +124,9 @@ round, under the normal execution timeout.
 
 A round scores the king against **all** qualified candidates on the **same** problem set.
 
-- **The king is cached.** Its per-project scores are stored keyed by the king artifact
-  and benchmark version, so the king is scored at most once per problem — not re-run for
-  every round or every candidate. It is recomputed only when the king or benchmark changes.
+- **Evaluator-owned cache policy.** A deterministic evaluator may cache a king score
+  using its artifact and benchmark identity. A live or noisy evaluator can re-score it.
+  Kata's core records the identity and leaves that decision to the plugin.
 - **One sampled problem set per round.** The round samples the round's problems once
   (secret-seeded); every candidate faces that identical set, so results are directly
   comparable. Different rounds sample different problems, which prevents overfitting.

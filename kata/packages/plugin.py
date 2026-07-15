@@ -42,15 +42,13 @@ class ScoringProfile(str, Enum):
 class EnvSpec:
     """The environment a candidate agent must run in."""
 
-    # "none": fully sealed. "relay_only": only the pinned-model relay.
-    # "allowlist": relay + the hosts in ``allowed_hosts`` (live subnets like SN22).
+    # "none": fully sealed. "relay_only": only the subnet's execution gateway.
+    # "allowlist": execution gateway plus the hosts in ``allowed_hosts``.
     network: NetworkPolicy = "relay_only"
     allowed_hosts: tuple[str, ...] = ()
     # Secret env vars the validator injects into the sandbox; never agent-readable
     # output, only inputs the task needs (e.g. a data-provider API key).
     required_secrets: tuple[str, ...] = ()
-    # Per-subnet relay model; None means the platform default.
-    pinned_model: str | None = None
     # Execution backend the lane runs candidates in (see ExecutionBackend). Default: local sandbox.
     execution: ExecutionBackend = "sandbox"
     resources: dict[str, Any] = field(default_factory=dict)

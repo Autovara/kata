@@ -30,43 +30,11 @@ MAX_SUBMISSION_BUNDLE_KIB = 256
 MAX_SUBMISSION_FILE_BYTES = MAX_SUBMISSION_FILE_KIB * 1024
 MAX_SUBMISSION_BUNDLE_BYTES = MAX_SUBMISSION_BUNDLE_KIB * 1024
 
-FORBIDDEN_ENV_REFERENCE_TOKENS = (
+FORBIDDEN_PLATFORM_SECRET_ENV_TOKENS = (
     "KATA_VALIDATOR_API_KEY",
     "KATA_VALIDATOR_API_BASE",
     "KATA_VALIDATOR_MODEL",
-    "CHUTES_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "GOOGLE_API_KEY",
-    "OPENROUTER_API_KEY",
 )
-FORBIDDEN_PROVIDER_SUBSTRINGS = (
-    "api.openai.com",
-    "openrouter.ai",
-    "anthropic.com",
-    "generativelanguage.googleapis.com",
-    "api.groq.com",
-    "api.together.xyz",
-    "api.fireworks.ai",
-    "api.mistral.ai",
-    "api.deepseek.com",
-    "deepinfra.com",
-    "cohere.ai",
-)
-FORBIDDEN_SAMPLING_NAMES = {
-    "temperature",
-    "top_p",
-    "top_k",
-    "min_p",
-    "top_a",
-    "frequency_penalty",
-    "presence_penalty",
-    "repetition_penalty",
-    "seed",
-    "logit_bias",
-    "logprobs",
-    "top_logprobs",
-}
 SECRET_PATTERN = re.compile(
     r"(sk-[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{10,}|hf_[A-Za-z0-9]{10,}|cpk_[A-Za-z0-9]{10,})"
 )
@@ -205,24 +173,13 @@ def screen_bundle_static_policy(bundle_files: dict[str, str]) -> list[ScreeningF
             parsed_trees[relative_path] = ast.parse(content, filename=relative_path)
         except SyntaxError:
             continue
-        for token in FORBIDDEN_ENV_REFERENCE_TOKENS:
+        for token in FORBIDDEN_PLATFORM_SECRET_ENV_TOKENS:
             if token in content:
                 findings.append(
                     reject_finding(
                         "bundle.secret_env",
-                        "Submission bundle must not read validator/provider secret env "
+                        "Submission bundle must not read Kata platform secret env "
                         f"vars directly: {relative_path} references `{token}`.",
-                        path=relative_path,
-                    )
-                )
-        lowered = content.lower()
-        for token in FORBIDDEN_PROVIDER_SUBSTRINGS:
-            if token in lowered:
-                findings.append(
-                    reject_finding(
-                        "bundle.provider_endpoint",
-                        "Submission bundle must not hardcode provider endpoints directly: "
-                        f"{relative_path} references `{token}`.",
                         path=relative_path,
                     )
                 )
@@ -319,43 +276,6 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
                 )
             ]
     return []
-
-
-def screen_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[ScreeningFinding]:
-    findings: list[ScreeningFinding] = []
-    for relative_path, tree in sorted(parsed_trees.items()):
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            for keyword in node.keywords:
-                if keyword.arg in FORBIDDEN_SAMPLING_NAMES:
-                    findings.append(
-                        reject_finding(
-                            "bundle.sampling_parameter",
-                            "Submission bundle must not control model sampling parameters "
-                            f"directly: {relative_path} uses `{keyword.arg}`.",
-                            path=relative_path,
-                            line=getattr(keyword, "lineno", None),
-                        )
-                    )
-                if keyword.arg is None and isinstance(keyword.value, ast.Dict):
-                    for key_node in keyword.value.keys:
-                        if (
-                            isinstance(key_node, ast.Constant)
-                            and isinstance(key_node.value, str)
-                            and key_node.value in FORBIDDEN_SAMPLING_NAMES
-                        ):
-                            findings.append(
-                                reject_finding(
-                                    "bundle.sampling_parameter",
-                                    "Submission bundle must not control model sampling "
-                                    f"parameters directly: {relative_path} uses "
-                                    f"`{key_node.value}`.",
-                                    path=relative_path,
-                                    line=getattr(key_node, "lineno", None),
-                                )
-                            )
-    return findings
 
 
 def reject_finding(

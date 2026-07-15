@@ -27,6 +27,7 @@ from kata.state.lanes import (
     load_pack_registry,
     load_promotion_record,
     pack_registry_path,
+    promotion_record_path,
     resolve_lane_root,
     resolve_lanes_root,
     sync_pack_registry,
@@ -91,7 +92,6 @@ def test_write_and_load_evaluator_lane_state_round_trip(tmp_path: Path) -> None:
         true_positives={"candidate": 11, "king": 8},
         invalid_runs={"candidate": 0, "king": 1},
         final_winner="candidate",
-        reward_label_applied="kata:winner:sn60__bitsec",
         recorded_at="2026-07-01T03:00:00+00:00",
     )
 
@@ -113,6 +113,33 @@ def test_write_and_load_evaluator_lane_state_round_trip(tmp_path: Path) -> None:
     assert loaded.benchmark_snapshot == snapshot
     assert loaded.challenge_state == challenge
     assert loaded.promotion_record == promotion
+
+
+def test_load_promotion_record_ignores_legacy_reward_label_metadata(
+    tmp_path: Path,
+) -> None:
+    path = promotion_record_path("sn60__bitsec", public_root=str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": PROMOTION_RECORD_SCHEMA_VERSION,
+                "final_metrics": {},
+                "local_replica_scores": {"candidate": [], "king": []},
+                "pass_counts": {"candidate": 0, "king": 0},
+                "true_positives": {"candidate": 0, "king": 0},
+                "invalid_runs": {"candidate": 0, "king": 0},
+                "final_winner": "king",
+                "reward_label_applied": "kata:reward:xl",
+                "recorded_at": "2026-07-01T03:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = load_promotion_record("sn60__bitsec", public_root=str(tmp_path))
+
+    assert record.final_winner == "king"
 
 
 def test_lane_discovery_filters_for_lane_metadata_and_active_state(tmp_path: Path) -> None:

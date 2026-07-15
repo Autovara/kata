@@ -22,7 +22,7 @@ registered in Kata, and it runs the full loop end-to-end in
 production. Working today:
 
 - **Round-based competition** — PR open = intake (screen into `kata:pending`,
-  `kata:review`, or `kata:invalid`); a
+  `kata:hold`, or `kata:invalid`); a
   scheduled round then locks the pending PRs, screens them, scores the **cached** king vs.
   all candidates on the same secretly-sampled problems, ranks them, and promotes the best
   that beats the king.

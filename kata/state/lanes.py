@@ -101,7 +101,6 @@ class PromotionRecord:
     true_positives: dict[str, int]
     invalid_runs: dict[str, int]
     final_winner: str
-    reward_label_applied: str | None
     recorded_at: str
 
 
@@ -515,7 +514,6 @@ def parse_promotion_record(payload: dict[str, object]) -> PromotionRecord:
         true_positives=int_map(true_positives),
         invalid_runs=int_map(invalid_runs),
         final_winner=str(payload["final_winner"]),
-        reward_label_applied=optional_string(payload.get("reward_label_applied")),
         recorded_at=str(payload["recorded_at"]),
     )
 

@@ -237,24 +237,18 @@ evaluation. This is implemented today for the live `sn60__bitsec` target:
 | --- | --- | --- |
 | `kata:pending` | blue | Screened and waiting for the next round. |
 | `kata:executing` | yellow | Competing in the round that is running now. |
-| `kata:winner:<target>` | green | Beat the king → merged and promoted to king. |
-| `kata:reward:s` | green | Valid promotion below the higher reward-tier thresholds. |
-| `kata:reward:m` | green | Medium promotion: at least 3 true positives, or +2 true positives over the king, or +15% score delta. |
-| `kata:reward:l` | green | Large promotion: at least 5 true positives, or +4 true positives over the king, or at least 60% detection score. |
-| `kata:reward:xl` | green | Extra-large promotion: at least 8 true positives, or +6 true positives over the king, or at least 85% detection score. |
 | `kata:losing` | grey | Competed but did not beat the king → closed. |
 | `kata:invalid` | red | Failed screening or exceeded the one-open-PR rule → closed. |
-| `kata:review` | gold | Suspicious but non-conclusive screening evidence → held out of rounds until review clears it or the miner pushes a clean update. |
 | `kata:stale` | orange | Benched: unchanged since it last competed → push to re-enter. |
-| `kata:hold` | purple | Won, but the merge is currently blocked → needs attention. |
-| `kata:mode:miner` | grey | The competition mode (applied on a win). |
+| `kata:hold` | purple | Needs human attention before it can continue, such as a screening or promotion safety hold. |
+| `kata:winner:<subnet-pack>` | green | Beat the king → merged and promoted for that subnet. |
+| `kata:defeat:<subnet-pack>` | maroon | A former king was replaced in that subnet. |
 
 Gittensor's **label and score rules** read these labels, so only a verified
-`kata:winner:*` promotion is recognized as a valid result — not PR size or opinion.
-The extra `kata:reward:*` label tells Gittensor how strong the promotion was. Gittensor
-uses the highest matching label multiplier, so a PR with both `kata:winner:sn60__bitsec`
-and `kata:reward:m` is scored with the medium reward multiplier, not the base winner
-multiplier. As more subnets go live, each gets its own `kata:winner:<target>` label.
+`kata:winner:<subnet-pack>` promotion is recognized as a valid result — not PR size or
+opinion. Each subnet has its own winner and defeat labels: for example,
+`kata:winner:sn60__bitsec` / `kata:defeat:sn60__bitsec` and
+`kata:winner:sn22__desearch` / `kata:defeat:sn22__desearch`.
 
 Kata promotions also use Gittensor time decay. A fresh winner has the highest reward
 weight, then older winner PRs decay inside the lookback window. This means a newly

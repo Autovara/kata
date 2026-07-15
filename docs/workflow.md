@@ -11,7 +11,7 @@ For the exact miner bundle contract, see [submissions.md](submissions.md).
   (the cached king vs. all candidates on the same problems), ranks them, records
   provenance, and promotes winners.
 - `kata-bot` is the GitHub automation layer. On a PR event it **intakes** the PR
-  (screen into `kata:pending`, `kata:review`, or `kata:invalid`). When a **round** is run, it locks the pending PRs,
+  (screen into `kata:pending`, `kata:hold`, or `kata:invalid`). When a **round** is run, it locks the pending PRs,
   gates and screens them, calls the engine to score them, applies the outcome labels,
   and merges + promotes the winner. It publishes a live round status and history for
   the dashboard.
@@ -39,7 +39,7 @@ pending entrant; a round scores every pending entrant against the king at once.
 5. **Intake.** `kata-bot` screens the PR (shape + cheap static anti-cheat) and labels it
    `kata:pending` — it now waits for the next round. A failing or identity-mismatched
    PR is closed `kata:invalid` before pending. Suspicious but non-conclusive evidence is
-   held as `kata:review` and cannot score yet. A clean push can re-enter screening.
+   held as `kata:hold` and cannot score yet. A clean push can re-enter screening.
    Hard rejects cannot be bypassed.
    Pushing a commit to a benched (`kata:stale`) PR re-enters it as `kata:pending`.
 
@@ -48,7 +48,7 @@ pending entrant; a round scores every pending entrant against the king at once.
 6. **Lock pending entrants.** The round snapshots currently-open PRs that carry
    `kata:pending`, keeps one PR per contributor (extras closed `kata:invalid`), and
    applies the re-entry rule — a kept-open PR is re-scored only if its commit or the
-   king changed since it last competed. `kata:review` and unlabeled PRs do not enter.
+   king changed since it last competed. `kata:hold` and unlabeled PRs do not enter.
 7. **Execution screener & mark.** The round does not re-run full static/LLM screening;
    that already happened at intake or on the latest push/review command. If enabled,
    the one-project execution screener runs before scoring. Candidates that fail it are
@@ -185,45 +185,24 @@ Passed project count is the primary promotion score.
 
 At the end of a round, each PR resolves to one outcome (and its label):
 
-- **Winner** (`kata:winner:<target>`) — the top candidate that strictly beat the king; it is
-  merged and promoted. At most one per round. Winners also receive exactly one
-  `kata:reward:*` tier for Gittensor/SN74 reward weighting.
+- **Winner** (`kata:winner:<subnet-pack>`) — the top candidate that strictly beat the king;
+  it is merged and promoted. At most one per round.
 - **Kept pending** (`kata:pending`) — a candidate that beat the king but was not the top
   challenger; it stays open to compete again next round.
 - **Losing** (`kata:losing`) — a candidate that entered scoring but did not beat the
   king; closed.
 - **Invalid** (`kata:invalid`) — failed intake screening, failed round-start execution
   screener, or an extra open PR beyond the one-per-contributor limit; closed.
-- **Review** (`kata:review`) — suspicious but non-conclusive screening evidence; held out
-  of rounds until review clears it or the miner pushes a clean update.
+- **Hold** (`kata:hold`) — Kata needs human attention before the PR can continue. This
+  includes suspicious but non-conclusive screening evidence and merge/promotion safety holds.
 - **Stale** (`kata:stale`) — a kept-open PR that was unchanged since it last competed (same
   commit and same king), so it is skipped this round; a push re-enters it as pending.
-- **Hold** (`kata:hold`) — a winner whose merge is currently blocked (merge conflict, or a
-  pre-merge promotion check that would leave the king un-updated); held for attention rather
-  than merged into a broken state.
+- **Defeat** (`kata:defeat:<subnet-pack>`) — a former king replaced by a later winner in the
+  same subnet. The old winner label is removed before this label is applied.
 
 Internally the engine still reduces a single candidate's result to one of `merge`,
 `close-losing`, `close-invalid`, or `rerun-stale`; the round applies these across the batch
 and maps them to the labels above.
-
-## Winner Reward Tiers
-
-The reward tier is separate from the promotion decision. A candidate must first win the
-round and pass the pre-merge promotion checks. Then Kata reads the verified challenge
-summary and applies one tier:
-
-| Label | Condition |
-| --- | --- |
-| `kata:reward:s` | valid promotion below the higher tier thresholds |
-| `kata:reward:m` | candidate true positives >= 3, or candidate beats king by >= 2 true positives, or score delta >= 15% |
-| `kata:reward:l` | candidate true positives >= 5, or candidate beats king by >= 4 true positives, or detection score >= 60% |
-| `kata:reward:xl` | candidate true positives >= 8, or candidate beats king by >= 6 true positives, or detection score >= 85% |
-
-Gittensor uses the highest matching label multiplier on the merged PR. A base winner label
-identifies the competition target (`kata:winner:sn60__bitsec`), while the reward tier determines whether
-the promotion is scored as small, medium, large, or extra-large. Gittensor also applies
-time decay to merged winners, so a newer king has more reward weight than an older winner
-PR inside the lookback window.
 
 ## Freshness And Provenance
 

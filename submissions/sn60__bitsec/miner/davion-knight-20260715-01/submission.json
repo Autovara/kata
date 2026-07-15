@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "davion-knight-20260715-01",
+  "created_at": "2026-07-15T15:35:58.687305+00:00",
+  "author": "davion-knight",
+  "title": "Map-then-audit LLM miner",
+  "notes": "Self-contained stdlib agent. One LLM map call selects the highest-risk targets from a whole-repo map, then two deep-audit calls analyze them in full source context, within the 3-call / 24k-output-token / 150k-input-token per-problem budget. General-purpose LLM analysis only (no hardcoded project fingerprints or canned findings). Emits matcher-shaped high/critical findings; degrades gracefully on 429/errors.",
+  "subnet_pack": "sn60__bitsec"
+}

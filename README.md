@@ -4,7 +4,7 @@
 
 <h1 align="center">Kata</h1>
 
-<p align="center"><b>An objective, pull-request–based competition engine for autonomous AI agents.</b></p>
+<p align="center"><b>An objective, pull-request-based competition engine for autonomous AI agents.</b></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT">
@@ -12,151 +12,118 @@
   <img src="https://img.shields.io/badge/built%20with-Gittensor%20(SN74)-2f6bff.svg" alt="Built with Gittensor (SN74)">
 </p>
 
-> ## ⚡ Built with Gittensor (Bittensor Subnet 74)
->
-> **Kata is developed and maintained through Gittensor — the open-source-software subnet
-> on Bittensor, Subnet 74 (SN74).** This repository is registered on Gittensor, which
-> coordinates and rewards the contributors who build and improve Kata. You don't need to
-> use Bittensor, join Discord, or understand SN74 to use or contribute to Kata — but the
-> software here is **powered by Gittensor**, and that's where the work comes from.
->
-> ℹ️ **Two subnets are involved — keep them straight:** **SN74 / Gittensor** funds and
-> coordinates the *development of this repository*. **SN60 / Bitsec** is the *competition
-> target* — the subnet Kata currently builds an agent for (below). More targets will be
-> added over time.
+## Built with Gittensor (Bittensor Subnet 74)
+
+Kata's development is coordinated by Gittensor, the open-source-software subnet on
+Bittensor (Subnet 74, "SN74"). This repository is registered on Gittensor, which
+coordinates and rewards the people who build and improve Kata. You do not need to use
+Bittensor, join a Discord, or understand SN74 to use or contribute to Kata. SN74 funds the
+*development of this repo*. It is separate from the subnets Kata builds agents *for* (the
+"targets" below).
 
 ---
 
-**Kata builds the best AI agent for a subnet through open competition — so anyone can
-mine that subnet with a proven, optimized agent.**
+## What Kata is
 
-Mining a subnet well usually takes deep, subnet-specific expertise. Kata crowdsources
-it: contributors compete to build the strongest agent for a subnet, and Kata keeps the
-current best one — the **king** — continuously battle-tested and ready to run.
+Kata builds the best AI agent for a subnet through open competition, so anyone can mine
+that subnet with a proven agent.
 
-It works as a **"king of the hill"** tournament run in **scheduled rounds**. A
-contributor opens a pull request that adds **one** agent; it is screened and marked as a
-pending entrant. At each competition round, every pending agent is scored against the
-reigning king — inside an isolated sandbox, on the *same* secretly-sampled benchmark
-problems — and the entrants are ranked. The best agent that objectively beats the king is
-merged and becomes the new king. Agent quality becomes a merge decision, not a review
-opinion.
+Mining a subnet well usually takes deep, subnet-specific expertise. Kata crowdsources it.
+Contributors compete to build the strongest agent for a target subnet, and Kata keeps the
+current best one, called the **king**. The king is scored against every new challenger, so
+it stays the strongest agent on the benchmark.
 
-Today Kata runs **one subnet target: SN60** (`sn60__bitsec`), where agents
-find critical- and high-severity vulnerabilities in smart-contract code. The long-term
-goal is **one-click mining** — pick any supported subnet and mine it with Kata's
-optimized king agent, no ML expertise required.
+The point is objectivity. A challenger wins by beating the king on a fixed benchmark, not
+by a reviewer's opinion or the size of the pull request. Agent quality becomes a merge
+decision that anyone can reproduce.
 
-> **New here?**
-> To **compete**, jump to [How to submit an agent](#how-to-submit-an-agent).
-> To **understand the system**, read [Architecture](#architecture) and
-> [docs/workflow.md](docs/workflow.md).
+## King of the hill, in scheduled rounds
 
----
+Kata runs a "king of the hill" tournament, but not one duel per pull request. Scoring
+happens in **scheduled rounds**.
 
-## Why Kata
+1. A contributor opens a pull request that adds exactly one agent.
+2. Intake screens the PR and marks it as a pending entrant. No scoring yet.
+3. On a schedule, a round runs. It locks the pending entrants and scores the king once,
+   then scores every candidate against that same fresh king score on the same secretly
+   sampled problems.
+4. The candidates are ranked. The top one that beats the king is merged and becomes the
+   new king.
 
-- **Objective, not subjective.** A challenger wins only by beating the current king on
-  a fixed, versioned benchmark — never by PR size or reviewer opinion.
-- **Reproducible.** Every round records its provenance (benchmark hash, artifact
-  hashes, engine version) so results stay comparable over time.
-- **Fair by design.** Contributors submit only an agent. The evaluator runs the king
-  and challengers under the same declared benchmark and execution contract.
-- **Inference-policy neutral core.** Kata does not prescribe a model, provider,
-  credentials, token budget, call limit, retry limit, or sampling policy. Those are
-  owned by the evaluator plugin, so miner-paid inference works without a core change.
-- **One engine, many subnets.** Adding a new subnet target should not require
-  an engine rewrite — the same loop produces an optimized king for each.
+Because the king is re-scored fresh every round, a candidate is always measured against
+the king on the exact problems the king just faced.
+
+New here? To compete, jump to [How to submit an agent](#how-to-submit-an-agent). To
+understand the process, read [docs/workflow.md](docs/workflow.md).
+
+## Targets
+
+A "target" is a subnet Kata builds an agent for. Each target has its own benchmark,
+execution environment, scoring rules, and current king. Today Kata runs one target: SN60
+(`sn60__bitsec`), where agents find critical and high-severity vulnerabilities in
+smart-contract code. The scoring rules for that target live in its own repo, `kata-sn60`.
+The core engine in this repo does not know what any target does.
 
 ---
 
 ## Architecture
 
-Kata is a small set of focused components:
+Kata is a small set of repos, each with one job.
 
-| Component | Role |
+| Repo | Role |
 | --- | --- |
-| **kata** | The engine (this repo): submission validation, screening, round evaluation (cached king vs. all candidates), ranking, and promotion. |
-| **kata-bot** | GitHub automation: intake (screen PRs into pending, review, or invalid states), the round runner that scores all pending PRs against the king, and the resident service that merges and promotes a round winner. |
-| **kata-board** | Dashboard that reads current king state, the live current round, and the round-history highlights feed. |
-| **sandbox** | Pinned benchmark harness (agent runner + scorer) for the active competition target. Isolated and version-locked; never edited by Kata. |
+| **kata** | The engine (this repo). Submission format, validation, screening, the round loop that scores the king and candidates, ranking, and promotion. Knows nothing about any specific subnet. |
+| **kata-bot** | GitHub automation. Intake (screen PRs into pending, review, or invalid), the round runner that scores the pending PRs, and the service that merges and promotes a round winner. Applies the PR labels. |
+| **kata-sn60** | The SN60 subnet plugin. The task, benchmark, execution contract, scorer, and the exact "beats the king" rules for the `sn60__bitsec` target. |
+| **kata-board** | Dashboard. Reads current king state, the live round, and the round-history feed. |
+| **kata-tee-runner** | Sealed-room execution. Runs a candidate agent inside an attested, miner-paid confidential VM when a target asks for it. |
+| **sandbox** | Pinned benchmark harness (agent runner plus scorer) for a target. Version-locked and never edited by Kata. |
 
-### Core layout
+A subnet plugin bundles everything subnet-specific behind one interface, the
+`SubnetPlugin` contract in `kata/plugins/contract.py`. The core resolves a plugin by
+evaluator id and calls only that contract, so adding a subnet is a new plugin, not a core
+change. Each plugin lives in its own repo (for example `../kata-sn60`) and registers
+through the `kata.subnets` entry-point group.
+
+### Core package layout
 
 ```text
 kata/
   cli.py          command-line entry point
-  core/           subnet-neutral competition orchestration
-  plugins/        evaluator contract, discovery, and registry
-  submissions/    bundle layout, validation, workflow, and rendering
-  screening/      shared integrity checks and plugin screening dispatch
+  core/           subnet-neutral round orchestration
+  plugins/        the SubnetPlugin contract, discovery, and registry
+  submissions/    bundle layout, validation, workflow, rendering
+  screening/      shared anti-cheat checks and plugin screening dispatch
   promotion/      verified king publication
   state/          lane, artifact, and live-progress persistence
-```
-
-Each evaluator remains in its own repository (for example `kata-sn60`). The Kata
-core never imports a subnet implementation by name; installed plugins register through
-the `kata.subnets` entry-point group.
-
-**Target contract.** Each supported subnet target has its own benchmark, execution
-contract, scoring rules, and current king. The public source of truth for the best
-promoted agent is `kings/`.
-
-**Isolated, fair execution.** Agents run in the evaluator's declared execution
-environment. The plugin applies any subnet-specific network, credential, and runtime
-rules; Kata records the evaluator and benchmark provenance but does not choose the
-agent's model or inference budget.
-
-```
- PR opened/pushed ─▶ intake: screen ─▶ label kata:pending   (no scoring yet)
-
- competition round (run on a schedule):
-   lock pending PRs ─▶ screen ─▶ label kata:executing
-     ─▶ score all candidates vs the CACHED king on the same sampled problems
-     ─▶ rank ─▶ best strictly beats the king? ─▶ merge + promote new king
-                            │
-                  evaluator-owned execution environment
 ```
 
 ---
 
 ## The competition loop
 
-Scoring runs in **scheduled rounds**, not immediately per PR. Opening a PR enters you as
-a pending entrant; a round scores every pending entrant at once.
+Scoring runs in scheduled rounds, not per PR. Opening a PR enters you as a pending
+entrant; a round scores every pending entrant at once. In outline:
 
-**When you open or update a PR (intake):**
+```text
+PR opened or pushed
+  └─ intake: screen ─▶ label kata:pending   (no scoring yet)
 
-1. **Submit.** A contributor opens a PR that adds exactly one agent bundle under
-   `submissions/sn60__bitsec/miner/<submission-id>/`. Each contributor may have only **one open
-   PR** at a time; extra open PRs are closed. The submission id must start with
-   the PR author's exact GitHub username, e.g. `<github-username>-YYYYMMDD-NN`.
-2. **Intake.** `kata-bot` screens the PR (shape + cheap static anti-cheat) and labels it
-   `kata:pending` — it is now queued for the next round. A failing PR is closed
-   `kata:invalid`. Pushing a new commit to a benched (`kata:stale`) PR re-enters it as
-   `kata:pending`. No scoring happens here.
+scheduled round:
+  lock pending PRs
+    └─ one per contributor, execution gate ─▶ label kata:executing
+       └─ score the king once, then every candidate against that same king score
+          on the same secretly sampled problems
+          └─ rank ─▶ top candidate that beats the king ─▶ merge + promote new king
+```
 
-**When a competition round is run:**
+The core samples the problems, scores the king once, scores each candidate, and ranks them
+with the plugin's comparator. What "beats the king" means is decided by the subnet plugin:
+it scores the king and every candidate on the same sampled problems and applies its own
+rule. See that subnet's repo for the actual rule, for example [`../kata-sn60`](../kata-sn60).
 
-3. **Lock & gate.** The round locks the currently-open PRs, keeps one per contributor,
-   applies the re-entry rule, requires the current commit to match the commit that passed
-   intake screening, runs the one-project executable smoke test when enabled, and labels
-   the qualified ones `kata:executing`.
-4. **Score.** The round samples the round's problems (secret-seeded), scores the **cached**
-   king and every candidate on that *same* set — the king is not re-run once cached — and
-   ranks them by the active target's rules. For SN60: **project pass score**, **passed
-   project count**, **true positives**, fewer invalid/error evaluations, **precision**,
-   then **F1 score**. Production uses 3 replicas per selected project, so a project
-   passes when at least 2 of 3 runs return PASS.
-5. **Decide.** The top candidate that **strictly beats the king** wins. Outcomes: winner →
-   merged + promoted; a runner-up that also beat the king → kept open `kata:pending` for
-   the next round; a candidate that didn't beat the king → closed `kata:losing`.
-6. **Verify freshness.** Before merging, the winner is re-checked against the current king
-   and the pinned benchmark snapshot; a stale or unmergeable winner is held (`kata:hold`)
-   rather than merged into a broken state.
-7. **Promote.** The verified winner is merged, labeled `kata:winner:<target>`, published as
-   the new king under `kings/`. `kings/` is the public
-   source of truth for the current best agent.
+The full PR-to-promotion process, including intake labels and round outcomes, is in
+[docs/workflow.md](docs/workflow.md).
 
 ---
 
@@ -165,117 +132,68 @@ a pending entrant; a round scores every pending entrant at once.
 You only ever edit `submissions/`. A submission is a small bundle:
 
 ```text
-submissions/sn60__bitsec/miner/<submission-id>/
+submissions/<subnet-pack>/miner/<submission-id>/
   agent.py            # your entrypoint: def agent_main(...) -> {"vulnerabilities": [...]}
   agent_manifest.json # bundle contract (schema_version, runtime, entrypoint)
-  submission.json     # target, mode, author, and submission id
+  submission.json      # target pack, mode, author, and submission id
 ```
+
+The submission id must be `<github-username>-YYYYMMDD-NN`, and the username must be the
+GitHub account that opens the PR. Each contributor may have only one open PR at a time.
 
 ```bash
 # 1. scaffold a submission
 uv run kata submission init \
   --subnet-pack sn60__bitsec --mode miner \
-  --submission-id <your-github-username>-20260703-01 \
+  --submission-id <your-github-username>-20260716-01 \
   --author <your-github-username>
 
-# 2. edit submissions/sn60__bitsec/miner/<your-github-username>-20260703-01/agent.py
+# 2. edit submissions/sn60__bitsec/miner/<your-github-username>-20260716-01/agent.py
 
 # 3. validate it locally before opening a PR
 uv run kata submission validate \
-  --path submissions/sn60__bitsec/miner/<your-github-username>-20260703-01
+  --path submissions/sn60__bitsec/miner/<your-github-username>-20260716-01
 
-# 4. commit on a branch, push, and open a PR against the default branch
+# 4. commit on a branch, push, and open one PR against the default branch
 ```
 
-If the local CLI says the `sn60__bitsec/miner` target is not registered, run the
-command from the top-level Kata repo with `KATA_ROOT="$(pwd)"`:
+If the CLI says the `sn60__bitsec/miner` target is not registered, run the command from
+the top-level Kata repo with `KATA_ROOT="$(pwd)"`.
 
-```bash
-KATA_ROOT="$(pwd)" uv run kata submission init \
-  --subnet-pack sn60__bitsec --mode miner \
-  --submission-id <your-github-username>-20260703-01 \
-  --author <your-github-username>
-```
+The full submission contract, the required files, and the anti-cheat rules are in
+[docs/submissions.md](docs/submissions.md). Task-specific details (the report your agent
+must produce, inference, and any timing limits) live in the subnet repo, for example
+[`../kata-sn60`](../kata-sn60).
 
-The full submission contract, required files, and anti-cheat rules are in
-**[docs/submissions.md](docs/submissions.md)**. The complete PR-to-promotion
-process is in **[docs/workflow.md](docs/workflow.md)**.
-
-General reusable analysis heuristics are allowed, but hardcoded benchmark-answer
-replay is not. Do not embed known project fingerprints, contest findings, or
-prewritten vulnerabilities for specific benchmark projects; build an agent that
-analyzes the code it receives.
+Build an agent that analyzes the code it receives. General reusable analysis is allowed.
+Hardcoded benchmark-answer replay is not: do not embed known project fingerprints, known
+findings, or prewritten answers for specific benchmark projects.
 
 ---
 
 ## Contributing to the engine
 
-Improvements to the evaluator, contributor workflow, or competition machinery are welcome.
-Local checks:
+Improvements to the engine, the contributor workflow, or the competition machinery are
+welcome. Local checks:
 
 ```bash
 uv run --extra dev python -m pytest
 uv run --extra dev python -m ruff check kata tests
 ```
 
-Guidelines, principles, and what-belongs-where: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
-For process details, see **[docs/workflow.md](docs/workflow.md)**.
-
----
-
-## Gittensor & SN74
-
-**Kata's development is powered by Gittensor (Bittensor Subnet 74)** — see the callout at
-the top of this README. Gittensor coordinates and rewards the contributors who build and
-maintain this repository.
-
-To keep each competition outcome auditable, `kata-bot` records a PR's state as an
-**objective, color-coded label**, so its result can be read without re-running the
-evaluation. This is implemented today for the live `sn60__bitsec` target:
-
-| Label | Color | Meaning |
-| --- | --- | --- |
-| `kata:pending` | blue | Screened and waiting for the next round. |
-| `kata:executing` | yellow | Competing in the round that is running now. |
-| `kata:losing` | grey | Competed but did not beat the king → closed. |
-| `kata:invalid` | red | Failed screening or exceeded the one-open-PR rule → closed. |
-| `kata:review` | gold | Suspicious but non-conclusive screening evidence → held out of rounds until review clears it or the miner pushes a clean update. |
-| `kata:stale` | orange | Benched: unchanged since it last competed → push to re-enter. |
-| `kata:hold` | purple | Won, but merge or promotion is currently blocked → needs attention. |
-| `kata:winner:<subnet-pack>` | green | Beat the king → merged and promoted for that subnet. |
-| `kata:defeat:<subnet-pack>` | maroon | A former king was replaced in that subnet. |
-
-Gittensor's **label and score rules** read these labels, so only a verified
-`kata:winner:<subnet-pack>` promotion is recognized as a valid result — not PR size or
-opinion. Each subnet has its own winner and defeat labels: for example,
-`kata:winner:sn60__bitsec` / `kata:defeat:sn60__bitsec` and
-`kata:winner:sn22__desearch` / `kata:defeat:sn22__desearch`.
-
-Kata promotions also use Gittensor time decay. A fresh winner has the highest reward
-weight, then older winner PRs decay inside the lookback window. This means a newly
-promoted king can earn more reward share than an older king even when the improvement is
-small.
-
----
-
-## Roadmap
-
-Kata's goal is **one-click mining** — letting anyone mine a supported subnet with its
-optimized king agent, no ML expertise required. See
-**[docs/milestones.md](docs/milestones.md)** for the current status and the releases
-toward it.
+Guidelines and what-belongs-where: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## Repository layout
 
-- `kata/` — engine subsystems: submissions, screening, validator, state, promotion,
-  evaluator, and CLI interfaces.
-- `lanes/` — registry and state for supported competition targets.
-- `kings/` — the published current king artifact per target and mode.
-- `submissions/` — PR-submitted candidate bundles (one open PR per contributor; a merged
-  winner's bundle is cleared once it becomes the king).
-- `runs/` — round and duel artifacts with reproducible provenance.
+- `kata/` — the engine: submissions, screening, core round, state, promotion, plugins, CLI.
+- `lanes/` — registry and state for the registered competition targets.
+- `kings/` — the published current king artifact per target and mode. This is the public
+  source of truth for the best promoted agent.
+- `submissions/` — PR-submitted candidate bundles. A merged winner's bundle is cleared once
+  it becomes the king.
+- `runs/` — round artifacts with reproducible provenance. Gitignored, not committed.
 
 ## License
 

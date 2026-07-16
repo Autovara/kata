@@ -14,6 +14,8 @@ from kata.ast_utils import (
 from kata.provenance import sha256_directory
 from kata.screening.models import ScreeningFinding
 from kata.screening.python_ast import (
+    agent_main_returns_direct_constant_report,
+    agent_main_returns_direct_empty_report,
     dict_contains_string_key,
     iter_direct_function_returns,
 )
@@ -273,6 +275,29 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
                     line=return_node.lineno,
                 )
             ]
+
+    if agent_main_returns_direct_empty_report(agent_main_fn):
+        return [
+            reject_finding(
+                "bundle.no_op_report",
+                "Submission agent_main must not return a direct empty "
+                "`vulnerabilities` list without performing any analysis.",
+                path=AGENT_ENTRY_FILENAME,
+                line=agent_main_fn.lineno,
+            )
+        ]
+
+    if agent_main_returns_direct_constant_report(agent_main_fn):
+        return [
+            reject_finding(
+                "bundle.canned_report",
+                "Submission agent_main must not return a constant canned "
+                "`vulnerabilities` report without reading project input.",
+                path=AGENT_ENTRY_FILENAME,
+                line=agent_main_fn.lineno,
+            )
+        ]
+
     return []
 
 

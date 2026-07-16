@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "lourincedaging0-commits-20260716-01",
+  "created_at": "2026-07-16T20:05:36.825076+00:00",
+  "author": "lourincedaging0-commits",
+  "title": "Full-coverage chunked Solidity auditor",
+  "notes": "Broadens file coverage beyond the baseline king: audits every .sol file via time-budgeted, priority-ranked chunks instead of truncating to 10k chars / capping at 8 files, and removes the fixed 8-finding cap.",
+  "subnet_pack": "sn60__bitsec"
+}

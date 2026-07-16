@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from kata.submissions.bundle import load_bundle_files, replace_bundle_contents
+from kata.submissions.bundle import stage_submission_bundle
 
 KATA_REPO_ROOT = Path(__file__).resolve().parents[1]
 KATA_ROOT_ENV = "KATA_ROOT"
@@ -29,9 +29,9 @@ class PublicKingMetadata:
 @dataclass(frozen=True)
 class PublishedKing:
     king_root: Path
-    # Hash of the PUBLISHED bundle (post-mirror normalization), computed with
-    # the same hasher a later duel uses on kings/. This is what lane state must
-    # record so `king_is_current` stays true.
+    # Hash of the PUBLISHED (byte-for-byte) bundle, computed with the same hasher
+    # a later duel uses on kings/. This is what lane state must record so
+    # `king_is_current` stays true.
     king_artifact_hash: str
 
 
@@ -59,7 +59,15 @@ def mirror_public_king_artifact(
         mode=mode,
     )
     candidate_root = Path(artifact_path).expanduser().resolve()
-    replace_bundle_contents(king_root, load_bundle_files(candidate_root))
+    # Copy the winning bundle byte-for-byte (agent files, submission.json, and the
+    # sealed_inference_key), NOT through a normalizing write. A miner seals its TEE
+    # provider credential to the exact submitted bytes, and the room re-checks that
+    # binding over the king's bytes on every re-scoring round. Normalizing trailing
+    # whitespace/newlines -- or dropping submission.json -- would change those bytes
+    # and make a promoted king's sealed key fail its binding, so the king could
+    # never run in the room again (the original bytes are gone once the submission
+    # directory is cleared). Staging preserves them exactly.
+    stage_submission_bundle(candidate_root, king_root)
     return king_root
 
 
@@ -80,11 +88,10 @@ def publish_public_king(
         mode=mode,
         artifact_path=candidate_artifact_path,
     )
-    # Hash the mirrored bundle, not the source: mirroring normalizes trailing
-    # whitespace/newlines, so the published bytes (which future duels hash) can
-    # differ from candidate_artifact_hash. Recording the source hash here would
-    # make every later duel see king_is_current=False -> a permanent
-    # rerun-stale livelock for any submission that wasn't already normalized.
+    # Hash the published bundle with the same hasher a later duel uses on kings/.
+    # Publication is now byte-for-byte, so this equals candidate_artifact_hash;
+    # recording the published hash keeps `king_is_current` robust even if the
+    # hasher's file set ever diverges from the source snapshot.
     published_hash = artifact_hasher(king_root)
     metadata = PublicKingMetadata(
         repo_pack=repo_pack,

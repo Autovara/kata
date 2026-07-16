@@ -57,6 +57,38 @@ def test_stage_submission_bundle_preserves_metadata_and_source_bytes(tmp_path: P
     assert not (destination / "__pycache__").exists()
 
 
+def test_mirror_public_king_artifact_publishes_source_bytes_verbatim(tmp_path: Path) -> None:
+    from kata.state.artifacts import mirror_public_king_artifact
+
+    source = tmp_path / "candidate"
+    source.mkdir()
+    # Non-canonical bytes (no trailing newline, the common case). A normalizing
+    # write would change these and break the sealed_inference_key binding, which
+    # the room re-checks over the king's bytes on every re-scoring round.
+    agent = b"def agent_main(project_dir=None, inference_api=None):\n    return {'vulns': []}"
+    metadata = b'{"schema_version":2,"subnet_pack":"sn60__bitsec","mode":"miner"}'
+    sealed = b"deadbeef" * 8
+    (source / "agent.py").write_bytes(agent)
+    (source / "agent_manifest.json").write_bytes(
+        b'{"schema_version":1,"runtime":"python","entrypoint":"agent.py"}'
+    )
+    (source / "submission.json").write_bytes(metadata)
+    (source / "sealed_inference_key").write_bytes(sealed)
+
+    king_root = mirror_public_king_artifact(
+        public_root=str(tmp_path / "pub"),
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        artifact_path=str(source),
+    )
+
+    # The promoted king must carry the exact submitted bytes -- including
+    # submission.json and the sealed credential -- so the miner's binding holds.
+    assert (king_root / "agent.py").read_bytes() == agent
+    assert (king_root / "submission.json").read_bytes() == metadata
+    assert (king_root / "sealed_inference_key").read_bytes() == sealed
+
+
 def test_submission_metadata_round_trips_subnet_pack_field(tmp_path: Path) -> None:
     metadata_path = tmp_path / "submission.json"
     metadata = SubmissionMetadata(

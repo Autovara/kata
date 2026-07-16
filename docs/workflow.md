@@ -105,9 +105,11 @@ the shared core never mandates a model, token/call/retry limit, or sampling poli
 **Round-start smoke test — runs before scoring when enabled.** Kata runs the candidate
 once on a real benchmark project before scoring. This gate checks only that the agent executes
 successfully and returns valid report JSON with a top-level `vulnerabilities` list. It
-does **not** require the agent to find a vulnerability on the screener project, and it
-does not contribute to the final score. If it fails because of candidate behavior, the
-PR is closed `kata:invalid` as a screening failure, not `kata:losing`.
+does **not** require the agent to find a vulnerability on the screener project. If that
+project is also in the round's sampled set, Kata reuses the passed report as that project's
+first scoring replica and evaluates it normally; otherwise it is only an admission gate.
+If it fails because of candidate behavior, the PR is closed `kata:invalid` as a screening
+failure, not `kata:losing`.
 
 **Execution note — informational only; never closes a PR.** The candidate already runs
 on every sampled project inside main scoring, so Kata reuses those runs to record a

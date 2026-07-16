@@ -188,10 +188,31 @@ def ask_model(inference_api, prompt):
             "x-inference-api-key": os.environ.get("INFERENCE_API_KEY", ""),
         },
     )
-    with urllib.request.urlopen(request, timeout=120) as response:
+    # SN60 production: give the gateway's 180-second upstream deadline a
+    # small response margin. This is per call; the full agent has its own
+    # 840-second room execution budget.
+    with urllib.request.urlopen(request, timeout=195) as response:
         data = json.loads(response.read().decode())
     return data["choices"][0]["message"]["content"]
 ```
+
+## SN60 Production TEE Timing
+
+The active SN60 lane runs in one miner-funded Phala room. These wall-clock limits protect room
+capacity; they do **not** limit model choice, tokens, number of calls, retries, or miner spending.
+
+| Layer | Value | Who sets it |
+| --- | ---: | --- |
+| One provider request at the room gateway | 180 seconds | Phala: `KATA_INFERENCE_GATEWAY_TIMEOUT=180` |
+| One request in miner agent code | 195 seconds | Miner: `urlopen(..., timeout=195)` |
+| Entire untrusted agent process | 840 seconds | Phala: `KATA_TEE_AGENT_EXECUTION_TIMEOUT_SECONDS=840` |
+| Signed room-request validity and validator HTTP wait | 900 seconds | Validator: `KATA_SN60_ROOM_REQUEST_LIFETIME_SECONDS=900` and `KATA_SN60_ROOM_HTTP_TIMEOUT_SECONDS=900` |
+
+The intended order is `180 < 195 < 840 < 900`. A miner may use any enabled provider and make as
+many miner-funded calls as the agent needs, but the complete agent must finish inside 840 seconds.
+The 900-second signed-request value controls how long a signed request may be accepted; it is not a
+second process timeout. Operators should keep the selected problem images warm in the room so image
+pulling does not consume the validator's HTTP-response margin.
 
 ## What Gets Closed Before A Round
 

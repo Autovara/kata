@@ -27,6 +27,26 @@ def find_module_async_function_def(
     return None
 
 
+def count_module_function_defs(
+    module_tree: ast.AST,
+    function_name: str,
+) -> int:
+    """Count top-level ``def`` / ``async def`` bindings for ``function_name``.
+
+    Python keeps the last binding at runtime, while lookup helpers return the
+    first. Counting both forms lets screening reject decoy+shadow pairs so the
+    validated entrypoint is the one the runner executes.
+    """
+    if not isinstance(module_tree, ast.Module):
+        return 0
+    return sum(
+        1
+        for node in module_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    )
+
+
 def function_supports_no_arg_invocation(function_node: ast.FunctionDef) -> bool:
     positional_args = [*function_node.args.posonlyargs, *function_node.args.args]
     required_positional_args = len(positional_args) - len(function_node.args.defaults)

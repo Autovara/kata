@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from kata.ast_utils import (
+    count_module_function_defs,
     find_module_async_function_def,
     find_module_function_def,
     function_supports_no_arg_invocation,
@@ -231,6 +232,21 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
     agent_tree = parsed_trees.get(AGENT_ENTRY_FILENAME)
     if agent_tree is None:
         return []
+
+    # Python keeps the last top-level binding; find_module_function_def returns the
+    # first. Reject duplicates so screening cannot validate a decoy while the
+    # runner executes a different agent_main (no-op / answer bank / async).
+    if count_module_function_defs(agent_tree, "agent_main") > 1:
+        return [
+            reject_finding(
+                "bundle.agent_main_duplicate",
+                "Submission agent must define agent_main exactly once; duplicate "
+                "definitions let screening validate a different function than the "
+                "sandbox executes.",
+                path=AGENT_ENTRY_FILENAME,
+            )
+        ]
+
     agent_main_fn = find_module_function_def(agent_tree, "agent_main")
     if agent_main_fn is None:
         if find_module_async_function_def(agent_tree, "agent_main") is not None:

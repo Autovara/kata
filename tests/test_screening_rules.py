@@ -34,3 +34,46 @@ def test_shared_screen_rejects_kata_platform_secret_access() -> None:
     )
 
     assert [finding.rule_id for finding in findings] == ["bundle.secret_env"]
+
+
+def test_shared_screen_rejects_duplicate_agent_main_decoy() -> None:
+    """Decoy first + no-op last must not pass: runtime executes the last binding."""
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    findings = analyze(load_project(project_dir))\n"
+            "    return {'vulnerabilities': findings}\n"
+            "\n"
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': []}\n"
+        )
+    )
+
+    assert [finding.rule_id for finding in findings] == ["bundle.agent_main_duplicate"]
+
+
+def test_shared_screen_rejects_duplicate_agent_main_async_shadow() -> None:
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    findings = analyze(load_project(project_dir))\n"
+            "    return {'vulnerabilities': findings}\n"
+            "\n"
+            "async def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': []}\n"
+        )
+    )
+
+    assert [finding.rule_id for finding in findings] == ["bundle.agent_main_duplicate"]
+
+
+def test_shared_screen_allows_single_valid_agent_main() -> None:
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    findings = analyze(load_project(project_dir))\n"
+            "    return {'vulnerabilities': findings}\n"
+        )
+    )
+
+    assert not findings

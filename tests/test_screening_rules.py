@@ -34,3 +34,42 @@ def test_shared_screen_rejects_kata_platform_secret_access() -> None:
     )
 
     assert [finding.rule_id for finding in findings] == ["bundle.secret_env"]
+
+
+def test_shared_screen_rejects_duplicate_agent_main() -> None:
+    # A decoy-first + shadow-last pair must be rejected: screening validates the
+    # first definition, but Python runs the last one at import time (#151).
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': analyze(project_dir)}\n"
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': []}\n"
+        )
+    )
+
+    assert any(finding.rule_id == "bundle.agent_main_duplicate" for finding in findings)
+
+
+def test_shared_screen_rejects_duplicate_agent_main_across_sync_and_async() -> None:
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': analyze(project_dir)}\n"
+            "async def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': []}\n"
+        )
+    )
+
+    assert any(finding.rule_id == "bundle.agent_main_duplicate" for finding in findings)
+
+
+def test_shared_screen_allows_single_agent_main() -> None:
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': []}\n"
+        )
+    )
+
+    assert not any(finding.rule_id == "bundle.agent_main_duplicate" for finding in findings)

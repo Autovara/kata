@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "final_metrics": {
+    "run_id": "sn60-round-20260717T231206Z-9cd331-pr-156",
+    "promotion_ready": true,
+    "promotion_reason": "candidate beat the current SN60 king",
+    "validator_replica_count": 1,
+    "runs_per_project": 3,
+    "project_pass_threshold": "2_of_3",
+    "king_sn60_pass_score": 0.0,
+    "candidate_sn60_pass_score": 0.14285714285714285,
+    "candidate_sn60_pass_score_delta": 0.14285714285714285,
+    "king_detection_score": 0.0,
+    "candidate_detection_score": 0.09090909090909091,
+    "king_aggregated_score": 0.0,
+    "candidate_aggregated_score": 0.09090909090909091,
+    "candidate_aggregated_score_delta": 0.09090909090909091,
+    "king_true_positives": 0,
+    "candidate_true_positives": 6,
+    "king_total_expected": 0,
+    "candidate_total_expected": 66,
+    "king_total_found": 0,
+    "candidate_total_found": 170,
+    "king_precision": 0.0,
+    "candidate_precision": 0.03529411764705882,
+    "king_f1_score": 0.0,
+    "candidate_f1_score": 0.05084745762711864,
+    "king_invalid_runs": 0,
+    "candidate_invalid_runs": 0,
+    "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
+    "benchmark_sha256": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
+    "scorer_version": "ScaBenchScorerV2"
+  },
+  "local_replica_scores": {
+    "king": [],
+    "candidate": [
+      0.5,
+      0.5,
+      0.5,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "pass_counts": {
+    "king": 0,
+    "candidate": 1
+  },
+  "true_positives": {
+    "king": 0,
+    "candidate": 6
+  },
+  "invalid_runs": {
+    "king": 0,
+    "candidate": 0
+  },
+  "final_winner": "candidate",
+  "recorded_at": "2026-07-18T09:58:53.792416+00:00"
+}

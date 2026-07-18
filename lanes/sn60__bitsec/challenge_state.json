@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "candidate_submission_id": "bohdansolovie-20260717-01",
+  "candidate_artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
+  "king_artifact_hash": "b55947053af017dc42e7bf4a64c4db2b7ecfa5f123de4db24233536d4f65b9cf",
+  "screening_result": {
+    "schema_version": 1,
+    "run_id": "candidate-only-73b0d6148b8d",
+    "status": "passed",
+    "stage": "round",
+    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-cvzixw0z/kata-bot-kata-default-k4y0i3dk/submissions/sn60__bitsec/miner/bohdansolovie-20260717-01",
+    "artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
+    "project_key": null,
+    "report_path": null,
+    "result_path": null,
+    "reasons": [],
+    "details": {
+      "source": "promotion"
+    },
+    "sandbox_source": {
+      "sandbox_root": "/srv/sandbox",
+      "benchmark_file": "/srv/sandbox/validator/curated-highs-only-2025-08-08.json",
+      "benchmark_sha256": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
+      "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
+      "scorer_version": "ScaBenchScorerV2"
+    },
+    "created_at": "2026-07-18T00:03:23.256524+00:00"
+  },
+  "selected_project_keys": [
+    "code4rena_loopfi_2025_02",
+    "code4rena_virtuals-protocol_2025_08",
+    "code4rena_bakerfi-invitational_2025_02",
+    "sherlock_symmio_2025_03",
+    "cantina_generic-money_2025_11",
+    "cantina_minimal-delegation_2025_04",
+    "code4rena_pump-science_2025_02"
+  ],
+  "validator_replica_count": 1,
+  "run_ids": [
+    "sn60-round-20260717T231206Z-9cd331-pr-156"
+  ],
+  "freshness_fingerprint": "a37ab503eb55cfa60e18aabd7fd81b5279ad54b1364b1f4b01b842e7de03c648",
+  "updated_at": "2026-07-18T09:58:53.792095+00:00"
+}

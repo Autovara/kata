@@ -1,8 +1,8 @@
 {
   "repo_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "sn60-initial-baseline",
-  "challenge_run_id": "baseline:sn60-initial-baseline",
-  "king_artifact_hash": "cf01db6d6f7e7fbd8d1f57c53ee3a5c1a1ddc0d208632453fe63e8c32fea4f40",
-  "candidate_artifact_hash": "cf01db6d6f7e7fbd8d1f57c53ee3a5c1a1ddc0d208632453fe63e8c32fea4f40"
+  "submission_id": "bohdansolovie-20260717-01",
+  "challenge_run_id": "candidate-only-73b0d6148b8d",
+  "king_artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
+  "candidate_artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c"
 }

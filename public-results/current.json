@@ -1,22 +1,37 @@
 {
-  "schema_version": 1,
-  "updated_at": "2026-07-16T19:30:36.259348+00:00",
-  "active_pack": "sn60__bitsec",
   "active_mode": "miner",
-  "current_king": {
-    "author": null,
-    "submission_id": "sn60-initial-baseline",
-    "source_pull_request": null,
-    "path": "kings/sn60__bitsec/miner",
-    "artifact_hash": "cf01db6d6f7e7fbd8d1f57c53ee3a5c1a1ddc0d208632453fe63e8c32fea4f40",
-    "promoted_at": "2026-07-15T02:48:52.996840+00:00"
-  },
-  "latest_round": null,
+  "active_pack": "sn60__bitsec",
   "benchmark": {
     "name": "curated-highs-only-2025-08-08.json",
     "round_sha256": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
-    "sandbox_commit": "981c93373b7dc49bde9598173e6fa3bd26acc98e",
+    "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
     "scorer_version": "ScaBenchScorerV2"
   },
-  "dashboard_url": "https://dashboardking.ngrok.app"
+  "current_king": {
+    "artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
+    "author": "bohdansolovie",
+    "path": "kings/sn60__bitsec/miner",
+    "promoted_at": "2026-07-18T09:58:53.795287+00:00",
+    "source_pull_request": 156,
+    "submission_id": "bohdansolovie-20260717-01"
+  },
+  "dashboard_url": null,
+  "latest_round": {
+    "best_detection_score": 0.09090909090909091,
+    "best_true_positives": 6,
+    "candidate_count": 1,
+    "competition_mode": "candidate_only",
+    "duration_seconds": null,
+    "finished_at": "2026-07-18T00:03:23.956888+00:00",
+    "outcome": "king_promoted",
+    "proof": "public-results/rounds/sn60-round-20260717T231206Z-9cd331.json",
+    "round_id": "sn60-round-20260717T231206Z-9cd331",
+    "round_number": 2,
+    "started_at": null,
+    "winner_author": "bohdansolovie",
+    "winner_pull_request": 156,
+    "winner_submission_id": "bohdansolovie-20260717-01"
+  },
+  "schema_version": 1,
+  "updated_at": "2026-07-18T09:58:53.839609+00:00"
 }

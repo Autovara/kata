@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "current_king_submission_id": "sn60-initial-baseline",
-  "current_king_artifact_hash": "cf01db6d6f7e7fbd8d1f57c53ee3a5c1a1ddc0d208632453fe63e8c32fea4f40",
+  "current_king_submission_id": "bohdansolovie-20260717-01",
+  "current_king_artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
   "promotion_source_pr": null,
-  "promotion_timestamp": "2026-07-15T02:48:52.996840+00:00",
-  "updated_at": "2026-07-15T02:48:52.996840+00:00"
+  "promotion_timestamp": "2026-07-18T09:58:53.795287+00:00",
+  "updated_at": "2026-07-18T09:58:53.795287+00:00"
 }

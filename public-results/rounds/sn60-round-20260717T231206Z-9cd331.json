@@ -1,0 +1,125 @@
+{
+  "benchmark": {
+    "name": "curated-highs-only-2025-08-08.json",
+    "round_sha256": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
+    "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
+    "scorer_version": "ScaBenchScorerV2"
+  },
+  "best_detection_score": 0.09090909090909091,
+  "best_true_positives": 6,
+  "candidate_count": 1,
+  "competition_mode": "candidate_only",
+  "duration_seconds": null,
+  "entrants": [
+    {
+      "aggregated_score": 0.09090909090909091,
+      "author": "bohdansolovie",
+      "beats_king": null,
+      "codebase_pass_count": 1,
+      "f1_score": 0.05084745762711864,
+      "invalid_runs": 0,
+      "precision": 0.03529411764705882,
+      "projects": [
+        {
+          "detection_rate": 0.5,
+          "f1_score": 0.16666666666666669,
+          "passed": false,
+          "precision": 0.1,
+          "project_key": "cantina_generic-money_2025_11",
+          "total_expected": 6,
+          "total_found": 30,
+          "true_positives": 3
+        },
+        {
+          "detection_rate": 0.0,
+          "f1_score": 0.0,
+          "passed": false,
+          "precision": 0.0,
+          "project_key": "cantina_minimal-delegation_2025_04",
+          "total_expected": 6,
+          "total_found": 30,
+          "true_positives": 0
+        },
+        {
+          "detection_rate": 0.0,
+          "f1_score": 0.0,
+          "passed": false,
+          "precision": 0.0,
+          "project_key": "code4rena_bakerfi-invitational_2025_02",
+          "total_expected": 21,
+          "total_found": 30,
+          "true_positives": 0
+        },
+        {
+          "detection_rate": 0.0,
+          "f1_score": 0.0,
+          "passed": false,
+          "precision": 0.0,
+          "project_key": "code4rena_loopfi_2025_02",
+          "total_expected": 6,
+          "total_found": 20,
+          "true_positives": 0
+        },
+        {
+          "detection_rate": 0.0,
+          "f1_score": 0.0,
+          "passed": false,
+          "precision": 0.0,
+          "project_key": "code4rena_pump-science_2025_02",
+          "total_expected": 6,
+          "total_found": 0,
+          "true_positives": 0
+        },
+        {
+          "detection_rate": 0.0,
+          "f1_score": 0.0,
+          "passed": false,
+          "precision": 0.0,
+          "project_key": "code4rena_virtuals-protocol_2025_08",
+          "total_expected": 18,
+          "total_found": 30,
+          "true_positives": 0
+        },
+        {
+          "detection_rate": 1.0,
+          "f1_score": 0.18181818181818182,
+          "passed": true,
+          "precision": 0.1,
+          "project_key": "sherlock_symmio_2025_03",
+          "total_expected": 3,
+          "total_found": 30,
+          "true_positives": 3
+        }
+      ],
+      "pull_number": 156,
+      "selected_winner": true,
+      "status": "winner",
+      "submission_id": "bohdansolovie-20260717-01",
+      "total_expected": 66,
+      "total_found": 170,
+      "true_positives": 6
+    }
+  ],
+  "finished_at": "2026-07-18T00:03:23.956888+00:00",
+  "outcome": "king_promoted",
+  "project_keys": [
+    "code4rena_loopfi_2025_02",
+    "code4rena_virtuals-protocol_2025_08",
+    "code4rena_bakerfi-invitational_2025_02",
+    "sherlock_symmio_2025_03",
+    "cantina_generic-money_2025_11",
+    "cantina_minimal-delegation_2025_04",
+    "code4rena_pump-science_2025_02"
+  ],
+  "project_pass_threshold": "2_of_3",
+  "proof": "public-results/rounds/sn60-round-20260717T231206Z-9cd331.json",
+  "replicas_per_project": 3,
+  "repo": "Autovara/kata",
+  "round_id": "sn60-round-20260717T231206Z-9cd331",
+  "round_number": 2,
+  "schema_version": 1,
+  "started_at": null,
+  "winner_author": "bohdansolovie",
+  "winner_pull_request": 156,
+  "winner_submission_id": "bohdansolovie-20260717-01"
+}

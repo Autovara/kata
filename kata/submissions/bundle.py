@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -179,15 +180,51 @@ def stage_submission_bundle(source_root: Path, destination_root: Path) -> list[s
     relative_paths = collect_staged_bundle_relative_paths(source_root)
     if not relative_paths:
         raise ValueError(f"Submission bundle is empty: {source_root}")
-    if destination_root.exists():
-        shutil.rmtree(destination_root)
-    destination_root.mkdir(parents=True, exist_ok=True)
-    for relative_path in relative_paths:
-        source = source_root / relative_path
-        destination = destination_root / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, destination)
+    destination_root = Path(destination_root)
+    destination_root.parent.mkdir(parents=True, exist_ok=True)
+    # Stage the whole bundle into a temp sibling directory, then swap it into place
+    # with a single atomic rename. The previous king is moved aside first (and
+    # restored if the swap fails), so a crash mid-copy can never leave an empty or
+    # half-copied king directory -- which would raise "king artifact is not seeded"
+    # on the next round and freeze the competition.
+    staging_root = destination_root.parent / f".{destination_root.name}.staging.{os.getpid()}"
+    _remove_bundle_path(staging_root)
+    try:
+        staging_root.mkdir(parents=True)
+        for relative_path in relative_paths:
+            source = source_root / relative_path
+            destination = staging_root / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+        previous_root = None
+        if destination_root.exists():
+            previous_root = (
+                destination_root.parent / f".{destination_root.name}.previous.{os.getpid()}"
+            )
+            _remove_bundle_path(previous_root)
+            os.replace(destination_root, previous_root)
+        try:
+            os.replace(staging_root, destination_root)
+        except BaseException:
+            if previous_root is not None:
+                os.replace(previous_root, destination_root)
+            raise
+        if previous_root is not None:
+            _remove_bundle_path(previous_root)
+    finally:
+        _remove_bundle_path(staging_root)
     return relative_paths
+
+
+def _remove_bundle_path(path: Path) -> None:
+    """Best-effort removal of a staging/backup path (directory or file)."""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+    elif path.exists() or path.is_symlink():
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def replace_bundle_contents(destination_root: Path, files: dict[str, str]) -> None:

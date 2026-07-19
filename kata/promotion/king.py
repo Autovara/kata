@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -282,39 +284,88 @@ def promote_lane_king(
     from kata.plugins.discovery import plugin_for_evaluator
 
     plugin = plugin_for_evaluator(entry.evaluator_id)
+
+    kata_root = str(resolve_kata_root(public_root))
+    king_root = resolve_public_king_root(
+        public_root=kata_root, repo_pack=verification.repo_pack, mode=verification.mode
+    )
+    state_path = lane_king_state_path(entry.lane_id, public_root=public_root)
+
+    # Snapshot the current king bundle and lane state so that if publication fails
+    # part-way through, the previous CONSISTENT king is restored rather than leaving a
+    # missing/partial king (or a lane state that points at a different bundle than
+    # kings/) -- either of which freezes the competition.
+    king_backup = None
+    if king_root.exists():
+        king_backup = king_root.parent / f".{king_root.name}.rollback.{os.getpid()}"
+        if king_backup.exists():
+            shutil.rmtree(king_backup, ignore_errors=True)
+        shutil.copytree(king_root, king_backup)
+    state_backup = state_path.read_bytes() if state_path.exists() else None
+
+    try:
+        published = publish_public_king(
+            public_root=kata_root,
+            repo_pack=verification.repo_pack,
+            mode=verification.mode,
+            submission_id=verification.submission_id,
+            challenge_run_id=summary.run_id,
+            candidate_artifact_path=verification.submission_path,
+            candidate_artifact_hash=verification.candidate_artifact_hash,
+            # Hash the published king the way the subnet's round does, so king_is_current
+            # stays true even for non-normalized submissions.
+            artifact_hasher=plugin.hash_bundle if plugin is not None else hash_submission_bundle,
+        )
+        now = datetime.now(UTC).isoformat()
+        king = LaneKingState(
+            schema_version=KING_STATE_SCHEMA_VERSION,
+            current_king_submission_id=verification.submission_id,
+            current_king_artifact_hash=published.king_artifact_hash,
+            promotion_source_pr=None,
+            promotion_timestamp=now,
+            updated_at=now,
+        )
+        # The king bundle and the lane state that points at it must both land before
+        # anything else; the state records the just-published hash.
+        write_lane_king_state(entry.lane_id, king, public_root=public_root)
+    except BaseException:
+        _restore_public_king(king_root, king_backup)
+        _restore_lane_king_state(state_path, state_backup)
+        raise
+    finally:
+        if king_backup is not None:
+            shutil.rmtree(king_backup, ignore_errors=True)
+
+    # The lane's plugin persists subnet-specific provenance (challenge state +
+    # benchmark snapshot + promotion record); the core stays subnet-blind. This runs
+    # LAST -- only after the throne actually changed hands -- so a failed publish never
+    # leaves a promotion record for a king that never reigned.
     if plugin is not None:
-        # The lane's plugin persists any subnet-specific provenance (e.g. challenge
-        # state + benchmark snapshot + promotion record); the core stays subnet-blind.
         plugin.record_promotion_provenance(
             entry=entry,
             verification=verification,
             summary=summary,
             public_root=public_root,
         )
-    published = publish_public_king(
-        public_root=str(resolve_kata_root(public_root)),
-        repo_pack=verification.repo_pack,
-        mode=verification.mode,
-        submission_id=verification.submission_id,
-        challenge_run_id=summary.run_id,
-        candidate_artifact_path=verification.submission_path,
-        candidate_artifact_hash=verification.candidate_artifact_hash,
-        # Hash the published king the way the subnet's round does, so king_is_current
-        # stays true even for non-normalized submissions.
-        artifact_hasher=plugin.hash_bundle if plugin is not None else hash_submission_bundle,
-    )
-    now = datetime.now(UTC).isoformat()
-    king = LaneKingState(
-        schema_version=KING_STATE_SCHEMA_VERSION,
-        current_king_submission_id=verification.submission_id,
-        current_king_artifact_hash=published.king_artifact_hash,
-        promotion_source_pr=None,
-        promotion_timestamp=now,
-        updated_at=now,
-    )
-    write_lane_king_state(entry.lane_id, king, public_root=public_root)
     return LanePromotionResult(
         lane_id=entry.lane_id,
         king_root=str(published.king_root),
         king=king,
     )
+
+
+def _restore_public_king(king_root: Path, king_backup: Path | None) -> None:
+    """Roll the published king directory back to its pre-promotion snapshot."""
+    if king_root.exists():
+        shutil.rmtree(king_root, ignore_errors=True)
+    if king_backup is not None and king_backup.exists():
+        shutil.copytree(king_backup, king_root)
+
+
+def _restore_lane_king_state(state_path: Path, state_backup: bytes | None) -> None:
+    """Roll the lane king-state file back to its pre-promotion bytes (or absence)."""
+    if state_backup is not None:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_bytes(state_backup)
+    elif state_path.exists():
+        state_path.unlink()

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260719-01",
+  "created_at": "2026-07-19T14:11:03.094852+00:00",
+  "author": "bohdansolovie",
+  "title": "Precision-first multi-language DeepSeek depth miner",
+  "notes": "Triage + deep + cross-module audits; confidence-gated findings; Chutes DeepSeek-V3.2-TEE; no static FP emitters.",
+  "subnet_pack": "sn60__bitsec"
+}

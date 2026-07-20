@@ -4,25 +4,25 @@
   "sandbox_commit_hash": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
   "benchmark_dataset_id": "curated-highs-only-2025-08-08.json",
   "benchmark_dataset_hash": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
-  "project_list_hash": "423ea8ff2299725e640c2ffb232e191204d625bc2516a291ca7e5260eaadb3fd",
+  "project_list_hash": "bf9bd298941faf311cc486d7ebcc18f04318a94102f2ed23ce0dff69162e867c",
   "project_keys": [
-    "code4rena_loopfi_2025_02",
-    "sherlock_oku_2024_12",
-    "code4rena_kinetiq_2025_07",
-    "code4rena_starknet-perpetual_2025_06",
-    "code4rena_virtuals-protocol_2025_08",
     "code4rena_forte-float128-solidity-library_2025_04",
-    "code4rena_pump-science_2025_02"
+    "sherlock_symmio_2025_03",
+    "code4rena_lambowin_2025_02",
+    "code4rena_loopfi_2025_02",
+    "code4rena_next-generation_2025_05",
+    "cantina_generic-money_2025_11",
+    "code4rena_fenix-finance-invitational_2024_10"
   ],
   "container_images": [
-    "ghcr.io/bitsec-ai/code4rena_loopfi_2025_02:latest",
-    "ghcr.io/bitsec-ai/sherlock_oku_2024_12:latest",
-    "ghcr.io/bitsec-ai/code4rena_kinetiq_2025_07:latest",
-    "ghcr.io/bitsec-ai/code4rena_starknet-perpetual_2025_06:latest",
-    "ghcr.io/bitsec-ai/code4rena_virtuals-protocol_2025_08:latest",
     "ghcr.io/bitsec-ai/code4rena_forte-float128-solidity-library_2025_04:latest",
-    "ghcr.io/bitsec-ai/code4rena_pump-science_2025_02:latest"
+    "ghcr.io/bitsec-ai/sherlock_symmio_2025_03:latest",
+    "ghcr.io/bitsec-ai/code4rena_lambowin_2025_02:latest",
+    "ghcr.io/bitsec-ai/code4rena_loopfi_2025_02:latest",
+    "ghcr.io/bitsec-ai/code4rena_next-generation_2025_05:latest",
+    "ghcr.io/bitsec-ai/cantina_generic-money_2025_11:latest",
+    "ghcr.io/bitsec-ai/code4rena_fenix-finance-invitational_2024_10:latest"
   ],
   "scorer_version": "ScaBenchScorerV2",
-  "updated_at": "2026-07-19T13:59:55.518267+00:00"
+  "updated_at": "2026-07-20T14:45:29.901208+00:00"
 }

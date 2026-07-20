@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "candidate_submission_id": "Dexterity104-20260717-01",
-  "candidate_artifact_hash": "ba6c31eab2c4f0f1d00889152663037d65bbc632a570e38336905ef503ed47e8",
-  "king_artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
+  "candidate_submission_id": "jimcody1995-20260719-01",
+  "candidate_artifact_hash": "6c0090154f48fde35d3c83bc9edcc16feb4ac39617165615c076a41c2634e34d",
+  "king_artifact_hash": "ba6c31eab2c4f0f1d00889152663037d65bbc632a570e38336905ef503ed47e8",
   "screening_result": {
     "schema_version": 1,
-    "run_id": "sn60-round-20260719T025046Z-6bc66b-pr-160",
+    "run_id": "sn60-challenge-20260720T130617Z-d91cd3-pr-162",
     "status": "passed",
-    "stage": "round",
-    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-tesqdwed/kata-bot-kata-default-bh2s_f9j/submissions/sn60__bitsec/miner/Dexterity104-20260717-01",
-    "artifact_hash": "ba6c31eab2c4f0f1d00889152663037d65bbc632a570e38336905ef503ed47e8",
+    "stage": "challenge",
+    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-gqhdpze4/kata-bot-kata-default-w7sml742/submissions/sn60__bitsec/miner/jimcody1995-20260719-01",
+    "artifact_hash": "6c0090154f48fde35d3c83bc9edcc16feb4ac39617165615c076a41c2634e34d",
     "project_key": null,
     "report_path": null,
     "result_path": null,
@@ -24,21 +24,21 @@
       "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
       "scorer_version": "ScaBenchScorerV2"
     },
-    "created_at": "2026-07-19T03:56:56.262350+00:00"
+    "created_at": "2026-07-20T14:44:42.939136+00:00"
   },
   "selected_project_keys": [
-    "code4rena_loopfi_2025_02",
-    "sherlock_oku_2024_12",
-    "code4rena_kinetiq_2025_07",
-    "code4rena_starknet-perpetual_2025_06",
-    "code4rena_virtuals-protocol_2025_08",
     "code4rena_forte-float128-solidity-library_2025_04",
-    "code4rena_pump-science_2025_02"
+    "sherlock_symmio_2025_03",
+    "code4rena_lambowin_2025_02",
+    "code4rena_loopfi_2025_02",
+    "code4rena_next-generation_2025_05",
+    "cantina_generic-money_2025_11",
+    "code4rena_fenix-finance-invitational_2024_10"
   ],
   "validator_replica_count": 1,
   "run_ids": [
-    "sn60-round-20260719T025046Z-6bc66b-pr-160"
+    "sn60-challenge-20260720T130617Z-d91cd3-pr-162"
   ],
-  "freshness_fingerprint": "f7f97d4c81348a30c841f05c4a290804dfc9e31e75b2e59c4fc292709d3969dc",
-  "updated_at": "2026-07-19T13:59:55.518830+00:00"
+  "freshness_fingerprint": "69b17e70ab1261551ae9493eb2dbcb61b0be3ac486d81f67434b6c69c67843f2",
+  "updated_at": "2026-07-20T14:45:29.901707+00:00"
 }

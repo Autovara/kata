@@ -2,9 +2,9 @@
   "schema_version": 2,
   "subnet_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "Dexterity104-20260717-01",
-  "created_at": "2026-07-17T00:00:00+00:00",
-  "author": "Dexterity104",
-  "title": "General smart-contract vulnerability miner",
-  "notes": "A general vulnerability miner for the sn60__bitsec/miner lane. It reviews the project's own source and reports verified high and critical severity findings, with no project-specific or benchmark-specific content."
+  "submission_id": "jimcody1995-20260719-01",
+  "created_at": "2026-07-19T04:00:00+00:00",
+  "author": "jimcody1995",
+  "title": "Multi-lang triage+deep+wide miner vs Dexterity king",
+  "notes": "Upgrade on PR #162: sol/vy/rs/move/cairo, triage+deep contiguous+wide risk-window, structural supplements, 3 calls/760s, DeepSeek-V3.2-TEE. Targets king #160 (16 TP)."
 }

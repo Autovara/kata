@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260721-01",
+  "created_at": "2026-07-20T21:17:42.143465+00:00",
+  "author": "bohdansolovie",
+  "title": "Project-pass focused multi-language DeepSeek miner",
+  "notes": "Triage + ultra-deep + wide risk-window; high-precision probes; temp 0; sealed Chutes DeepSeek-V3.2-TEE."
+}

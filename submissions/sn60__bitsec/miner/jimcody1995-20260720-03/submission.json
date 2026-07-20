@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "jimcody1995-20260720-03",
+  "created_at": "2026-07-20T22:00:00+00:00",
+  "author": "jimcody1995",
+  "title": "Project-pass hunter (screener-safe, no leakage tokens)",
+  "notes": "Bitsec PASS needs 100% detection. Tuned for reign-average promotion: exhaustive small-project coverage, triage+depth6+wide12, emit 20, capped probes, 735s/3 calls, DeepSeek-V3.2-TEE. Fixes PR #167 leakage-token reject."
+}

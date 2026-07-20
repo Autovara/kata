@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "jimcody1995-20260720-01",
+  "created_at": "2026-07-20T17:10:00+00:00",
+  "author": "jimcody1995",
+  "title": "Precision-first DeepSeek miner vs own king",
+  "notes": "Arena Challenge 2: king had ~4.5% precision and 3 invalid runs. This challenger caps emits at 8, drops probe FPs, 680s/3-call budget, Cairo-aware ranking, import centrality. New room measurement sealed."
+}

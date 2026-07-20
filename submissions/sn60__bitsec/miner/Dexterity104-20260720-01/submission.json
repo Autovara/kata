@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "Dexterity104-20260720-01",
+  "created_at": "2026-07-20T00:00:00+00:00",
+  "author": "Dexterity104",
+  "title": "General multi-language smart-contract vulnerability miner",
+  "notes": "A general high/critical vulnerability miner for the sn60__bitsec/miner lane. It ranks the project's own source across Solidity, Vyper, Rust, Move and Cairo, runs a triage pass that also picks audit targets, then deep contiguous and wide risk-windowed source audits, and supplements with model-free structural checks. Every finding is localized to an exact file and function with a concrete mechanism and impact. No project-specific or benchmark-specific content."
+}

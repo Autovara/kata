@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "jimcody1995-20260721-03",
+  "created_at": "2026-07-21T17:30:00+00:00",
+  "author": "jimcody1995",
+  "title": "Adaptive project-pass reclaim vs bohdan + #169",
+  "notes": "Compact-repo exhaustive mode for project passes; 720s/225 reserve; deep6+wide11; emit 18; truncated-JSON recovery; sealed DeepSeek-V3.2-TEE."
+}

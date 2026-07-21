@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-01",
+  "created_at": "2026-07-21T17:20:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Fortress adaptive low-invalid defender",
+  "notes": "Defends crown vs reign average of #171: adaptive small=full-cover / large=triage+deep, 3rd call only with slack, 640s/300 reserve, conf>=0.62, emit 10, smells first. Sealed Chutes DeepSeek-V3.2-TEE."
+}

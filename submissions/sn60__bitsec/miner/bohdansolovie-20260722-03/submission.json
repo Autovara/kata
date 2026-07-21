@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-03",
+  "created_at": "2026-07-21T23:30:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Coverage + recall miner (full small-project audit)",
+  "notes": "Beats the king on project-PASS then TPs: exhaustive per-file deep coverage on small projects for 100% detection, reasoning_effort=medium enumeration on large ones, four timed passes (triage/deep/sweep/gap-fill) plus structural probes, strict JSON always closed to keep invalid runs at zero. sn60__bitsec/miner, sealed Chutes DeepSeek-V3.2-TEE."
+}

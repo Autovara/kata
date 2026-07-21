@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-02",
+  "created_at": "2026-07-21T22:55:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Recall-first enumerator vs Dexterity #169",
+  "notes": "Fixes #173 zero-TP failure: enumerate HIGH/CRITICAL across sol/vy/rs/move/cairo, triage+deep7+wide12, soft conf gate, emit 24, 750s/210 reserve, sealed Chutes DeepSeek-V3.2-TEE."
+}

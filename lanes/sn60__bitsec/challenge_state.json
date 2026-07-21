@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "candidate_submission_id": "Dexterity104-20260720-01",
-  "candidate_artifact_hash": "67b57dbe4cc69eef8108a5baf52601fb64fc5177bea03c0b9e185b6101878b72",
-  "king_artifact_hash": "6c0090154f48fde35d3c83bc9edcc16feb4ac39617165615c076a41c2634e34d",
+  "candidate_submission_id": "jimcody1995-20260721-02",
+  "candidate_artifact_hash": "a99b3ead5caf7e55a2a960f818b2212bd841df2ae6bd0c39de6f7d4cd47185b4",
+  "king_artifact_hash": "67b57dbe4cc69eef8108a5baf52601fb64fc5177bea03c0b9e185b6101878b72",
   "screening_result": {
     "schema_version": 1,
-    "run_id": "sn60-challenge-20260720T214257Z-b126bb-pr-165",
+    "run_id": "sn60-challenge-20260721T085726Z-109044-pr-170",
     "status": "passed",
     "stage": "challenge",
-    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-3p9nfpzq/kata-bot-kata-default-uq64sj7j/submissions/sn60__bitsec/miner/Dexterity104-20260720-01",
-    "artifact_hash": "67b57dbe4cc69eef8108a5baf52601fb64fc5177bea03c0b9e185b6101878b72",
+    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-v_pt3fon/kata-bot-kata-default-g1g7yzed/submissions/sn60__bitsec/miner/jimcody1995-20260721-02",
+    "artifact_hash": "a99b3ead5caf7e55a2a960f818b2212bd841df2ae6bd0c39de6f7d4cd47185b4",
     "project_key": null,
     "report_path": null,
     "result_path": null,
@@ -24,21 +24,21 @@
       "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
       "scorer_version": "ScaBenchScorerV2"
     },
-    "created_at": "2026-07-20T23:19:56.318703+00:00"
+    "created_at": "2026-07-21T11:16:31.615451+00:00"
   },
   "selected_project_keys": [
+    "sherlock_symmio_2025_03",
+    "code4rena_mantra-dex_2025_03",
+    "code4rena_superposition_2025_01",
     "code4rena_virtuals-protocol_2025_08",
-    "sherlock_axion_2025_01",
-    "code4rena_lambowin_2025_02",
-    "code4rena_starknet-perpetual_2025_06",
-    "code4rena_loopfi_2025_02",
-    "cantina_smart-contract-audit-of-tn-contracts_2025_08",
-    "code4rena_mantra-dex_2025_03"
+    "cantina_generic-money_2025_11",
+    "cantina_minimal-delegation_2025_04",
+    "code4rena_coded-estate-invitational_2024_12"
   ],
   "validator_replica_count": 1,
   "run_ids": [
-    "sn60-challenge-20260720T214257Z-b126bb-pr-165"
+    "sn60-challenge-20260721T085726Z-109044-pr-170"
   ],
-  "freshness_fingerprint": "d10c7f39f1ba87d2d0cda39026c516b66b34c89bb1a015888002ac39dfc97b8f",
-  "updated_at": "2026-07-20T23:21:26.400963+00:00"
+  "freshness_fingerprint": "f4c3990e55be0c3c2102899b52301395955922c0ec011f90b3734bb1ce9b51f6",
+  "updated_at": "2026-07-21T11:17:44.902880+00:00"
 }

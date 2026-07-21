@@ -2,9 +2,9 @@
   "schema_version": 2,
   "subnet_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "jimcody1995-20260721-02",
-  "created_at": "2026-07-21T08:40:00+00:00",
-  "author": "jimcody1995",
-  "title": "Low-invalid precision-balanced challenger",
-  "notes": "Built to beat the current king average by reducing invalid runs and false positives while preserving TP depth: triage + deep5 + wide9, tighter confidence gates, per-file caps, emit 14, 700s/3 calls, DeepSeek-V3.2-TEE."
+  "submission_id": "bohdansolovie-20260721-02",
+  "created_at": "2026-07-21T15:08:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Low-invalid precision challenger vs #170",
+  "notes": "Targets king jimcody1995-20260721-02: 690s/250 reserve to cut invalids, deep4+wide10 diversify, conf>=0.60 high gate, per-file cap 2, emit 12, sealed Chutes DeepSeek-V3.2-TEE."
 }

@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "candidate_submission_id": "jimcody1995-20260721-02",
-  "candidate_artifact_hash": "a99b3ead5caf7e55a2a960f818b2212bd841df2ae6bd0c39de6f7d4cd47185b4",
-  "king_artifact_hash": "67b57dbe4cc69eef8108a5baf52601fb64fc5177bea03c0b9e185b6101878b72",
+  "candidate_submission_id": "bohdansolovie-20260721-02",
+  "candidate_artifact_hash": "dae9ac83dce176cc98c7c4010f45573b6b25af7226ae74ae6f4c778b8dabb589",
+  "king_artifact_hash": "a99b3ead5caf7e55a2a960f818b2212bd841df2ae6bd0c39de6f7d4cd47185b4",
   "screening_result": {
     "schema_version": 1,
-    "run_id": "sn60-challenge-20260721T085726Z-109044-pr-170",
+    "run_id": "sn60-challenge-20260721T131329Z-acc8e8-pr-171",
     "status": "passed",
     "stage": "challenge",
-    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-v_pt3fon/kata-bot-kata-default-g1g7yzed/submissions/sn60__bitsec/miner/jimcody1995-20260721-02",
-    "artifact_hash": "a99b3ead5caf7e55a2a960f818b2212bd841df2ae6bd0c39de6f7d4cd47185b4",
+    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-ecd6dm5i/kata-bot-kata-default-alqasfx9/submissions/sn60__bitsec/miner/bohdansolovie-20260721-02",
+    "artifact_hash": "dae9ac83dce176cc98c7c4010f45573b6b25af7226ae74ae6f4c778b8dabb589",
     "project_key": null,
     "report_path": null,
     "result_path": null,
@@ -24,21 +24,21 @@
       "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
       "scorer_version": "ScaBenchScorerV2"
     },
-    "created_at": "2026-07-21T11:16:31.615451+00:00"
+    "created_at": "2026-07-21T16:50:20.165784+00:00"
   },
   "selected_project_keys": [
-    "sherlock_symmio_2025_03",
-    "code4rena_mantra-dex_2025_03",
-    "code4rena_superposition_2025_01",
-    "code4rena_virtuals-protocol_2025_08",
     "cantina_generic-money_2025_11",
     "cantina_minimal-delegation_2025_04",
-    "code4rena_coded-estate-invitational_2024_12"
+    "code4rena_fenix-finance-invitational_2024_10",
+    "code4rena_lambowin_2025_02",
+    "sherlock_oku_2024_12",
+    "code4rena_starknet-perpetual_2025_06",
+    "code4rena_next-generation_2025_05"
   ],
   "validator_replica_count": 1,
   "run_ids": [
-    "sn60-challenge-20260721T085726Z-109044-pr-170"
+    "sn60-challenge-20260721T131329Z-acc8e8-pr-171"
   ],
-  "freshness_fingerprint": "f4c3990e55be0c3c2102899b52301395955922c0ec011f90b3734bb1ce9b51f6",
-  "updated_at": "2026-07-21T11:17:44.902880+00:00"
+  "freshness_fingerprint": "ae194fc6b4bafa6352e562171c69ae37def2138bf0290f8caf213871660ac650",
+  "updated_at": "2026-07-21T16:50:37.997748+00:00"
 }

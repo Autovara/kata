@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-12",
+  "created_at": "2026-07-22T17:00:00+00:00",
+  "author": "bohdansolovie",
+  "title": "PASS+TP + hard 0-invalid",
+  "notes": "#184: 1 PASS, 2 TP, 1 invalid → lost precision 18% vs 45%. Same #181 scoring; never map; 2nd call tiny-only; TRIES=1; emit 8."
+}

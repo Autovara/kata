@@ -80,25 +80,26 @@ DECL_KW = ("function", "fn", "fun", "def", "func")
 
 FILE_BYTES = 260_000
 FILE_LIMIT = 88
-MAP_CHARS = 34_000
-DEEP_BUDGET = 50_000
-WIDE_BUDGET = 46_000
-PER_DEEP = 16_000
-PER_WIDE = 9_000
-RELATED = 2_600
-DEEP_N = 6
-WIDE_N = 11
-EMIT_MAX = 22
+MAP_CHARS = 32_000
+DEEP_BUDGET = 48_000
+WIDE_BUDGET = 44_000
+PER_DEEP = 15_000
+PER_WIDE = 8_500
+RELATED = 2_400
+DEEP_N = 7
+WIDE_N = 10
+EMIT_MAX = 20
 DESC_MIN = 40
-WALL = 725.0
-HTTP_TO = 195.0
-RESERVE = 235.0
+# Stay well under Phala 840s; #178 still burned 2 invalids at 730s.
+WALL = 680.0
+HTTP_TO = 185.0
+RESERVE = 260.0
 POST = 10.0
-MIN_TO = 40.0
+MIN_TO = 45.0
 TRIES = 2
-MAP_TOK = 10_000
-DEEP_TOK = 18_000
-WIDE_TOK = 16_000
+MAP_TOK = 8_000
+DEEP_TOK = 16_000
+WIDE_TOK = 14_000
 
 MODEL = os.environ.get("KATA_MINER_MODEL", "deepseek-ai/DeepSeek-V3.2-TEE")
 SOFT = frozenset({408, 409, 425, 500, 502, 504, 520, 522, 524, 529})
@@ -942,9 +943,13 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
 
         raw: list[dict[str, Any]] = []
         ordered = recs
-        compact = len(recs) <= 8 or sum(len(r["text"]) for r in recs) < 70_000
+        total_chars = sum(len(r["text"]) for r in recs)
+        # Tiny repos are the realistic PASS path (100% detection on 2/3 replicas).
+        tiny = len(recs) <= 6 or total_chars < 45_000
+        compact = len(recs) <= 10 or total_chars < 80_000
 
-        # Compact repos: skip map so deep calls see full bodies (PASS path).
+        # Larger repos only: cheap map to steer file order. Tiny/compact skip it
+        # so the deep call sees full bodies (PASS needs every planted bug).
         if not compact and deadline - time.monotonic() >= RESERVE:
             try:
                 prompt = MAP_HDR + _map_digest(recs, MAP_CHARS)
@@ -956,16 +961,17 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
 
         if deadline - time.monotonic() >= RESERVE:
             try:
-                n = min(len(ordered), len(ordered) if compact else DEEP_N)
-                prompt = _batch_prompt(
-                    DEEP_HDR, ordered[:n], by_base, PER_DEEP, DEEP_BUDGET)
+                n = min(len(ordered), len(ordered) if tiny else (9 if compact else DEEP_N))
+                per = 18_000 if tiny else PER_DEEP
+                budget = 55_000 if tiny else DEEP_BUDGET
+                prompt = _batch_prompt(DEEP_HDR, ordered[:n], by_base, per, budget)
                 raw.extend(_parse_findings(_ask(inference_api, prompt, deadline, DEEP_TOK)))
             except Exception:
                 pass
 
-        if deadline - time.monotonic() >= RESERVE:
+        # Third call only with clear slack — prefer finishing over a late timeout.
+        if deadline - time.monotonic() >= RESERVE + 40.0:
             try:
-                # Overlap top files for replica stability; add fresh mid-tier files.
                 focus = ordered[2:2 + WIDE_N] + ordered[:3]
                 seen: set[str] = set()
                 focus_u = []

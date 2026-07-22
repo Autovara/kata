@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-11",
+  "created_at": "2026-07-22T16:50:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Exact #181 + zero-invalid only",
+  "notes": "Byte-identical to #181 except WALL/HTTP/TRIES/THIRD_SLACK. King TP avg now 1.8 so #181's 2 TP ties; 0 invalids wins tier 4."
+}

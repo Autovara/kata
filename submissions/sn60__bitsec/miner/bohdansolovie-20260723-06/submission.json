@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260723-06",
+  "created_at": "2026-07-23T00:00:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Corroboration-ranked recall-first multi-language vulnerability miner",
+  "notes": "Recall-first whole-repo auditor (triage + deep + focused passes + model-free structural probes) with cross-pass corroboration ranking and a localization guard: findings surfaced by multiple passes and tied to a real function/contract are ranked and emitted first, unlocalizable candidates only backfill spare budget. No project-specific or benchmark-specific content."
+}

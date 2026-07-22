@@ -193,11 +193,13 @@ class SubnetPlugin(ABC):
         """Load this subnet's challenge/challenge summary from ``path``.
 
         The summary is the subnet's native challenge result; the generic verify/promote path
-        reads only common attributes off it. Default: unsupported.
+        reads only common attributes off it. The default handles the common summary emitted
+        by the ScoreCard-only challenge runner; a plugin with a richer native format can
+        override it.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement load_challenge_summary"
-        )
+        from kata.core.challenge import load_generic_challenge_summary
+
+        return load_generic_challenge_summary(path)
 
     def benchmark_review(self, bundle_files, *, strict):
         """Subnet anti-memorization review of a candidate bundle.
@@ -225,8 +227,16 @@ class SubnetPlugin(ABC):
         return {}
 
     def challenge_result_json(self, result) -> dict:
-        """Serialize a challenge result to the CLI JSON payload. Default: empty."""
-        return {}
+        """Serialize the default ScoreCard challenge result for CLI consumers.
+
+        The payload contains one ordered ``rank_signals`` list per variant.  Its
+        single default signal, ``comparable``, is derived directly from ScoreCard,
+        so a plugin need not reimplement a JSON adapter merely to work with a
+        continuous multi-lane kata-bot.
+        """
+        from kata.core.challenge import generic_challenge_result_json
+
+        return generic_challenge_result_json(self, result)
 
     def render_challenge_text(self, result) -> str:
         """Render a challenge result as human-readable text. Default: repr."""
@@ -244,18 +254,18 @@ class SubnetPlugin(ABC):
     ) -> object:
         """Run one competition challenge for this subnet and return its result.
 
-        The default drives the generic orchestrator and returns a ``ChallengeOutcome``;
-        subnets that produce their own proof/summary files override this
-        to write them and return their native result. Imported lazily to avoid a
-        module-load cycle with ``kata.core.challenge``.
+        The default drives the generic orchestrator, persists common ScoreCard
+        challenge summaries, and returns a ``GenericChallengeResult``. Subnets
+        that produce their own proof/summary files can override it. Imported lazily
+        to avoid a module-load cycle with ``kata.core.challenge``.
         """
-        from kata.core.challenge import run_plugin_challenge
+        from kata.core.challenge import run_generic_plugin_challenge
 
-        return run_plugin_challenge(
+        return run_generic_plugin_challenge(
             self,
             king_agent_path=king_agent_path,
             candidates=candidates,
             config=config,
             output_root=output_root,
-            seed=run_id or "challenge",
+            run_id=run_id,
         )

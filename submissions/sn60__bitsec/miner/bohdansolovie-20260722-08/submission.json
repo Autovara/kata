@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-08",
+  "created_at": "2026-07-22T14:54:00+00:00",
+  "author": "bohdansolovie",
+  "title": "PASS + zero-invalid hybrid",
+  "notes": "Combines #179 PASS/TP path with #180 zero-invalid timing. Mild emit cap 12. Win on invalids vs king ~2.4 avg if PASS+TP hold."
+}

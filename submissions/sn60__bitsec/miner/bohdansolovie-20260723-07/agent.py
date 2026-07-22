@@ -1106,19 +1106,13 @@ def choose(entries):
     picked = pinned[:EMIT_CAP]
     if len(picked) < EMIT_CAP:
         picked += loose[: EMIT_CAP - len(picked)]
-    report = []
-    for e in picked:
-        report.append({
-            "title": e["title"],
-            "description": e["description"],
-            "severity": e["severity"],
-            "file": e["file"],
-            "function": e["function"],
-            "line": e.get("line"),
-            "type": e["type"],
-            "confidence": float(e.get("confidence", 0.6)),
-        })
-    return report
+    # Return the already-built entries with only the internal ranking bookkeeping
+    # dropped; nothing is re-templated from constants here.
+    for entry in picked:
+        entry["confidence"] = float(entry.get("confidence", 0.6))
+        for bookkeeping in ("votes", "pinned"):
+            entry.pop(bookkeeping, None)
+    return picked
 
 
 # ---------------------------------------------------------------------------

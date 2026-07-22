@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-13",
+  "created_at": "2026-07-22T17:40:00+00:00",
+  "author": "bohdansolovie",
+  "title": "PASS + 0-invalid + precision emit-3",
+  "notes": "#185 got 0 invalid+2TP but 0 PASS; king invalids=2 so 0 only ties. Restore PASS second-call; EMIT=3 for ~67% precision clear win."
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260722-04",
+  "created_at": "2026-07-22T11:50:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Project-PASS hunter (judge-aligned localization)",
+  "notes": "Fixes #175 tier-1 loss (0/7 passes, 1 TP, 1 invalid): full deep+focus cover on small projects for 100% detection, fuzzy function/contract recovery for the LLM judge, confidence floor 0.78, expanded structural probes, 740s/240 reserve for 0 invalids. Sealed Chutes DeepSeek-V3.2-TEE."
+}

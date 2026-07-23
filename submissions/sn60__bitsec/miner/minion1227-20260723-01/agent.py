@@ -1,19 +1,19 @@
-"""Stability-first vulnerability miner for the sn60__bitsec lane.
+"""Vulnerability miner for the sn60__bitsec lane.
 
-Design in one line: a deterministic analyzer always runs and always produces the
-same anchored findings for the same source, and a model layer adds upside on top
-of it.
+Design in one line: the model audits the project source and is the sole author
+of every reported finding; a deterministic pass only triages and corroborates.
 
-Why it is built that way: a project only counts on the strict tier when a
-majority of its replicas agree. A purely model-driven agent re-rolls its answer
-on every replica, so a project it solves once often fails the majority. The
-static layer here is byte-identical across replicas, so whatever it catches is
-carried by every replica instead of one lucky one. The model layer is additive
-and never required for the agent to produce output.
-
-Precision is scored as correct / reported, so the emit stage is deliberately
-strict: only findings pinned to a real file, contract and function are emitted,
-corroborated ones first, and the tail is capped.
+How it works:
+- A lightweight static pass scans the source for suspicious constructs (missing
+  access control, reentrancy ordering, unchecked calls, tx.origin auth, unbounded
+  loops, missing zero-address guards, stale oracle reads, precision loss). Each
+  hit is a *lead*: a file, function and one-line evidence snippet. Leads are
+  never reported; they steer the model to the right code and are folded back in
+  only to corroborate a finding the model reaches on its own.
+- The model reviews the highest-risk files (map-guided), verifies each lead
+  against the surrounding code, and reports the genuine high/critical issues.
+- Emission is precision-first: findings are pinned to a real file, contract and
+  function, ranked with lead-corroborated ones first, and the tail is capped.
 """
 
 from __future__ import annotations
@@ -281,16 +281,15 @@ def enclosing_type(record, offset):
 
 
 # --------------------------------------------------------------------------
-# Layer A - deterministic structural detectors
+# Layer A - deterministic triage detectors
 # --------------------------------------------------------------------------
 #
 # Each detector scans the parsed functions for one concrete structural
-# condition and, when it fires, builds its finding on the spot from the code it
-# actually matched: the offending line is lifted verbatim as evidence and the
-# explanation is written at the detection site for that specific condition.
-# There is no shared bank of finding text - a detector that does not match
-# contributes nothing, and one that matches speaks only to what it found in
-# this project's source (see static_finding below).
+# condition and, when it fires, records a lead: the file, the function, and the
+# offending line lifted verbatim as evidence. A lead is not a reported finding.
+# It is handed to the model as a location to verify against the surrounding
+# code; the model decides whether a real vulnerability is present (see
+# static_lead below and run_model_layer).
 
 
 def snippet_around(body, index, width=150):
@@ -314,30 +313,23 @@ def first_offset(body_lower, needles):
     return best
 
 
-def static_finding(record, fn, *, kind, report_type, severity, confidence,
-                   why, impact, evidence):
-    """Assemble one detector hit into a finding anchored to real source.
+def static_lead(record, fn, *, kind, report_type, evidence):
+    """Record one suspicious location for the model to examine and judge.
 
-    Every descriptive field is passed in by the detector that fired, and the
-    evidence is a snippet lifted from this function's own body, so the finding
-    describes the specific construct found in the reviewed project rather than
-    being read out of a shared table.
+    A lead is not a reported finding. It names a construct worth a close look
+    (a file, a function, a one-line evidence snippet, and the bug class it hints
+    at) so the model can verify it against the surrounding code and decide for
+    itself whether a real vulnerability is present. The deterministic layer never
+    emits a finding on its own; it only points the model at the source.
     """
-    contract = enclosing_type(record, fn["start"])
-    where = contract + "." + fn["name"] + "()"
     return {
         "file": record["rel"],
-        "contract": contract,
+        "contract": enclosing_type(record, fn["start"]),
         "function": fn["name"],
         "line": fn["line"],
-        "title": kind + " in " + where,
-        "mechanism": where + " " + why,
-        "impact": impact,
-        "evidence": evidence,
-        "severity": severity,
-        "confidence": confidence,
+        "kind": kind,
         "type": report_type,
-        "origin": "static",
+        "evidence": evidence,
     }
 
 
@@ -378,13 +370,9 @@ def detect_missing_access_control(record):
         evidence = re.sub(
             r"\s+", " ",
             ("function " + fn["name"] + "(" + fn["params"] + ") " + fn["header"]).strip())
-        out.append(static_finding(
-            record, fn, kind="missing access control", report_type="access-control",
-            severity="critical", confidence=0.62,
-            why="is externally reachable and mutates state yet enforces no owner/role "
-                "modifier and checks no caller identity in its body",
-            impact="an arbitrary caller can drive the privileged logic directly",
-            evidence=evidence[:150]))
+        out.append(static_lead(
+            record, fn, kind="possible missing access control",
+            report_type="access-control", evidence=evidence[:150]))
     return out
 
 
@@ -403,13 +391,9 @@ def detect_state_write_after_external_call(record):
             continue
         evidence = (snippet_around(body, call_at).rstrip("; ")
                     + " then writes: " + snippet_around(tail, write.start()))
-        out.append(static_finding(
-            record, fn, kind="reentrancy", report_type="reentrancy",
-            severity="high", confidence=0.55,
-            why="performs an external call and then writes contract storage with no "
-                "reentrancy guard on the function",
-            impact="the external callee can re-enter before the storage update settles",
-            evidence=evidence[:150]))
+        out.append(static_lead(
+            record, fn, kind="possible reentrancy ordering",
+            report_type="reentrancy", evidence=evidence[:150]))
     return out
 
 
@@ -430,12 +414,9 @@ def detect_unchecked_low_level_call(record):
                 bound = ("=" in head or statement.startswith("require")
                          or statement.startswith("if") or "require(" in statement)
                 if not bound:
-                    out.append(static_finding(
-                        record, fn, kind="unchecked low-level call",
-                        report_type="unchecked-call", severity="high", confidence=0.58,
-                        why="issues a low-level call whose boolean success value is "
-                            "never checked or required",
-                        impact="a failed transfer or call is silently treated as success",
+                    out.append(static_lead(
+                        record, fn, kind="possible unchecked low-level call",
+                        report_type="unchecked-call",
                         evidence=re.sub(r"\s+", " ", statement)[:150]))
                     break
                 index = low.find(probe, index + 1)
@@ -449,11 +430,9 @@ def detect_tx_origin_auth(record):
         if "tx.origin" not in low:
             continue
         if "require" in low or "if" in low or "==" in low:
-            out.append(static_finding(
-                record, fn, kind="tx.origin authentication", report_type="access-control",
-                severity="high", confidence=0.72,
-                why="gates a decision on tx.origin rather than msg.sender",
-                impact="an intermediary contract can relay a privileged caller past the check",
+            out.append(static_lead(
+                record, fn, kind="possible tx.origin authentication",
+                report_type="access-control",
                 evidence=snippet_around(fn["body"], low.find("tx.origin"))))
     return out
 
@@ -467,12 +446,8 @@ def detect_unbounded_loop(record):
             continue
         if not is_externally_reachable(fn) or ".push(" not in record["lower"]:
             continue
-        out.append(static_finding(
-            record, fn, kind="unbounded loop", report_type="dos",
-            severity="high", confidence=0.45,
-            why="iterates an array whose length grows without bound and is appended to "
-                "elsewhere in the contract",
-            impact="the call eventually exceeds the block gas limit and cannot complete",
+        out.append(static_lead(
+            record, fn, kind="possible unbounded loop", report_type="dos",
             evidence=snippet_around(body, low.find(".length"))))
     return out
 
@@ -491,13 +466,9 @@ def detect_missing_zero_address_check(record):
             continue
         if "address(0)" in low or "!= 0" in low or "address(0x0)" in low:
             continue
-        out.append(static_finding(
-            record, fn, kind="missing zero-address check", report_type="validation",
-            severity="high", confidence=0.38,
-            why="moves value to an address taken from its arguments without rejecting "
-                "the zero address",
-            impact="value routed to the zero address is permanently unrecoverable",
-            evidence=snippet_around(body, move_at)))
+        out.append(static_lead(
+            record, fn, kind="possible missing zero-address check",
+            report_type="validation", evidence=snippet_around(body, move_at)))
     return out
 
 
@@ -510,12 +481,9 @@ def detect_stale_oracle_read(record):
             continue
         if any(hint in low for hint in STALENESS_HINTS):
             continue
-        out.append(static_finding(
-            record, fn, kind="stale oracle read", report_type="oracle-manipulation",
-            severity="high", confidence=0.52,
-            why="consumes an oracle answer without checking its freshness "
-                "(updatedAt / answeredInRound / heartbeat)",
-            impact="a stale or frozen price is used for valuation",
+        out.append(static_lead(
+            record, fn, kind="possible stale oracle read",
+            report_type="oracle-manipulation",
             evidence=snippet_around(fn["body"], read_at)))
     return out
 
@@ -530,11 +498,8 @@ def detect_division_before_multiplication(record):
         match = pattern.search(body)
         if not match:
             continue
-        out.append(static_finding(
-            record, fn, kind="precision loss", report_type="accounting",
-            severity="high", confidence=0.34,
-            why="divides before multiplying in fixed-point arithmetic",
-            impact="integer truncation skews the resulting share or reward amount",
+        out.append(static_lead(
+            record, fn, kind="possible precision loss", report_type="accounting",
             evidence=snippet_around(body, match.start())))
     return out
 
@@ -551,18 +516,23 @@ STATIC_DETECTORS = (
 )
 
 
-def run_static_layer(files):
-    """Deterministic pass: identical input always yields identical output."""
-    results = []
+def collect_leads(files):
+    """Gather suspicious locations for the model to verify.
+
+    Deterministic over identical input, so every replica points the model at the
+    same locations. These are leads, not findings: nothing here is reported
+    unless the model independently confirms it against the code.
+    """
+    leads = []
     for record in files:
         if record["suffix"] != ".sol" or not record["functions"]:
             continue
         for detector in STATIC_DETECTORS:
             try:
-                results.extend(detector(record))
+                leads.extend(detector(record))
             except Exception:
                 continue
-    return results
+    return leads
 
 
 # --------------------------------------------------------------------------
@@ -595,9 +565,31 @@ def clip(text, limit):
     return text[:head] + "\n... [trimmed] ...\n" + text[-(limit - head):]
 
 
-def build_review_prompt(batch, per_file_chars, budget):
+def format_leads(leads, rels):
+    """Render the leads that fall inside the files being shown, as hints only."""
+    lines = []
+    for lead in leads:
+        if lead["file"] not in rels:
+            continue
+        where = lead["contract"] + "." + lead["function"] + "()"
+        lines.append("- " + lead["file"] + " :: " + where
+                     + " [" + lead["kind"] + "] evidence: `" + lead["evidence"] + "`")
+        if len(lines) >= 24:
+            break
+    if not lines:
+        return ""
+    return (
+        "\nStatic pattern-matching flagged the locations below as worth a close "
+        "look. Treat them only as hints: verify each against the surrounding code "
+        "and report it only if you can justify a genuine high or critical issue. "
+        "Ignore any that are actually safe, and report other issues you find that "
+        "are not listed here.\n" + "\n".join(lines) + "\n")
+
+
+def build_review_prompt(batch, per_file_chars, budget, leads=None):
     chunks = []
     used = 0
+    rels = set()
     for record in batch:
         block = ("=== FILE: " + record["rel"] + " ===\n"
                  + clip(record["text"], per_file_chars) + "\n")
@@ -605,10 +597,13 @@ def build_review_prompt(batch, per_file_chars, budget):
             break
         chunks.append(block)
         used += len(block)
+        rels.add(record["rel"])
     if not chunks:
         return ""
+    hints = format_leads(leads, rels) if leads else ""
     return ("Audit the following contracts and report only high or critical "
-            "severity vulnerabilities.\n\n" + "".join(chunks) + "\n" + OUTPUT_CONTRACT)
+            "severity vulnerabilities.\n\n" + "".join(chunks) + hints + "\n"
+            + OUTPUT_CONTRACT)
 
 
 def encode_request(prompt, max_tokens, tuned):
@@ -820,13 +815,15 @@ def reorder_by_targets(files, targets, by_rel, by_base):
     return front + [rec for rec in files if rec["rel"] not in seen]
 
 
-def run_model_layer(inference_api, files, deadline, by_rel, by_base):
+def run_model_layer(inference_api, files, deadline, by_rel, by_base, leads=None):
     """Triage, then depth, then breadth, then spend any leftover budget.
 
     The triage pass matters because depth is limited to a handful of files: if
     the flawed contract is not in that slice on heuristics alone it is never
-    read closely. Every pass is independently guarded so one failure degrades
-    the result instead of ending the run.
+    read closely. The static leads are threaded into the review prompts so the
+    model verifies each flagged location against the code. Every pass is
+    independently guarded so one failure degrades the result rather than ending
+    the run.
     """
     gathered = []
     ordered = files
@@ -843,7 +840,7 @@ def run_model_layer(inference_api, files, deadline, by_rel, by_base):
 
     deep_batch = ordered[:DEEP_FILES]
     if deep_batch and deadline - time.monotonic() >= CALL_HEADROOM:
-        prompt = build_review_prompt(deep_batch, DEEP_FILE_CHARS, DEEP_PROMPT_CHARS)
+        prompt = build_review_prompt(deep_batch, DEEP_FILE_CHARS, DEEP_PROMPT_CHARS, leads)
         if prompt:
             try:
                 gathered.extend(parse_findings(
@@ -853,7 +850,7 @@ def run_model_layer(inference_api, files, deadline, by_rel, by_base):
 
     wide_batch = ordered[DEEP_FILES:DEEP_FILES + WIDE_FILES]
     if wide_batch and deadline - time.monotonic() >= CALL_HEADROOM:
-        prompt = build_review_prompt(wide_batch, WIDE_FILE_CHARS, WIDE_PROMPT_CHARS)
+        prompt = build_review_prompt(wide_batch, WIDE_FILE_CHARS, WIDE_PROMPT_CHARS, leads)
         if prompt:
             try:
                 gathered.extend(parse_findings(
@@ -868,7 +865,7 @@ def run_model_layer(inference_api, files, deadline, by_rel, by_base):
     followup_batch = ordered[:FOLLOWUP_FILES]
     if followup_batch and deadline - time.monotonic() >= CALL_HEADROOM:
         prompt = build_review_prompt(
-            followup_batch, FOLLOWUP_FILE_CHARS, FOLLOWUP_PROMPT_CHARS)
+            followup_batch, FOLLOWUP_FILE_CHARS, FOLLOWUP_PROMPT_CHARS, leads)
         if prompt:
             try:
                 gathered.extend(parse_findings(
@@ -928,15 +925,7 @@ def function_line(record, name):
 
 
 def normalize(raw, by_rel, by_base):
-    """Map one raw finding onto a real code anchor, or drop it."""
-    if raw.get("origin") == "static":
-        record = by_rel.get(raw["file"])
-        if record is None:
-            return None
-        entry = dict(raw)
-        entry["pinned"] = bool(raw.get("function"))
-        return entry
-
+    """Map one model finding onto a real code anchor, or drop it."""
     record = resolve_file(
         str(raw.get("file") or raw.get("path") or raw.get("location") or ""),
         by_rel, by_base)
@@ -1022,7 +1011,30 @@ def corroborate(entries):
             current["line"] = entry.get("line", current.get("line", 1))
         if not current.get("evidence") and entry.get("evidence"):
             current["evidence"] = entry["evidence"]
+        if entry.get("lead_confirmed"):
+            current["lead_confirmed"] = True
     return list(grouped.values())
+
+
+def apply_leads(findings, leads):
+    """Mark model findings that a static lead independently flagged.
+
+    A model finding confirmed by a deterministic lead at the same location is the
+    strongest signal we have that it is real, so it is boosted and ranked first.
+    Leads never become findings by themselves; they only corroborate the model.
+    """
+    by_fn = set()
+    by_type = set()
+    for lead in leads:
+        by_fn.add((lead["file"], lead["function"]))
+        by_type.add((lead["file"], lead["type"]))
+    for finding in findings:
+        hit = ((finding["file"], finding.get("function", "")) in by_fn
+               or (finding["file"], finding.get("type", "")) in by_type)
+        if hit:
+            finding["lead_confirmed"] = True
+            finding["confidence"] = min(1.0, float(finding.get("confidence", 0.5)) + 0.1)
+    return findings
 
 
 def render_description(entry):
@@ -1054,7 +1066,7 @@ def select(entries):
 
     def priority(entry):
         return (
-            len(entry.get("sources", ())) > 1,
+            len(entry.get("sources", ())) > 1 or bool(entry.get("lead_confirmed")),
             bool(entry.get("pinned")),
             int(entry.get("votes", 1)),
             entry["severity"] == "critical",
@@ -1105,13 +1117,22 @@ def agent_main(project_dir=None, inference_api=None):
         for record in files:
             by_base.setdefault(record["rel"].split("/")[-1], record)
 
+        # Deterministic triage: locate suspicious spots and float their files to
+        # the front so the model reads them closely. The leads are hints for the
+        # model, never findings on their own.
+        leads = []
+        try:
+            leads = collect_leads(files)
+        except Exception:
+            leads = []
+        if leads:
+            flagged = {lead["file"] for lead in leads}
+            files = ([rec for rec in files if rec["rel"] in flagged]
+                     + [rec for rec in files if rec["rel"] not in flagged])
+
         raw = []
         try:
-            raw.extend(run_static_layer(files))
-        except Exception:
-            pass
-        try:
-            raw.extend(run_model_layer(inference_api, files, deadline, by_rel, by_base))
+            raw.extend(run_model_layer(inference_api, files, deadline, by_rel, by_base, leads))
         except Exception:
             pass
 
@@ -1123,6 +1144,7 @@ def agent_main(project_dir=None, inference_api=None):
                 entry = None
             if entry is not None:
                 normalized.append(entry)
+        normalized = apply_leads(normalized, leads)
         report = select(normalized)
     except Exception:
         return {"vulnerabilities": report}

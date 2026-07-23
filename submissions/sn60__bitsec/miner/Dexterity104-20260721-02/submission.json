@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "Dexterity104-20260721-02",
+  "created_at": "2026-07-21T17:40:00+00:00",
+  "author": "Dexterity104",
+  "title": "Variance-reduction miner: deterministic decoding + self-consistency completeness",
+  "notes": "General high/critical miner for sn60__bitsec across Solidity, Vyper, Rust, Move and Cairo. Optimizes for the project-pass metric (fully solve a project in >=2 of 3 runs), not finding volume: fully deterministic decoding (temperature 0, no reasoning_effort) to cut run-to-run variance, and a triage -> deep -> self-consistency recheck pipeline that re-audits the same core files with an independent lens and unions the findings so a single run captures ALL of a project's expected bugs. Tightened ~690s runtime envelope with a reserved final pass to keep invalid runs at zero, a gentle low-confidence gate for precision, per-file emit cap, and model-free structural probes. Findings localized to exact file and function. No project-specific or benchmark-specific content."
+}

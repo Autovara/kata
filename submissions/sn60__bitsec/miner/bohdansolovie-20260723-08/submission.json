@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260723-08",
+  "created_at": "2026-07-23T01:10:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Corroboration-ranked recall-first multi-language vulnerability miner",
+  "notes": "Same recall-first + corroboration + localization-guard agent as #194, resealed to this bundle. #194 failed pre-scoring because sealed_inference_key was reused from an older submission and is cryptographically bound to the candidate bytes."
+}

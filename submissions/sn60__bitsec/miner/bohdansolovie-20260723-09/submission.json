@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "bohdansolovie-20260723-09",
+  "created_at": "2026-07-23T14:50:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Temp-0 core re-audit with corroboration ranking",
+  "notes": "Beats Dexterity104 #197 levers (temp=0, independent same-file re-audit, conf floor 0.45, emit 14/4) plus our cross-pass vote boost and localization probes. Wide pass only if clock remains after reaudit."
+}

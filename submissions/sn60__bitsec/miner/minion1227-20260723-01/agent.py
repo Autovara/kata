@@ -284,18 +284,85 @@ def enclosing_type(record, offset):
 # Layer A - deterministic detectors
 # --------------------------------------------------------------------------
 
-def make_finding(record, function, title, mechanism, impact, severity, confidence, kind):
+# A compact table of the conditions the deterministic layer knows how to spot:
+# per class, its severity, a base confidence, a one-line description of the
+# condition, and the attacker consequence. This is the only fixed prose in the
+# layer; the substance of each finding is the code snippet the detector lifts
+# from the project under review (see build_static_finding), so a report is
+# derived from the actual source rather than assembled from canned text.
+CLASS_META = {
+    "access-control": ("critical", 0.62,
+                       "is externally reachable and changes state but enforces no caller check",
+                       "an arbitrary caller can drive privileged logic"),
+    "reentrancy": ("high", 0.55,
+                   "writes storage after an external call and holds no reentrancy guard",
+                   "a callee can re-enter before the state settles"),
+    "unchecked-call": ("high", 0.58,
+                       "ignores the boolean result of a low-level call",
+                       "a failed transfer is mistaken for success"),
+    "tx-origin": ("high", 0.72,
+                  "authorizes on tx.origin rather than msg.sender",
+                  "an intermediary contract can relay a call past the check"),
+    "dos": ("high", 0.45,
+            "iterates an array whose length grows without bound",
+            "the call eventually exceeds the block gas limit"),
+    "validation": ("high", 0.38,
+                   "sends value to an address argument with no zero-address guard",
+                   "value routed to the zero address is unrecoverable"),
+    "oracle-manipulation": ("high", 0.52,
+                            "consumes an oracle answer with no freshness check",
+                            "a stale or frozen price is used for valuation"),
+    "accounting": ("high", 0.34,
+                   "divides before multiplying in fixed-point arithmetic",
+                   "truncation skews the resulting share or reward math"),
+}
+
+# Detector class key -> normalized report "type" where the two differ.
+CLASS_TYPE = {"tx-origin": "access-control"}
+
+
+def snippet_around(body, index, width=150):
+    """Lift the single source line at a position, whitespace-collapsed."""
+    if index < 0:
+        return ""
+    start = body.rfind("\n", 0, index) + 1
+    end = body.find("\n", index)
+    if end == -1:
+        end = len(body)
+    line = re.sub(r"\s+", " ", body[start:end]).strip()
+    return (line[:width].rstrip() + " ...") if len(line) > width else line
+
+
+def first_offset(body_lower, needles):
+    best = -1
+    for needle in needles:
+        pos = body_lower.find(needle)
+        if pos != -1 and (best == -1 or pos < best):
+            best = pos
+    return best
+
+
+def build_static_finding(record, fn, class_key, evidence):
+    """Compose a finding from the class summary and evidence taken from source.
+
+    The evidence is a snippet of this function's own body, so the finding is
+    specific to the reviewed project instead of a fixed template.
+    """
+    severity, confidence, summary, consequence = CLASS_META[class_key]
+    contract = enclosing_type(record, fn["start"])
+    where = contract + "." + fn["name"] + "()"
     return {
         "file": record["rel"],
-        "contract": enclosing_type(record, function["start"]) if function else "",
-        "function": function["name"] if function else "",
-        "line": function["line"] if function else 1,
-        "title": title,
-        "mechanism": mechanism,
-        "impact": impact,
+        "contract": contract,
+        "function": fn["name"],
+        "line": fn["line"],
+        "title": class_key.replace("-", " ") + " in " + where,
+        "mechanism": where + " " + summary,
+        "impact": consequence,
+        "evidence": evidence,
         "severity": severity,
         "confidence": confidence,
-        "type": kind,
+        "type": CLASS_TYPE.get(class_key, class_key),
         "origin": "static",
     }
 
@@ -327,22 +394,17 @@ def body_checks_sender(function):
 def detect_missing_access_control(record):
     out = []
     for fn in record["functions"]:
-        lowered = fn["name"].lower()
-        if not any(lowered.startswith(v) or v in lowered for v in PRIVILEGED_VERBS):
+        name = fn["name"].lower()
+        if not any(name.startswith(v) or v in name for v in PRIVILEGED_VERBS):
             continue
         if not is_externally_reachable(fn) or not mutates_state(fn):
             continue
         if header_has_auth(fn) or body_checks_sender(fn):
             continue
-        out.append(make_finding(
-            record, fn,
-            "Unprotected privileged function " + fn["name"] + "()",
-            "The externally reachable function `" + fn["name"] + "()` mutates protocol "
-            "state but carries no authorization modifier and performs no msg.sender "
-            "check in its body",
-            "Any account can invoke it and take over privileged configuration or move "
-            "protocol funds",
-            "critical", 0.62, "access-control"))
+        evidence = re.sub(
+            r"\s+", " ",
+            ("function " + fn["name"] + "(" + fn["params"] + ") " + fn["header"]).strip())
+        out.append(build_static_finding(record, fn, "access-control", evidence[:150]))
     return out
 
 
@@ -350,27 +412,18 @@ def detect_state_write_after_external_call(record):
     out = []
     for fn in record["functions"]:
         body = fn["body"]
-        lowered = body.lower()
         if not body.strip() or "nonreentrant" in (fn["header"] or "").lower():
             continue
-        call_at = -1
-        for hint in EXTERNAL_CALL_HINTS:
-            found = lowered.find(hint)
-            if found != -1 and (call_at == -1 or found < call_at):
-                call_at = found
+        call_at = first_offset(body.lower(), EXTERNAL_CALL_HINTS)
         if call_at == -1:
             continue
         tail = body[call_at:]
-        if not RE_STATE_ASSIGN.search(tail):
+        write = RE_STATE_ASSIGN.search(tail)
+        if not write:
             continue
-        out.append(make_finding(
-            record, fn,
-            "State updated after external call in " + fn["name"] + "()",
-            "`" + fn["name"] + "()` performs an external call and only afterwards "
-            "writes to storage, without a reentrancy guard on the function",
-            "A malicious callee can re-enter before the state write lands and observe "
-            "or exploit stale accounting",
-            "high", 0.55, "reentrancy"))
+        evidence = (snippet_around(body, call_at).rstrip("; ")
+                    + " then writes: " + snippet_around(tail, write.start()))
+        out.append(build_static_finding(record, fn, "reentrancy", evidence[:150]))
     return out
 
 
@@ -380,44 +433,33 @@ def detect_unchecked_low_level_call(record):
         body = fn["body"]
         if not body.strip():
             continue
+        low = body.lower()
         for probe in (".call(", ".call{", ".delegatecall(", ".send("):
-            index = body.lower().find(probe)
+            index = low.find(probe)
             while index != -1:
                 line_start = body.rfind("\n", 0, index) + 1
                 line_end = body.find("\n", index)
-                statement = body[line_start:line_end if line_end != -1 else len(body)]
-                stripped = statement.strip()
-                bound = ("=" in stripped.split(probe)[0]) or stripped.startswith("require") \
-                    or stripped.startswith("if") or "require(" in stripped
+                statement = body[line_start:line_end if line_end != -1 else len(body)].strip()
+                head = statement.split(probe)[0]
+                bound = ("=" in head or statement.startswith("require")
+                         or statement.startswith("if") or "require(" in statement)
                 if not bound:
-                    out.append(make_finding(
-                        record, fn,
-                        "Unchecked low-level call in " + fn["name"] + "()",
-                        "`" + fn["name"] + "()` issues a low-level " + probe.strip(".({") +
-                        " and ignores its boolean success value",
-                        "A failed transfer or call is treated as success, so accounting "
-                        "continues on an operation that never happened",
-                        "high", 0.58, "unchecked-call"))
+                    out.append(build_static_finding(
+                        record, fn, "unchecked-call", re.sub(r"\s+", " ", statement)[:150]))
                     break
-                index = body.lower().find(probe, index + 1)
+                index = low.find(probe, index + 1)
     return out
 
 
 def detect_tx_origin_auth(record):
     out = []
     for fn in record["functions"]:
-        lowered = fn["body"].lower()
-        if "tx.origin" not in lowered:
+        low = fn["body"].lower()
+        if "tx.origin" not in low:
             continue
-        if "require" in lowered or "if" in lowered or "==" in lowered:
-            out.append(make_finding(
-                record, fn,
-                "tx.origin used for authorization in " + fn["name"] + "()",
-                "`" + fn["name"] + "()` compares tx.origin instead of msg.sender when "
-                "deciding whether the caller is allowed to proceed",
-                "Any contract the victim interacts with can relay a call and pass the "
-                "check, so the guard is bypassable by phishing",
-                "high", 0.72, "access-control"))
+        if "require" in low or "if" in low or "==" in low:
+            out.append(build_static_finding(
+                record, fn, "tx-origin", snippet_around(fn["body"], low.find("tx.origin"))))
     return out
 
 
@@ -425,86 +467,61 @@ def detect_unbounded_loop(record):
     out = []
     for fn in record["functions"]:
         body = fn["body"]
-        lowered = body.lower()
-        if "for" not in lowered and "while" not in lowered:
+        low = body.lower()
+        if ("for" not in low and "while" not in low) or ".length" not in low:
             continue
-        if ".length" not in lowered:
+        if not is_externally_reachable(fn) or ".push(" not in record["lower"]:
             continue
-        if not is_externally_reachable(fn):
-            continue
-        if ".push(" not in record["lower"]:
-            continue
-        out.append(make_finding(
-            record, fn,
-            "Unbounded iteration over growable array in " + fn["name"] + "()",
-            "`" + fn["name"] + "()` loops over an array whose length grows through a "
-            "push path elsewhere in the contract, with no pagination or cap",
-            "Once the array is large enough the function always exceeds the block gas "
-            "limit and the code path becomes permanently unusable",
-            "high", 0.45, "dos"))
+        out.append(build_static_finding(
+            record, fn, "dos", snippet_around(body, low.find(".length"))))
     return out
 
 
 def detect_missing_zero_address_check(record):
     out = []
     for fn in record["functions"]:
-        params = (fn["params"] or "").lower()
         body = fn["body"]
-        if "address" not in params or not body.strip():
+        if "address" not in (fn["params"] or "").lower() or not body.strip():
             continue
         if not is_externally_reachable(fn) or not mutates_state(fn):
             continue
-        lowered = body.lower()
-        moves_value = any(hint in lowered for hint in
-                          ("transfer", "mint", "send", "safetransfer"))
-        if not moves_value:
+        low = body.lower()
+        move_at = first_offset(low, ("transfer", "mint", "send", "safetransfer"))
+        if move_at == -1:
             continue
-        if "address(0)" in lowered or "!= 0" in lowered or "address(0x0)" in lowered:
+        if "address(0)" in low or "!= 0" in low or "address(0x0)" in low:
             continue
-        out.append(make_finding(
-            record, fn,
-            "Missing zero-address validation in " + fn["name"] + "()",
-            "`" + fn["name"] + "()` accepts an address parameter and moves value to it "
-            "without rejecting the zero address",
-            "Tokens or accounting credited to the zero address are unrecoverable",
-            "high", 0.38, "validation"))
+        out.append(build_static_finding(
+            record, fn, "validation", snippet_around(body, move_at)))
     return out
 
 
 def detect_stale_oracle_read(record):
     out = []
     for fn in record["functions"]:
-        lowered = fn["body"].lower()
-        if not any(hint in lowered for hint in ORACLE_HINTS):
+        low = fn["body"].lower()
+        read_at = first_offset(low, ORACLE_HINTS)
+        if read_at == -1:
             continue
-        if any(hint in lowered for hint in STALENESS_HINTS):
+        if any(hint in low for hint in STALENESS_HINTS):
             continue
-        out.append(make_finding(
-            record, fn,
-            "Oracle value consumed without freshness validation in " + fn["name"] + "()",
-            "`" + fn["name"] + "()` reads a price feed and uses the answer without "
-            "validating the update timestamp or round completeness",
-            "A stale or frozen feed keeps quoting an outdated price, letting positions "
-            "be opened or liquidated at a wrong valuation",
-            "high", 0.52, "oracle-manipulation"))
+        out.append(build_static_finding(
+            record, fn, "oracle-manipulation", snippet_around(fn["body"], read_at)))
     return out
 
 
 def detect_division_before_multiplication(record):
-    out = []
     pattern = re.compile(r"/\s*[A-Za-z_(][\w.()\[\]]*\s*\*")
+    out = []
     for fn in record["functions"]:
         body = fn["body"]
-        if not body.strip() or not pattern.search(body):
+        if not body.strip():
             continue
-        out.append(make_finding(
-            record, fn,
-            "Division before multiplication in " + fn["name"] + "()",
-            "`" + fn["name"] + "()` divides before multiplying, so the intermediate "
-            "quotient is truncated by integer arithmetic",
-            "Accumulated rounding loss skews share or reward accounting in favour of "
-            "one side",
-            "high", 0.34, "accounting"))
+        match = pattern.search(body)
+        if not match:
+            continue
+        out.append(build_static_finding(
+            record, fn, "accounting", snippet_around(body, match.start())))
     return out
 
 
@@ -989,6 +1006,8 @@ def corroborate(entries):
         if not current.get("pinned") and entry.get("pinned"):
             current["pinned"] = True
             current["line"] = entry.get("line", current.get("line", 1))
+        if not current.get("evidence") and entry.get("evidence"):
+            current["evidence"] = entry["evidence"]
     return list(grouped.values())
 
 
@@ -1003,6 +1022,8 @@ def render_description(entry):
         parts.append("Mechanism: " + entry["mechanism"].rstrip(".") + ". ")
     if entry.get("impact"):
         parts.append("Impact: " + entry["impact"].rstrip(".") + ". ")
+    if entry.get("evidence"):
+        parts.append("Evidence from source: `" + entry["evidence"][:200] + "`. ")
     text = "".join(parts).strip()
     if len(text) < 40:
         text = text + " " + entry.get("title", "")

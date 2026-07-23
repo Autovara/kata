@@ -1,8 +1,8 @@
 {
   "subnet_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "Dexterity104-20260721-01",
-  "challenge_run_id": "sn60-challenge-20260721T165432Z-3c9b17-pr-169",
-  "king_artifact_hash": "9574dd0d015538723e3c857342accff22a489943aba28ffa4c6087d3714480d4",
-  "candidate_artifact_hash": "9574dd0d015538723e3c857342accff22a489943aba28ffa4c6087d3714480d4"
+  "submission_id": "bohdansolovie-20260723-08",
+  "challenge_run_id": "sn60-challenge-20260723T011604Z-f6f88c-pr-195",
+  "king_artifact_hash": "f11754ac5c2851e2021ad74943084ba3d8e0a2414c4d7f7d3ca8e670f85e6240",
+  "candidate_artifact_hash": "f11754ac5c2851e2021ad74943084ba3d8e0a2414c4d7f7d3ca8e670f85e6240"
 }

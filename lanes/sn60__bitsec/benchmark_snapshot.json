@@ -4,25 +4,25 @@
   "sandbox_commit_hash": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
   "benchmark_dataset_id": "curated-highs-only-2025-08-08.json",
   "benchmark_dataset_hash": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
-  "project_list_hash": "8fcd1a62902b1293d1db1ecb8fcf445e40d869c46c9846439be0bc9c51905f1c",
+  "project_list_hash": "e9ac87e2b4fc0cdb2ea827f7ebdc13de798cc335c984504db4c0c7e93b992fd5",
   "project_keys": [
-    "code4rena_lambowin_2025_02",
-    "code4rena_initia-move_2025_04",
-    "code4rena_pump-science_2025_02",
+    "code4rena_superposition_2025_01",
     "code4rena_next-generation_2025_05",
-    "code4rena_bakerfi-invitational_2025_02",
-    "sherlock_axion_2025_01",
-    "sherlock_symmio_2025_03"
+    "sherlock_perennial_v2_update_3_2024_08",
+    "code4rena_secondswap_2025_02",
+    "code4rena_initia-move_2025_04",
+    "code4rena_forte-float128-solidity-library_2025_04",
+    "code4rena_kinetiq_2025_07"
   ],
   "container_images": [
-    "ghcr.io/bitsec-ai/code4rena_lambowin_2025_02:latest",
-    "ghcr.io/bitsec-ai/code4rena_initia-move_2025_04:latest",
-    "ghcr.io/bitsec-ai/code4rena_pump-science_2025_02:latest",
+    "ghcr.io/bitsec-ai/code4rena_superposition_2025_01:latest",
     "ghcr.io/bitsec-ai/code4rena_next-generation_2025_05:latest",
-    "ghcr.io/bitsec-ai/code4rena_bakerfi-invitational_2025_02:latest",
-    "ghcr.io/bitsec-ai/sherlock_axion_2025_01:latest",
-    "ghcr.io/bitsec-ai/sherlock_symmio_2025_03:latest"
+    "ghcr.io/bitsec-ai/sherlock_perennial_v2_update_3_2024_08:latest",
+    "ghcr.io/bitsec-ai/code4rena_secondswap_2025_02:latest",
+    "ghcr.io/bitsec-ai/code4rena_initia-move_2025_04:latest",
+    "ghcr.io/bitsec-ai/code4rena_forte-float128-solidity-library_2025_04:latest",
+    "ghcr.io/bitsec-ai/code4rena_kinetiq_2025_07:latest"
   ],
   "scorer_version": "ScaBenchScorerV2",
-  "updated_at": "2026-07-21T17:41:20.055079+00:00"
+  "updated_at": "2026-07-23T01:24:36.687293+00:00"
 }

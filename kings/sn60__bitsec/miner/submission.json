@@ -2,9 +2,9 @@
   "schema_version": 2,
   "subnet_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "Dexterity104-20260721-01",
-  "created_at": "2026-07-21T00:00:00+00:00",
-  "author": "Dexterity104",
-  "title": "General multi-language smart-contract vulnerability miner",
-  "notes": "A general high/critical vulnerability miner for the sn60__bitsec/miner lane. Ranks the project's own source across Solidity, Vyper, Rust, Move and Cairo; a triage pass that also picks audit targets, then deep and wide source audits, plus model-free structural checks. Findings localized to exact file and function. No project-specific or benchmark-specific content."
+  "submission_id": "bohdansolovie-20260723-08",
+  "created_at": "2026-07-23T01:10:00+00:00",
+  "author": "bohdansolovie",
+  "title": "Corroboration-ranked recall-first multi-language vulnerability miner",
+  "notes": "Same recall-first + corroboration + localization-guard agent as #194, resealed to this bundle. #194 failed pre-scoring because sealed_inference_key was reused from an older submission and is cryptographically bound to the candidate bytes."
 }

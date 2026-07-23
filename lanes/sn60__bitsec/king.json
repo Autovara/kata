@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "current_king_submission_id": "Dexterity104-20260721-01",
-  "current_king_artifact_hash": "9574dd0d015538723e3c857342accff22a489943aba28ffa4c6087d3714480d4",
-  "promotion_source_pr": null,
-  "promotion_timestamp": "2026-07-21T17:41:20.052037+00:00",
-  "updated_at": "2026-07-21T17:41:20.052037+00:00"
+  "current_king_submission_id": "bohdansolovie-20260723-08",
+  "current_king_artifact_hash": "f11754ac5c2851e2021ad74943084ba3d8e0a2414c4d7f7d3ca8e670f85e6240",
+  "promotion_source_pr": "195",
+  "promotion_timestamp": "2026-07-23T01:24:36.684335+00:00",
+  "updated_at": "2026-07-23T01:24:36.684335+00:00"
 }

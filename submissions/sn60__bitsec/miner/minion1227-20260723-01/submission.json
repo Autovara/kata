@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "minion1227-20260723-01",
+  "created_at": "2026-07-23T00:00:00+00:00",
+  "author": "minion1227",
+  "title": "Stability-first miner: deterministic anchored detectors plus model review",
+  "notes": "A deterministic static layer runs on every replica and yields identical anchored findings for identical source, so a solved project carries across the replica majority instead of depending on one lucky run. A two-pass model review adds upside on top. Emission is restricted to findings pinned to a real file, contract and function, corroboration-ranked and capped, to protect the correct-over-reported signal."
+}

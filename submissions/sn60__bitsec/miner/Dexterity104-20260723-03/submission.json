@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "Dexterity104-20260723-03",
+  "created_at": "2026-07-23T18:30:00+00:00",
+  "author": "Dexterity104",
+  "title": "Concurrent breadth-first miner with second-pass sharpening",
+  "notes": "A general high/critical vulnerability miner for the sn60__bitsec/miner lane across Solidity, Vyper, Rust, Move and Cairo. It ranks the project's own source, dispatches many focused single-file audits concurrently alongside a whole-repository survey, adversarial re-reads, and model-free structural checks, then runs a second sharpening pass over the flagged functions - re-reading each function's exact source to turn vaguely-stated candidates into precisely-anchored ones. Independent reviews are folded together and the most corroborated, sharply-localized issues lead the report; each finding is pinned to an exact file and function. Decoding is deterministic. Self-contained, stdlib-only, with no hardcoded or project-specific content."
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "final_metrics": {
-    "run_id": "sn60-challenge-20260723T011604Z-f6f88c-pr-195",
+    "run_id": "sn60-challenge-20260725T094530Z-cb7b4e-pr-205",
     "promotion_ready": false,
     "promotion_reason": "candidate did not beat the current SN60 king",
     "validator_replica_count": 1,
@@ -10,23 +10,23 @@
     "king_sn60_pass_score": 0.14285714285714285,
     "candidate_sn60_pass_score": 0.14285714285714285,
     "candidate_sn60_pass_score_delta": 0.0,
-    "king_detection_score": 0.16,
-    "candidate_detection_score": 0.16,
-    "king_aggregated_score": 0.16,
-    "candidate_aggregated_score": 0.16,
+    "king_detection_score": 0.11764705882352941,
+    "candidate_detection_score": 0.11764705882352941,
+    "king_aggregated_score": 0.11764705882352941,
+    "candidate_aggregated_score": 0.11764705882352941,
     "candidate_aggregated_score_delta": 0.0,
-    "king_true_positives": 4,
-    "candidate_true_positives": 4,
-    "king_total_expected": 25,
-    "candidate_total_expected": 25,
+    "king_true_positives": 2,
+    "candidate_true_positives": 2,
+    "king_total_expected": 17,
+    "candidate_total_expected": 17,
     "king_total_found": 6,
     "candidate_total_found": 6,
-    "king_precision": 0.6666666666666666,
-    "candidate_precision": 0.6666666666666666,
-    "king_f1_score": 0.25806451612903225,
-    "candidate_f1_score": 0.25806451612903225,
-    "king_invalid_runs": 1,
-    "candidate_invalid_runs": 1,
+    "king_precision": 0.3333333333333333,
+    "candidate_precision": 0.3333333333333333,
+    "king_f1_score": 0.1739130434782609,
+    "candidate_f1_score": 0.1739130434782609,
+    "king_invalid_runs": 0,
+    "candidate_invalid_runs": 0,
     "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
     "benchmark_sha256": "2b0c8b0251d92c36ca341be7168bf1e5660d2ea8da99f99298cae3e3dcdf4855",
     "scorer_version": "ScaBenchScorerV2"
@@ -42,6 +42,9 @@
       0.3333333333333333,
       0.3333333333333333,
       0.3333333333333333,
+      0.0,
+      0.0,
+      0.0,
       1.0,
       1.0,
       1.0,
@@ -50,10 +53,7 @@
       0.0,
       0.0,
       0.0,
-      0.0,
-      0.2857142857142857,
-      0.2857142857142857,
-      0.14285714285714285
+      0.0
     ],
     "candidate": [
       0.0,
@@ -65,6 +65,9 @@
       0.3333333333333333,
       0.3333333333333333,
       0.3333333333333333,
+      0.0,
+      0.0,
+      0.0,
       1.0,
       1.0,
       1.0,
@@ -73,10 +76,7 @@
       0.0,
       0.0,
       0.0,
-      0.0,
-      0.2857142857142857,
-      0.2857142857142857,
-      0.2857142857142857
+      0.0
     ]
   },
   "pass_counts": {
@@ -84,13 +84,13 @@
     "candidate": 1
   },
   "true_positives": {
-    "king": 4,
-    "candidate": 4
+    "king": 2,
+    "candidate": 2
   },
   "invalid_runs": {
-    "king": 1,
-    "candidate": 1
+    "king": 0,
+    "candidate": 0
   },
   "final_winner": "king",
-  "recorded_at": "2026-07-23T01:24:36.689029+00:00"
+  "recorded_at": "2026-07-25T09:53:23.850417+00:00"
 }

@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "candidate_submission_id": "bohdansolovie-20260723-08",
-  "candidate_artifact_hash": "f11754ac5c2851e2021ad74943084ba3d8e0a2414c4d7f7d3ca8e670f85e6240",
-  "king_artifact_hash": "9574dd0d015538723e3c857342accff22a489943aba28ffa4c6087d3714480d4",
+  "candidate_submission_id": "Dexterity104-20260724-01",
+  "candidate_artifact_hash": "32cc9241b80ad7edb880e98aeb0dceb786756914f919d576fa13c4d16c14f21c",
+  "king_artifact_hash": "f11754ac5c2851e2021ad74943084ba3d8e0a2414c4d7f7d3ca8e670f85e6240",
   "screening_result": {
     "schema_version": 1,
-    "run_id": "sn60-challenge-20260723T011604Z-f6f88c-pr-195",
+    "run_id": "sn60-challenge-20260725T094530Z-cb7b4e-pr-205",
     "status": "passed",
     "stage": "challenge",
-    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-ygigeqei/kata-bot-kata-default-xrppxpst/submissions/sn60__bitsec/miner/bohdansolovie-20260723-08",
-    "artifact_hash": "f11754ac5c2851e2021ad74943084ba3d8e0a2414c4d7f7d3ca8e670f85e6240",
+    "artifact_path": "/srv/kata-bot/work/sn60__bitsec/kata-bot-promote-243xqai7/kata-bot-kata-default-6c1w6pb8/submissions/sn60__bitsec/miner/Dexterity104-20260724-01",
+    "artifact_hash": "32cc9241b80ad7edb880e98aeb0dceb786756914f919d576fa13c4d16c14f21c",
     "project_key": null,
     "report_path": null,
     "result_path": null,
@@ -24,21 +24,21 @@
       "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
       "scorer_version": "ScaBenchScorerV2"
     },
-    "created_at": "2026-07-23T01:23:52.891816+00:00"
+    "created_at": "2026-07-25T09:52:58.415959+00:00"
   },
   "selected_project_keys": [
-    "code4rena_superposition_2025_01",
+    "code4rena_kinetiq_2025_07",
     "code4rena_next-generation_2025_05",
-    "sherlock_perennial_v2_update_3_2024_08",
-    "code4rena_secondswap_2025_02",
-    "code4rena_initia-move_2025_04",
-    "code4rena_forte-float128-solidity-library_2025_04",
-    "code4rena_kinetiq_2025_07"
+    "code4rena_lambowin_2025_02",
+    "code4rena_starknet-perpetual_2025_06",
+    "cantina_minimal-delegation_2025_04",
+    "cantina_smart-contract-audit-of-tn-contracts_2025_08",
+    "code4rena_pump-science_2025_02"
   ],
   "validator_replica_count": 1,
   "run_ids": [
-    "sn60-challenge-20260723T011604Z-f6f88c-pr-195"
+    "sn60-challenge-20260725T094530Z-cb7b4e-pr-205"
   ],
-  "freshness_fingerprint": "4fcb34f33a0028eb1ad8fc74f9d02d83ca4bf87e663b1f8608668072cf78e6a2",
-  "updated_at": "2026-07-23T01:24:36.687732+00:00"
+  "freshness_fingerprint": "5c0d6c2c3f7d87ba7ffd1d182bcd93256d9167049747a13b459b3696c7bd4f5d",
+  "updated_at": "2026-07-25T09:53:23.849720+00:00"
 }

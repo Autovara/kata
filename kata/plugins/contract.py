@@ -14,6 +14,21 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
 
+# Monotonic ABI version of the ``SubnetPlugin`` contract (plan 4.1, S4). Increment whenever the
+# contract below changes in a way a compiled/pinned plugin bundle depends on (a new/removed abstract
+# method or class attribute, a changed method signature, or a changed dataclass field the core
+# passes across the boundary). A release bundle records this value; the trusted installer refuses a
+# bundle whose recorded ABI version does not equal the installed approved base, so an
+# ABI-incompatible plugin can never be promoted. NEVER decrement or reuse a version.
+PLUGIN_CONTRACT_VERSION = 1
+
+# The required members a conforming plugin must expose (used by the S4 clean-venv conformance).
+REQUIRED_PLUGIN_ATTRS = ("evaluator_id", "pack", "mode", "scoring_profile", "validator_identity")
+REQUIRED_PLUGIN_METHODS = (
+    "environment_spec", "sample_problems", "benchmark_identity", "run_candidate", "score",
+    "compare", "beats_king",
+)
+
 # Opaque handles: only the owning plugin understands these. The core receives one
 # from a plugin method and passes it back to the same plugin's later methods without
 # inspecting it. Typed as Any so the core stays subnet-agnostic.

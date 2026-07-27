@@ -166,6 +166,20 @@ class SubnetPlugin(ABC):
     def beats_king(self, candidate: ScoreCard, king: ScoreCard | None) -> bool:
         """Whether a challenger strictly beats the reigning king (None == no king yet)."""
 
+    def capacity_estimate(self, *, config: dict[str, Any]) -> dict[str, float]:
+        """Worst-case per-challenge HARD-COST upper bounds this plugin can GUARANTEE, keyed by
+        budget dimension (e.g. ``{"tee_runs": 192.0}``).
+
+        Computed with the plugin's OWN effective resolution of ``config`` (the same config the
+        challenge runs with), so the reserved bound can never diverge from what the challenge
+        actually executes -- unlike a bound re-derived by the subnet-agnostic core. The platform
+        reserves these before the paid phase and, for any hard cap it configured on a dimension this
+        plugin does NOT bound here, DEFERS (fail closed) rather than risk exceeding the cap. Each
+        value must be a true upper bound (>= the real usage). Default: no bounds (the core then
+        defers whenever any hard cap is configured).
+        """
+        return {}
+
     def static_screen(self, submission_path: str) -> object | None:
         """Optional subnet-specific static checks before running. Default: no extra checks."""
         return None

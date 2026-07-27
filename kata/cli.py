@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lane_parsers(subparsers)
     _add_submission_parsers(subparsers)
     _add_challenge_parser(subparsers)
+    _add_plugin_parser(subparsers)
     # Subnet plugins contribute their own subcommands (e.g. SN60's `sn60-baseline`).
     from kata.plugins.discovery import load_builtin_plugins
     from kata.plugins.registry import all_plugins
@@ -295,6 +296,64 @@ def _add_submission_parsers(subparsers) -> None:
         help="Emit machine-readable JSON instead of text.",
     )
     submission_inspect.set_defaults(handler=handle_submission_inspect)
+
+
+def _add_plugin_parser(subparsers) -> None:
+    """Machine-facing queries about an installed subnet plugin.
+
+    These exist because the caller that needs the answer (kata-bot) deliberately does NOT import
+    plugin code: it drives the engine as a subprocess. So anything only a plugin knows has to be
+    reachable over the same seam as a challenge.
+    """
+    plugin_cmd = subparsers.add_parser(
+        "plugin",
+        help="Query an installed subnet plugin.",
+    )
+    plugin_subparsers = plugin_cmd.add_subparsers(dest="plugin_command", required=True)
+
+    capacity = plugin_subparsers.add_parser(
+        "capacity-estimate",
+        help="Print the plugin's worst-case per-challenge cost bounds as JSON.",
+    )
+    capacity.add_argument(
+        "--evaluator",
+        required=True,
+        help="Subnet evaluator id whose plugin is asked for its bounds.",
+    )
+    capacity.add_argument(
+        "--config-json",
+        default=None,
+        help=(
+            "The evaluator-owned challenge config, as a JSON object -- the SAME config the "
+            "challenge will run with, so the bound cannot diverge from the real execution."
+        ),
+    )
+    capacity.set_defaults(handler=handle_plugin_capacity_estimate)
+
+
+def handle_plugin_capacity_estimate(args: argparse.Namespace) -> int:
+    from kata.plugins.discovery import plugin_for_evaluator
+
+    plugin = plugin_for_evaluator(args.evaluator)
+    if plugin is None:
+        raise SystemExit(f"No subnet plugin is registered for evaluator '{args.evaluator}'.")
+    try:
+        config = json.loads(args.config_json) if args.config_json else {}
+    except ValueError as exc:
+        raise SystemExit(f"--config-json is not valid JSON: {exc}") from exc
+    if not isinstance(config, dict):
+        raise SystemExit("--config-json must be a JSON object.")
+    bounds = plugin.capacity_estimate(config=config)
+    # Emit only finite, non-negative numbers: a caller reserves against these, so a NaN/inf or a
+    # negative "bound" must fail here rather than silently weaken a hard cap downstream.
+    cleaned: dict[str, float] = {}
+    for dimension, value in (bounds or {}).items():
+        number = float(value)
+        if number != number or number in (float("inf"), float("-inf")) or number < 0:
+            raise SystemExit(f"plugin returned a non-usable bound for {dimension!r}: {value!r}")
+        cleaned[str(dimension)] = number
+    print(json.dumps({"evaluator": args.evaluator, "bounds": cleaned}))
+    return 0
 
 
 def _add_challenge_parser(subparsers) -> None:

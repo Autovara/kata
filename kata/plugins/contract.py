@@ -180,6 +180,31 @@ class SubnetPlugin(ABC):
         """
         return {}
 
+    def execution_order(
+        self, *, problems: ProblemSet, variants: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """The order in which contestants are EXECUTED. Default: unchanged.
+
+        Execution order is not a presentation detail. Contestants run one after another on a shared
+        host, so whichever runs first meets a different machine than whichever runs second — a
+        colder page cache, a different neighbour, a warmer CPU. If the order is always
+        king-then-challenger, that difference lands on the same side every single round, and any
+        signal touching wall clock inherits a systematic bias no amount of averaging removes.
+
+        A plugin whose signals include latency should permute this per challenge. The permutation
+        should be DERIVED FROM THE CHALLENGE (a seed, a benchmark identity) rather than drawn from
+        an RNG: an auditor re-running the challenge has to get the same order, or the result is not
+        reproducible.
+
+        The core executes in the returned order and then ranks by ``compare`` regardless of it, so
+        this can never change who wins — only who was inconvenienced. The returned tuple must be a
+        permutation of ``variants``; the core refuses anything else rather than silently dropping or
+        duplicating a contestant.
+
+        Default returns ``variants`` unchanged, so a plugin that does not care is unaffected.
+        """
+        return tuple(variants)
+
     def static_screen(self, submission_path: str) -> object | None:
         """Optional subnet-specific static checks before running. Default: no extra checks."""
         return None

@@ -120,6 +120,25 @@ def _score_variant(
     return ScoredVariant(label=label, agent_path=agent_path, card=card)
 
 
+def _execution_order(
+    plugin: SubnetPlugin, *, problems: ProblemSet, entrants: list[tuple[str, str]]
+) -> tuple[str, ...]:
+    """Ask the plugin for its execution order and REFUSE anything that is not a permutation.
+
+    Validated rather than trusted because the failure modes are silent and severe: a dropped label
+    means a contestant is never run yet still ranked on an empty card, and a duplicated one means a
+    submission is executed twice and billed twice. Both would look like a scoring anomaly rather
+    than an ordering bug. A plugin that returns garbage falls back to the caller's order — the
+    challenge still runs, correctly, just without the permutation.
+    """
+    labels = tuple(label for label, _path in entrants)
+    try:
+        order = tuple(plugin.execution_order(problems=problems, variants=labels))
+    except Exception:  # noqa: BLE001 - an ordering preference must never fail a challenge
+        return labels
+    return order if sorted(order) == sorted(labels) else labels
+
+
 def run_plugin_challenge(
     plugin: SubnetPlugin,
     *,
@@ -145,19 +164,19 @@ def run_plugin_challenge(
         problems = plugin.sample_problems(seed=seed, config=config)
     identity = plugin.benchmark_identity(problems)
 
-    king: ScoredVariant | None = None
+    # Every contestant this challenge will execute, king included, in the plugin's chosen order.
+    # The order is the plugin's because only it knows whether its signals are order-sensitive: a
+    # subnet ranked purely on offline correctness does not care, while one ranking wall-clock
+    # latency hands a systematic advantage to whichever side always runs first.
+    entrants: list[tuple[str, str]] = []
     if score_king and king_agent_path is not None:
-        king = _score_variant(
-            plugin,
-            label="king",
-            agent_path=king_agent_path,
-            problems=problems,
-            output_root=output_root,
-            progress=progress,
-        )
+        entrants.append(("king", king_agent_path))
+    entrants.extend(candidates)
 
-    scored: list[ScoredVariant] = [
-        _score_variant(
+    scored_by_label: dict[str, ScoredVariant] = {}
+    for label in _execution_order(plugin, problems=problems, entrants=entrants):
+        agent_path = next(path for name, path in entrants if name == label)
+        scored_by_label[label] = _score_variant(
             plugin,
             label=label,
             agent_path=agent_path,
@@ -165,7 +184,13 @@ def run_plugin_challenge(
             output_root=output_root,
             progress=progress,
         )
-        for label, agent_path in candidates
+
+    king: ScoredVariant | None = scored_by_label.get("king")
+    # Rebuilt in the CALLER's order, not the execution order: ranking, display and every downstream
+    # consumer must be independent of who happened to run first, or permuting execution would
+    # change results — which is exactly what it must never do.
+    scored: list[ScoredVariant] = [
+        scored_by_label[label] for label, _agent_path in candidates
     ]
 
     # Best-first per the plugin's comparator. compare(a, b) > 0 means a outranks b.

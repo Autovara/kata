@@ -20,10 +20,15 @@ tokens per emitted chunk. ``emit(role, text)`` records what a streamed answer wo
 and the harness derives ``completion``, ``texts`` and ``text_chunks`` from it. An agent that computed
 one string and returned it takes that penalty for a difference that has nothing to do with quality.
 
-**How a source earns anything.** The validator fetches every link you return, itself, and re-scrapes
-every tweet, and compares them against what you claimed. A source that does not check out is dropped
-before it is judged — it does not score badly, it does not score at all. So return real links,
-unedited tweets, and prose whose claims your sources actually support.
+**How a source earns anything: you must CITE it.** The validator fetches every link you return,
+itself, and checks that your ``highlights`` appear **in order** in its own copy of the page *and* in
+your own ``text`` about it. A source that fails either is dropped before it is judged — it does not
+score badly, it does not score at all. ``cite()`` attaches that evidence, and a source returned
+without it is worth nothing however good it is.
+
+This agent quotes the provider's snippet, which genuinely came from the page. That is the laziest
+thing that can pass. Reading more of the page and quoting the passage that actually answers the
+question is where the marks are.
 
 **Return exactly ``synapse.count``.** Fewer takes the count penalty. Duplicates take the duplicate
 penalty, so padding with copies of what you have is worse than returning less.
@@ -42,6 +47,7 @@ from kata_sn22_sdk import (
     BrokerError,
     ScraperTextRole,
     XSearchResult,
+    cite,
 )
 
 #: How many sources to describe in the summary. Not a scoring rule — a legibility one: the
@@ -65,7 +71,7 @@ class Submission(Agent):
 
         # Exactly the requested count, de-duplicated by link. A repeated link takes the duplicate
         # penalty, so there is no version of "fill the quota with what I have" that pays.
-        sources = self._distinct(results, synapse.count)
+        sources = [self._cite(item) for item in self._distinct(results, synapse.count)]
 
         if not synapse.wants_summary:
             # ONLY_LINKS: nothing to emit. The AI quality split reweights to (1.0, 0.0), so a
@@ -116,6 +122,16 @@ class Submission(Agent):
             if len(out) >= count:
                 break
         return out
+
+    @staticmethod
+    def _cite(item: dict) -> dict:
+        """Attach the evidence without which this source scores nothing.
+
+        The snippet is used because it is a real span of the page — that is the whole reason it can
+        pass the ordering check. An invented sentence fails, which is exactly what the check is for.
+        """
+        snippet = str(item.get("snippet") or "").strip()
+        return cite(item, [snippet] if len(snippet) >= 24 else [])
 
     @staticmethod
     def _intro(prompt: str, sources: list) -> str:

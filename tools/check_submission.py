@@ -42,8 +42,8 @@ SUBMISSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}-\d{8}-\d{2}$")
 
 MAX_AGENT_BYTES = 1_000_000
 
-#: The static screen's list, reproduced exactly. Under ``relay_only`` these modules reach nothing, so
-#: their presence says the submission expects to contact providers itself.
+#: The static screen's list, reproduced exactly. Under ``relay_only`` these modules reach nothing,
+#: so their presence says the submission expects to contact providers itself.
 BANNED_IMPORTS = ("import socket", "import requests", "import httpx", "urllib.request",
                   "http.client", "import subprocess")
 

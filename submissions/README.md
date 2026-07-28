@@ -21,11 +21,20 @@ everything below is detail.
 3. **One open PR per contributor, per subnet.** A second open submission from the same account *in
    the same subnet* is refused, not queued — push to your existing PR instead. A PR for a
    **different** subnet is fine, and expected: you can compete in every subnet at once.
-4. **No secrets, ever.** Your agent holds a short-lived relay capability, never a provider key.
-   Anything that looks like a credential is a rejection, and you should assume anything committed to
-   a public repository is compromised whether or not it is later removed.
+4. **No secrets in plaintext, ever.** Your agent holds a short-lived capability, never a provider
+   key: it asks a trusted broker to do a named thing, and the broker spends the key. A plaintext
+   credential anywhere in your bundle is a rejection, and you should assume anything committed to a
+   public repository is compromised whether or not it is later removed.
+
+   **SN22 is the exception that proves the rule.** SN22 miners fund their own evaluation, so an SN22
+   bundle contains a `sealed_inference_key` file. That file is *ciphertext*: your four provider keys
+   encrypted to one specific attested room's public key and bound to your exact bundle. Nobody but
+   that room can read it, and it is useless with any other agent. See
+   [`docs/SN22-PROTOCOL.md`](../docs/SN22-PROTOCOL.md) §1 for how to produce it — and note that the
+   sealing tool never accepts a key as a command-line value.
 5. **Everything must be committed.** The lane runs your bundle as it appears in the PR. There is no
-   install step and no dependency resolution — the standard library is what you have.
+   install step and no dependency resolution — the standard library plus your subnet's SDK is what
+   you have, and the image ships no package manager to change that.
 6. **No symlinks.** Anywhere in the bundle.
 
 **Your PR's subnet is decided by where it lands**, not by anything you declare. The bot reads the

@@ -180,6 +180,22 @@ class SubnetPlugin(ABC):
         """
         return {}
 
+    def preflight(self) -> list[dict[str, str]]:
+        """Deployment problems this subnet can detect BEFORE a round starts.
+
+        Each entry is ``{"level": "error"|"warning", "message": ...}``; an ``error`` stops the lane
+        from starting. The core cannot write these checks itself -- what makes a subnet's deployment
+        valid is subnet knowledge -- and it must not import plugin code to ask, so this is reached
+        over the same engine subprocess seam as a challenge.
+
+        Prefer checks that exercise the REAL code path (e.g. resolve the problem set and report what
+        it raises) over a parallel re-statement of the rules: a preflight that can disagree with the
+        thing it is checking is worse than no preflight, because it passes a round that then fails.
+
+        Default: nothing to check.
+        """
+        return []
+
     def execution_order(
         self, *, problems: ProblemSet, variants: tuple[str, ...]
     ) -> tuple[str, ...]:

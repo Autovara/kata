@@ -94,3 +94,79 @@ def test_the_contract_default_bounds_nothing():
     from kata.plugins.contract import SubnetPlugin
 
     assert SubnetPlugin.capacity_estimate(object(), config={}) == {}
+
+
+# ---- `kata plugin preflight` ---------------------------------------------------------------------
+# The same seam, for the other question kata-bot cannot answer itself: is this subnet's DEPLOYMENT
+# configured well enough for a round to start? What makes a deployment valid is subnet knowledge,
+# and the bot must not import plugin code to find out -- it holds the bot token and webhook secret.
+def _run_preflight_cli(monkeypatch, capsys, plugin, evaluator="probe"):
+    import kata.cli as cli
+    import kata.plugins.discovery as discovery
+
+    monkeypatch.setattr(discovery, "plugin_for_evaluator", lambda _e: plugin)
+    code = cli.handle_plugin_preflight(SimpleNamespace(evaluator=evaluator))
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_preflight_emits_the_plugin_issues_as_json(monkeypatch, capsys):
+    plugin = SimpleNamespace(
+        preflight=lambda: [
+            {"level": "error", "message": "sample size exceeds the pinned set"},
+            {"level": "warning", "message": "benchmark snapshot is a week old"},
+        ]
+    )
+    code, payload = _run_preflight_cli(monkeypatch, capsys, plugin)
+    assert code == 0
+    assert payload == {
+        "evaluator": "probe",
+        "issues": [
+            {"level": "error", "message": "sample size exceeds the pinned set"},
+            {"level": "warning", "message": "benchmark snapshot is a week old"},
+        ],
+    }
+
+
+def test_preflight_on_a_healthy_plugin_reports_nothing(monkeypatch, capsys):
+    code, payload = _run_preflight_cli(monkeypatch, capsys, SimpleNamespace(preflight=lambda: []))
+    assert code == 0
+    assert payload["issues"] == []
+
+
+def test_preflight_defaults_a_level_less_issue_to_an_error(monkeypatch, capsys):
+    """Fail closed. Guessing "warning" would let a blocking problem through the gate."""
+    plugin = SimpleNamespace(preflight=lambda: [{"message": "something is wrong"}])
+    _code, payload = _run_preflight_cli(monkeypatch, capsys, plugin)
+    assert payload["issues"] == [{"level": "error", "message": "something is wrong"}]
+
+
+@pytest.mark.parametrize("level", ["info", "critical", "ERROR", "err"])
+def test_preflight_refuses_an_unknown_level(monkeypatch, capsys, level):
+    """An unrecognised level silently downgraded to a warning is a blocking problem let through."""
+    plugin = SimpleNamespace(preflight=lambda: [{"level": level, "message": "x"}])
+    with pytest.raises(SystemExit):
+        _run_preflight_cli(monkeypatch, capsys, plugin)
+
+
+def test_preflight_defaults_an_empty_level_to_an_error(monkeypatch, capsys):
+    plugin = SimpleNamespace(preflight=lambda: [{"level": "", "message": "x"}])
+    _code, payload = _run_preflight_cli(monkeypatch, capsys, plugin)
+    assert payload["issues"] == [{"level": "error", "message": "x"}]
+
+
+def test_preflight_refuses_a_non_dict_issue(monkeypatch, capsys):
+    plugin = SimpleNamespace(preflight=lambda: ["just a string"])
+    with pytest.raises(SystemExit):
+        _run_preflight_cli(monkeypatch, capsys, plugin)
+
+
+def test_preflight_refuses_an_unregistered_evaluator(monkeypatch, capsys):
+    with pytest.raises(SystemExit):
+        _run_preflight_cli(monkeypatch, capsys, None, evaluator="nope")
+
+
+def test_a_plugin_with_no_preflight_of_its_own_reports_nothing():
+    """The contract default. A subnet with nothing to check must not have to say so."""
+    from kata.plugins.contract import SubnetPlugin
+
+    assert SubnetPlugin.preflight(object()) == []

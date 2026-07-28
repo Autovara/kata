@@ -330,6 +330,37 @@ def _add_plugin_parser(subparsers) -> None:
     )
     capacity.set_defaults(handler=handle_plugin_capacity_estimate)
 
+    preflight = plugin_subparsers.add_parser(
+        "preflight",
+        help="Print the plugin's deployment-configuration problems as JSON.",
+    )
+    preflight.add_argument(
+        "--evaluator",
+        required=True,
+        help="Subnet evaluator id whose plugin checks its own deployment.",
+    )
+    preflight.set_defaults(handler=handle_plugin_preflight)
+
+
+def handle_plugin_preflight(args: argparse.Namespace) -> int:
+    from kata.plugins.discovery import plugin_for_evaluator
+
+    plugin = plugin_for_evaluator(args.evaluator)
+    if plugin is None:
+        raise SystemExit(f"No subnet plugin is registered for evaluator '{args.evaluator}'.")
+    issues: list[dict[str, str]] = []
+    for issue in plugin.preflight() or []:
+        if not isinstance(issue, dict):
+            raise SystemExit(f"plugin returned a non-usable preflight issue: {issue!r}")
+        level = str(issue.get("level") or "error")
+        if level not in {"error", "warning"}:
+            # An unknown level must not be silently downgraded to a warning: that would let a
+            # blocking problem through preflight and into a round.
+            raise SystemExit(f"plugin returned an unknown preflight level: {level!r}")
+        issues.append({"level": level, "message": str(issue.get("message") or "")})
+    print(json.dumps({"evaluator": args.evaluator, "issues": issues}))
+    return 0
+
 
 def handle_plugin_capacity_estimate(args: argparse.Namespace) -> int:
     from kata.plugins.discovery import plugin_for_evaluator

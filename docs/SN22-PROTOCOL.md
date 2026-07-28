@@ -1,11 +1,37 @@
 # The SN22 submission protocol, version 1
 
-This is the complete contract between your agent and the lane. It is versioned: an agent declaring a
-`protocol_version` this lane does not implement is **rejected, not interpreted leniently** — a
-lenient read of an unknown schema is how a field silently stops being checked.
+> **This describes the version-1 sandbox path, which is no longer what you submit.**
+>
+> The sealed room runs **version 2**: you subclass `Agent` from `kata_sn22_sdk`, implement
+> `smart_scraper` and `twitter_search`, and stream your prose through `emit`. There is no stdin
+> task, no stdout document and no `sn22_relay` import — the image's harness handles all three, so
+> every contestant's answer is framed identically.
+>
+> **Start from the reference agent:**
+> [`submissions/sn22__desearch/miner/example-20260727-01/agent.py`](../submissions/sn22__desearch/miner/example-20260727-01/agent.py).
+> It answers all four pools and is documented line by line.
+>
+> The two biggest differences to know before you read further:
+>
+> * **You never hold a provider key.** `self.broker` spends the credentials you sealed to your
+>   bundle, inside the trusted runner. There is no API key in your environment and no method that
+>   returns one.
+> * **Emit your prose; do not return it.** Upstream's streaming penalty counts tokens per emitted
+>   chunk, so an agent that computes one string and returns it is penalised for something unrelated
+>   to answer quality.
+>
+> What remains true below: the failure classes, the static screen, and the fact that a version this
+> lane does not implement is **rejected, not interpreted leniently**. The rest describes the local
+> calibration sandbox, which still speaks version 1. This page is replaced wholesale once the two
+> paths converge.
 
-The authoritative implementation is `kata_sn22/protocol.py` in the plugin repository. This document
-describes it; where they disagree, the code is right and this is a bug.
+This is the complete contract between your agent and the version-1 sandbox. It is versioned: an
+agent declaring a `protocol_version` this lane does not implement is **rejected, not interpreted
+leniently** — a lenient read of an unknown schema is how a field silently stops being checked.
+
+The authoritative implementation is `kata_sn22/protocol.py` in the plugin repository, and the
+version-2 one is `kata_sn22/protocol_v2.py` plus the `kata_sn22_sdk` package. This document
+describes the former; where they disagree, the code is right and this is a bug.
 
 ## Input: one task on stdin
 

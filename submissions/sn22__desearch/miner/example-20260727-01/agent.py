@@ -1,180 +1,152 @@
 #!/usr/bin/env python3
 """A reference SN22 agent: valid rather than good.
 
-It does the things every submission must do, and nothing else:
+It answers **all four pools** — AI search in fast, balanced and deep mode, and Basic X search — and
+does nothing clever in any of them. That is the point: it is the floor, not the target. Beating it
+should be easy, and every place it is obviously lazy is marked.
 
-1. read one task from stdin and answer on stdout, in protocol version 1;
-2. search through ``sn22_relay`` — the ONLY way out. In the local sandbox the lane puts that module
-   in the run directory; in the sealed room the agent image ships it. Either way you write the same
-   line, and there is no reason for a submission to import ``socket`` or ``urllib`` (both of which
-   the screen rejects);
-3. return exactly ``limits.max_results`` results — fewer takes the upstream count penalty, more is
-   a contract violation;
-4. **supply evidence for every source**, which is the part worth understanding before anything else.
+    from kata_sn22_sdk import Agent, AiSearchResult, ScraperTextRole, XSearchResult
 
-**How a source earns anything.** The validator fetches every page you return, itself, and checks
-that your ``highlights`` appear IN ORDER in its own copy of that page AND in your own ``text``
-about it. A source that fails either check is dropped before it is ever judged — it does not score
-badly, it does not score at all. So:
+    class Submission(Agent):
+        async def smart_scraper(self, synapse, emit): ...
+        async def twitter_search(self, synapse): ...
 
-* quote CONTIGUOUS, REAL spans of the page. Reassembling a page's vocabulary into a sentence nobody
-  wrote fails the ordering check, which is exactly what it is for;
-* say the same thing in ``text`` that your highlights say. Pasting real excerpts beside an answer
-  written from somewhere else fails the second direction of the check;
-* only what survives is sent to the judge, and it is judged on the EXCERPTS, not the page — you are
-  graded on what you proved you read.
+**You never hold a credential.** ``self.broker`` spends the keys you sealed to your bundle, inside
+the trusted runner, on your behalf. There is no API key in your environment and no method that
+returns one — so there is nothing to leak, and nothing you can point at a host of your choosing.
 
-**What a citation costs.** A citation counts only when you actually returned that source and that
-source passed evidence. Citing a URL you did not return is free to write and earns nothing, and
-citing a source whose excerpts did not check out is worse than citing nothing at all.
+**Emit your prose; do not return it.** Upstream miners stream, and the streaming penalty counts
+tokens per emitted chunk. ``emit(role, text)`` records what a streamed answer would have streamed,
+and the harness derives ``completion``, ``texts`` and ``text_chunks`` from it. An agent that computed
+one string and returned it takes that penalty for a difference that has nothing to do with quality.
 
-Its retrieval strategy is one relay call with the query verbatim. Beating that is the starting
-point, not the goal — a real agent reformulates, searches more than once, ranks what comes back,
-and quotes the passages that actually answer the question rather than the first lines of the page.
-This one has a whole spare quota it never touches.
+**How a source earns anything.** The validator fetches every link you return, itself, and re-scrapes
+every tweet, and compares them against what you claimed. A source that does not check out is dropped
+before it is judged — it does not score badly, it does not score at all. So return real links,
+unedited tweets, and prose whose claims your sources actually support.
 
-**Where your search calls are paid for depends on where you run**, and you do not have to care:
+**Return exactly ``synapse.count``.** Fewer takes the count penalty. Duplicates take the duplicate
+penalty, so padding with copies of what you have is worse than returning less.
 
-* in the local **sandbox**, the lane pays and meters you — ``sn22_relay.quota()`` reports what is
-  left, and running out is a refusal;
-* in the sealed **room**, YOU pay, with the credential you sealed to your bundle. There is no lane
-  quota to read, so ``quota()`` reports ``metered: False`` and the only limit is your own budget.
+**``ONLY_LINKS`` means no summary is graded.** Writing one anyway spends your own money on something
+nobody reads.
 
-The same ``agent.py`` runs in both. That is deliberate: a score you measure in the sandbox only
-predicts a score in the room if nothing about your agent changes between them.
-
-Standard library only, plus ``sn22_relay``. Nothing is installed at run time, in either place.
+Standard library plus ``kata_sn22_sdk``. Nothing is installed at run time, and there is no installer
+in the image to do it with.
 """
 from __future__ import annotations
 
-import json
-import sys
-import time
+from kata_sn22_sdk import (
+    Agent,
+    AiSearchResult,
+    BrokerError,
+    ScraperTextRole,
+    XSearchResult,
+)
 
-import sn22_relay
-
-PROTOCOL_VERSION = 1
-
-#: How many excerpts to claim per source. More is not better: EVERY one must be found, in order, in
-#: the validator's own copy of the page, so each extra highlight is another chance to fail evidence.
-HIGHLIGHTS_PER_SOURCE = 1
-
-
-def read_task() -> dict:
-    """The task arrives on stdin. Refuse a version this agent does not implement rather than
-    guessing at it — a lenient read of an unknown schema is how a field stops being checked."""
-    document = json.loads(sys.stdin.read())
-    if document.get("protocol_version") != PROTOCOL_VERSION:
-        raise SystemExit(f"unsupported protocol_version {document.get('protocol_version')!r}")
-    return document
+#: How many sources to describe in the summary. Not a scoring rule — a legibility one: the
+#: groundedness judge reads the links to decide which source to check each claim against, and a wall
+#: of forty is harder to ground than a well-chosen five.
+SOURCES_IN_SUMMARY = 5
 
 
-def search(query: str, limit: int) -> list[dict]:
-    """One relay search, with failure answered rather than raised.
+class Submission(Agent):
+    """One search, one summary, no reformulation. The whole quota goes unused."""
 
-    A crash is an ``invalid_run`` and counts against you on signal 5; an empty answer is merely a
-    bad one on signal 2. When the relay refuses — quota gone, capability expired, challenge closed —
-    the useful move is to answer with what you have.
-    """
-    try:
-        return sn22_relay.search(query, limit=limit)
-    except sn22_relay.RelayError:
-        # ONE error class covers refused, unreachable and unintelligible, in both transports. That
-        # is on purpose: an agent able to tell them apart could probe the lane's state, and none of
-        # them changes the useful response, which is to answer with what you already have.
-        return []
+    async def smart_scraper(self, synapse, emit) -> AiSearchResult:
+        """Answer one AI-search task.
 
+        A real agent reformulates the prompt, searches more than once, ranks what comes back, and
+        quotes the passages that actually answer the question. This one issues the prompt verbatim
+        and keeps whatever order the provider returned — and it still has almost its entire search
+        quota left when it stops.
+        """
+        results = self._search(synapse.prompt, synapse.count)
 
-def highlights_for(item: dict) -> list[str]:
-    """The excerpts this agent is willing to stand behind for one source.
+        # Exactly the requested count, de-duplicated by link. A repeated link takes the duplicate
+        # penalty, so there is no version of "fill the quota with what I have" that pays.
+        sources = self._distinct(results, synapse.count)
 
-    It uses the snippet the provider returned, which is genuinely FROM the page — that is the whole
-    reason it can pass evidence. A better agent fetches or reads more of the page and quotes the
-    passage that actually answers the question; a worse one invents a sentence and scores nothing.
-    """
-    snippet = str(item.get("snippet") or "").strip()
-    return [snippet[:400]] if len(snippet) >= 24 else []
+        if not synapse.wants_summary:
+            # ONLY_LINKS: nothing to emit. The AI quality split reweights to (1.0, 0.0), so a
+            # summary here is graded by nobody and paid for by you.
+            return AiSearchResult(search_results=sources)
 
+        emit(ScraperTextRole.INTRO, self._intro(synapse.prompt, sources))
+        emit(ScraperTextRole.SEARCH_SUMMARY, self._sources_block(sources))
+        emit(ScraperTextRole.FINAL_SUMMARY, self._final_summary(synapse, sources))
+        return AiSearchResult(search_results=sources)
 
-def build_summary(query: str, results: list[dict]) -> str:
-    """A summary the upstream structure check accepts, with its sources cited inline.
+    async def twitter_search(self, synapse) -> XSearchResult:
+        """Answer one Basic X-search task.
 
-    Bold headers rather than ``#`` (a ``#`` header is the full penalty). The markdown links are not
-    decoration: the groundedness judge reads them to decide which source it should check each value
-    against, so a value cited to the wrong source fails even when it is true.
-    """
-    if not results:
-        return f"**{query}**\n\nNo relevant sources were retrieved for this query."
-    lines = [f"**{query}**", ""]
-    for index, item in enumerate(results, 1):
-        title = str(item.get("title") or item["link"])
-        snippet = str(item.get("snippet") or "").strip()
-        lines.append(f"- {title} [{index}]({item['link']}): {snippet[:200]}".rstrip(": "))
-    return "\n".join(lines)
+        Tweets are returned exactly as the provider gave them. The validator re-scrapes each one and
+        compares it field by field, so an "improved" tweet scores zero rather than less.
 
+        Note what this does NOT do: ``sort="Latest"`` is scored on ordering, and results not in
+        descending time order are an immediate zero for the task. This agent trusts the provider's
+        order. Checking it is the first thing worth adding.
+        """
+        try:
+            tweets = self.broker.x_search(synapse.query, count=synapse.count)
+        except BrokerError:
+            # ONE error class covers refused, unreachable and unintelligible. An empty answer is a
+            # bad answer; an uncaught exception is an invalid run and costs more than the pool.
+            return XSearchResult(results=[])
+        return XSearchResult(results=tweets[:synapse.count])
 
-def main() -> int:
-    started = time.monotonic()
-    task = read_task()
-    limits = task.get("limits") or {}
-    max_results = int(limits.get("max_results") or 5)
-    query = str(task.get("query") or "")
+    # ---- helpers -------------------------------------------------------------------------------
 
-    found = search(query, max_results)
+    def _search(self, query: str, count: int) -> list:
+        try:
+            return self.broker.web_search(query, count=count)
+        except BrokerError:
+            return []
 
-    # Exactly the requested count, de-duplicated. A repeated link is an `invalid_schema` rejection,
-    # and padding a list with copies takes the full duplicate penalty upstream — so there is no
-    # version of "fill the quota with what I have" that pays.
-    results: list[dict] = []
-    seen: set[str] = set()
-    for item in found:
-        link = str(item.get("link") or "")
-        if not link.startswith(("http://", "https://")) or link in seen:
-            continue
-        seen.add(link)
-        highlights = highlights_for(item)
-        results.append({
-            "link": link,
-            "title": str(item.get("title") or link)[:8000],
-            "snippet": str(item.get("snippet") or "")[:8000],
-            # The evidence. Without it this source is dropped before it is judged.
-            "highlights": highlights[:HIGHLIGHTS_PER_SOURCE],
-            # ...and the same claim in the agent's own words, so the second direction of the
-            # evidence check passes too. Saying something DIFFERENT here fails it.
-            "text": " ".join(highlights[:HIGHLIGHTS_PER_SOURCE]),
-        })
-        if len(results) >= max_results:
-            break
+    @staticmethod
+    def _distinct(results: list, count: int) -> list:
+        seen: set = set()
+        out: list = []
+        for item in results:
+            link = str(item.get("link") or item.get("url") or "")
+            if not link.startswith(("http://", "https://")) or link in seen:
+                continue
+            seen.add(link)
+            out.append(item)
+            if len(out) >= count:
+                break
+        return out
 
-    # Cite ONLY what was returned, and only what carries evidence. A citation to a source that did
-    # not survive the evidence check earns nothing and drags precision (signal 3) down with it.
-    #
-    # Citing everything retrieved is the naive choice and it COSTS precision: a result that was
-    # returned but is not actually relevant is a citation that fails. Deciding which of your
-    # results you are willing to stand behind is the first thing worth improving here — and note
-    # that citing nothing scores precision 1.0 but loses at quality and coverage first, so silence
-    # is not the answer either.
-    citations = [{"link": item["link"], "claim": f"supports: {query}"}
-                 for item in results if item["highlights"]]
+    @staticmethod
+    def _intro(prompt: str, sources: list) -> str:
+        return f"Searching for: {prompt}\nFound {len(sources)} sources.\n\n"
 
-    json.dump({
-        "protocol_version": PROTOCOL_VERSION,
-        "task_id": task["task_id"],
-        "summary": build_summary(query, results),
-        "results": results,
-        # X search is answered with tweets rather than pages; this reference does not implement it.
-        # The validator re-scrapes every tweet you claim and compares it field by field, so an
-        # edited tweet scores zero rather than less.
-        "tweets": [],
-        "citations": citations,
-        # Reported honestly. It is not what you are ranked on — cost comes from the relay's own
-        # billing — but a large gap between this and the relay's record is worth a reviewer's time.
-        "usage": {"provider_calls": 1 if found else 0,
-                  "tokens": 0,
-                  "elapsed_seconds": round(time.monotonic() - started, 3)},
-    }, sys.stdout)
-    return 0
+    @staticmethod
+    def _sources_block(sources: list) -> str:
+        lines = []
+        for item in sources[:SOURCES_IN_SUMMARY]:
+            title = str(item.get("title") or item.get("link") or "").strip()
+            snippet = str(item.get("snippet") or "").strip()
+            lines.append(f"- {title}: {snippet[:200]}".rstrip(": "))
+        return "\n".join(lines) + "\n\n" if lines else ""
 
+    def _final_summary(self, synapse, sources: list) -> str:
+        """The block the groundedness judge reads.
 
-if __name__ == "__main__":
-    sys.exit(main())
+        Bold headers rather than ``#`` — a ``#`` header takes the full structure penalty. The
+        markdown links are not decoration: the judge follows them to decide which source to check
+        each claim against, so a claim cited to the wrong source fails even when it is true.
+
+        This agent restates the snippets it was given. That is the laziest thing that can pass
+        groundedness, because a snippet genuinely came from the page. Reading more of the page and
+        answering the actual question is where the marks are.
+        """
+        if not sources:
+            return f"**{synapse.prompt}**\n\nNo relevant sources were retrieved."
+        lines = [f"**{synapse.prompt}**", ""]
+        for index, item in enumerate(sources[:SOURCES_IN_SUMMARY], 1):
+            link = str(item.get("link") or item.get("url") or "")
+            title = str(item.get("title") or link).strip()
+            snippet = str(item.get("snippet") or "").strip()
+            lines.append(f"- [{title}]({link}) [{index}]: {snippet[:200]}".rstrip(": "))
+        return "\n".join(lines)

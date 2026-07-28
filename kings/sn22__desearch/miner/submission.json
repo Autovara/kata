@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn22__desearch",
+  "mode": "miner",
+  "submission_id": "kata-seed-20260728-01",
+  "created_at": "2026-07-28T00:00:00Z",
+  "author": "kata",
+  "title": "Seeded initial SN22 King",
+  "notes": "The seeded initial King: the floor, not the target. Valid in all four pools and deliberately unclever, so the first miner who reformulates, ranks or reads past the snippet promotes. Lives in kings/, not submissions/ -- submissions/ is the miner-owned tree and this was never a miner's PR."
+}

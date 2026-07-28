@@ -4,9 +4,10 @@
 It does the things every submission must do, and nothing else:
 
 1. read one task from stdin and answer on stdout, in protocol version 1;
-2. search through ``sn22_relay`` — the lane puts that module in the run directory, and it is the
-   ONLY way out. The sandbox has no network namespace, so there is nothing else to reach and no
-   reason for a submission to import ``socket`` or ``urllib`` (both of which the screen rejects);
+2. search through ``sn22_relay`` — the ONLY way out. In the local sandbox the lane puts that module
+   in the run directory; in the sealed room the agent image ships it. Either way you write the same
+   line, and there is no reason for a submission to import ``socket`` or ``urllib`` (both of which
+   the screen rejects);
 3. return exactly ``limits.max_results`` results — fewer takes the upstream count penalty, more is
    a contract violation;
 4. **supply evidence for every source**, which is the part worth understanding before anything else.
@@ -32,7 +33,17 @@ point, not the goal — a real agent reformulates, searches more than once, rank
 and quotes the passages that actually answer the question rather than the first lines of the page.
 This one has a whole spare quota it never touches.
 
-Standard library only, plus ``sn22_relay``. The sandbox installs nothing.
+**Where your search calls are paid for depends on where you run**, and you do not have to care:
+
+* in the local **sandbox**, the lane pays and meters you — ``sn22_relay.quota()`` reports what is
+  left, and running out is a refusal;
+* in the sealed **room**, YOU pay, with the credential you sealed to your bundle. There is no lane
+  quota to read, so ``quota()`` reports ``metered: False`` and the only limit is your own budget.
+
+The same ``agent.py`` runs in both. That is deliberate: a score you measure in the sandbox only
+predicts a score in the room if nothing about your agent changes between them.
+
+Standard library only, plus ``sn22_relay``. Nothing is installed at run time, in either place.
 """
 from __future__ import annotations
 
@@ -68,6 +79,9 @@ def search(query: str, limit: int) -> list[dict]:
     try:
         return sn22_relay.search(query, limit=limit)
     except sn22_relay.RelayError:
+        # ONE error class covers refused, unreachable and unintelligible, in both transports. That
+        # is on purpose: an agent able to tell them apart could probe the lane's state, and none of
+        # them changes the useful response, which is to answer with what you already have.
         return []
 
 

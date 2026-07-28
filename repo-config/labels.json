@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "note": "Managed by kata-bot. Reconciled on every pass; hand edits are reverted.",
+  "labels": [
+    {
+      "name": "kata:lane:sn60__bitsec",
+      "color": "0052cc",
+      "description": "Entry in the SN60 (Bitsec) competition"
+    },
+    {
+      "name": "kata:lane:sn22__desearch",
+      "color": "0052cc",
+      "description": "Entry in the SN22 (Desearch) competition"
+    },
+    {
+      "name": "kata:pending",
+      "color": "1d76db",
+      "description": "Queued for a challenge"
+    },
+    {
+      "name": "kata:executing",
+      "color": "fbca04",
+      "description": "Being challenged right now"
+    },
+    {
+      "name": "kata:winner",
+      "color": "0e8a16",
+      "description": "Beat the king and took the crown"
+    },
+    {
+      "name": "kata:king",
+      "color": "0e8a16",
+      "description": "The reigning king"
+    },
+    {
+      "name": "kata:king2",
+      "color": "0e8a16",
+      "description": "Runner-up in the reward window"
+    },
+    {
+      "name": "kata:king3",
+      "color": "0e8a16",
+      "description": "Runner-up in the reward window"
+    },
+    {
+      "name": "kata:king4",
+      "color": "0e8a16",
+      "description": "Runner-up in the reward window"
+    },
+    {
+      "name": "kata:losing",
+      "color": "6a737d",
+      "description": "Challenged and did not beat the king"
+    },
+    {
+      "name": "kata:invalid",
+      "color": "b60205",
+      "description": "Rejected before scoring"
+    },
+    {
+      "name": "kata:stale",
+      "color": "d93f0b",
+      "description": "Needs a re-run against the current king"
+    },
+    {
+      "name": "kata:hold",
+      "color": "5319e7",
+      "description": "Held pending an operator decision"
+    },
+    {
+      "name": "kata:review",
+      "color": "c27c0e",
+      "description": "Held for human review"
+    },
+    {
+      "name": "kata:defeat",
+      "color": "86181d",
+      "description": "Lost the crown to a challenger"
+    }
+  ]
+}

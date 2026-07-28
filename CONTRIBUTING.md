@@ -3,8 +3,14 @@
 Kata is an objective, subnet-agnostic agent-competition framework: contributors compete
 to build the strongest agent for a target subnet, and Kata keeps the current best one
 (the **king**). Contributions should make the evaluator, pack workflow, or competition
-machinery more trustworthy and more useful. The framework runs one competition lane
-today — **SN60 / Bitsec** (`sn60__bitsec`) — and is designed to add more.
+machinery more trustworthy and more useful. The framework runs two competition lanes
+today — **SN60 / Bitsec** (`sn60__bitsec`) and **SN22 / Desearch** (`sn22__desearch`) — and is
+designed to add more.
+
+**Entering a competition is different from contributing to the framework.** If you are here to
+submit an agent, everything you need is in [`submissions/README.md`](submissions/README.md): open a
+PR under your subnet's directory, one open PR per subnet per contributor, one subnet per PR. The
+rest of this document is about changing Kata itself.
 
 ## ⚡ Built with Gittensor (Bittensor Subnet 74)
 
@@ -14,8 +20,8 @@ coordinates and rewards the people who build and improve it. If you contribute h
 work is part of Gittensor / SN74 — you don't need to use Bittensor or Discord to take
 part, but it's how this project is powered and how contributors get credit.
 
-> Keep two subnets straight: **SN74 / Gittensor** powers the *development of this repo*;
-> **SN60 / Bitsec** is the current *competition target* that Kata builds an agent for.
+> Keep the subnets straight: **SN74 / Gittensor** powers the *development of this repo*;
+> **SN60 / Bitsec** and **SN22 / Desearch** are the *competition targets* Kata runs lanes for.
 
 ## Principles
 

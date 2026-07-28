@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "note": "The secret is NEVER stored here. It is delivered to the resident through systemd credentials and referenced by name only.",
+  "config": {
+    "url_env": "KATA_WEBHOOK_PUBLIC_URL",
+    "secret_env": "KATA_WEBHOOK_SECRET",
+    "content_type": "json",
+    "insecure_ssl": "0"
+  },
+  "events": ["pull_request", "issue_comment"],
+  "active": true,
+  "rationale": {
+    "events": "pull_request drives intake and closure; issue_comment carries operator commands. Nothing else is consumed, and subscribing to more would spool deliveries the resident drops.",
+    "insecure_ssl": "0: an unverified webhook endpoint is an unauthenticated one."
+  }
+}

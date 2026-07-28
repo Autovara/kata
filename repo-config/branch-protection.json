@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "branch": "main",
+  "note": "The bot merges winners. Nothing else may write to main, including the bot's own token by accident.",
+  "protection": {
+    "required_status_checks": {
+      "strict": true,
+      "contexts": ["validate-submission"]
+    },
+    "enforce_admins": false,
+    "required_pull_request_reviews": null,
+    "restrictions": null,
+    "required_linear_history": true,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "block_creations": false,
+    "required_conversation_resolution": false,
+    "lock_branch": false,
+    "allow_fork_syncing": true
+  },
+  "rationale": {
+    "required_status_checks": "A submission that fails the layout check must not be mergeable at all, so a bot bug cannot merge one.",
+    "required_pull_request_reviews": "null on purpose: the bot merges the winner unattended, and a required human review would deadlock every promotion.",
+    "enforce_admins": "false so an operator can still perform a reviewed rollback without unprotecting the branch first.",
+    "allow_force_pushes": "false: the promotion history is the audit trail.",
+    "allow_deletions": "false: a deleted main is an unrecoverable lane."
+  }
+}

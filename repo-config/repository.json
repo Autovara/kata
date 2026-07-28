@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "owner": "Autovara",
+  "name": "kata",
+  "settings": {
+    "has_issues": true,
+    "has_projects": false,
+    "has_wiki": false,
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "delete_branch_on_merge": true,
+    "allow_auto_merge": false
+  },
+  "rationale": {
+    "has_issues": "Contributors need a place to question a decision that is not a second pull request in the same subnet \u2014 that trips the one-open-PR-per-subnet rule.",
+    "allow_merge_commit": "false: one commit per promotion keeps the king's provenance a single sha.",
+    "allow_auto_merge": "false: merging is the bot's decision, taken after a challenge, never GitHub's after a check.",
+    "lane_ids": "ONE competition repository serves every subnet. Miners open PRs here and the lane is decided by which submissions/<subnet>/ tree the PR touches, so this repository needs every lane's membership label. One open PR per contributor PER LANE."
+  },
+  "lane_ids": [
+    "sn60__bitsec",
+    "sn22__desearch"
+  ]
+}

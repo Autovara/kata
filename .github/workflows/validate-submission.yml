@@ -1,0 +1,30 @@
+name: validate-submission
+
+# The check branch protection requires. It is deliberately free, offline and fast: a layout error
+# should cost a contributor seconds, not a queue position. It does NOT score anything — scoring
+# happens in the lane, and nothing here can influence it.
+#
+# It checks EVERY subnet's submissions, because they all live in this one repository. Which subnet a
+# PR belongs to is decided by which `submissions/<subnet>/` directory it touches.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-submission:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # No pip install: a submission runs against the standard library alone, so the check that
+      # gates it must not need anything either.
+      - name: Check every submission layout
+        run: python tools/check_submission.py --all

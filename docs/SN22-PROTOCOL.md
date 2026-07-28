@@ -2,10 +2,11 @@
 
 This is the complete contract between your agent and the lane.
 
-Start by copying the reference agent:
-[`submissions/sn22__desearch/miner/example-20260727-01/agent.py`](../submissions/sn22__desearch/miner/example-20260727-01/agent.py).
+Start by copying the reigning King:
+[`kings/sn22__desearch/miner/agent.py`](../kings/sn22__desearch/miner/agent.py).
 It answers all four pools, it is documented line by line, and every place it is deliberately lazy is
-marked. Beating it should be easy.
+marked. Beating it should be easy — and it is literally the thing you have to beat, so there is no
+separate example that might drift away from what you are actually scored against.
 
 ```python
 from kata_sn22_sdk import Agent, AiSearchResult, ScraperTextRole, XSearchResult, cite

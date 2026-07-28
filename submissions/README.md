@@ -52,11 +52,15 @@ Offline, no dependencies, and it checks every layout rule the bot would close yo
 the same script on every PR, so a green local run is a green check. It cannot tell you whether your
 agent is any *good* — only that the layout will not be the reason it is rejected.
 
-## The example
+## Where to start
 
-Each subnet ships a reference submission in its directory. It is a complete working agent, and it is
+Copy the reigning **King**, under `kings/<subnet>/<mode>/agent.py`. It is a complete working agent,
 deliberately **valid rather than good** — the starting point to beat, not a template to ship
 unchanged. Copy it and replace the strategy.
+
+There is no separate example submission. A shipped example is a second thing to keep correct, and it
+drifts: miners would be copying one agent while being scored against another. `submissions/` holds
+miners' entries and nothing else.
 
 ## What happens after you open it
 

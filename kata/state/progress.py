@@ -1,4 +1,29 @@
-"""Live challenge status persistence helpers."""
+"""Live challenge status persistence helpers.
+
+OWNERSHIP, because it is not what it looks like.
+
+``live-status.json`` is a real production file with a real consumer -- kata-board renders it, and on
+the live host both lanes' copies are rewritten every round. But **kata-bot writes it**, from
+``validator._write_live_status``; every record on disk carries ``"source": "kata-bot"``.
+
+Nothing in the engine calls the functions below. They are the ENGINE-side writer, kept because the
+plumbing that would use them is still live: kata-bot exports ``KATA_LIVE_STATUS_PATH`` into the child
+process (``orchestrator.py``), and ``update_live_status`` MERGES rather than overwrites -- it was
+built so a child could add progress to the same document the bot maintains.
+
+Two reasons this was not deleted during the Phase 2 audit, despite having no importer outside its own
+test:
+
+* a repository search finding no caller is not evidence of obsolescence when the artifact is a
+  persisted file with an independently deployed reader;
+* the obvious alternative -- "route the real writer through it" -- is architecturally forbidden.
+  kata-bot must run with no ``kata`` package installed, which is one of its exit-gate requirements,
+  so it cannot import this module.
+
+If the child is never going to report progress, the honest cleanup is to remove this module AND stop
+exporting ``KATA_LIVE_STATUS_PATH`` to the child, in one change, in kata-bot's repository. Removing
+only this half would leave an environment variable promising a capability that no longer exists.
+"""
 
 from __future__ import annotations
 

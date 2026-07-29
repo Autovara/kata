@@ -56,6 +56,12 @@ Written under `KATA_ROOT`, read by the bot and the board:
 | `submissions/<pack>/<mode>/<id>/` | miner submission bundle |
 | `runs/<run-id>/challenge_result.json` | challenge result JSON |
 
+## Ownership note: `live-status.json`
+
+Written by **kata-bot**, not by this engine. `kata/state/progress.py` is an engine-side writer with
+no caller; it is retained because `KATA_LIVE_STATUS_PATH` is still exported into the child process
+and the function merges rather than overwrites. See that module's docstring.
+
 ## Generated outputs
 
 `challenge_result.json` and the king/lane records above. No network endpoints are served.

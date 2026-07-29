@@ -1,36 +1,34 @@
-"""Command-line interface for Kata maintainers and local validation."""
+"""Parser construction for the `kata` CLI.
+
+Deliberately separate from the handlers. The parser IS a cross-project contract -- kata-bot invokes
+this program as a subprocess and kata-sn60 imports from it -- so it is worth being able to read the
+whole surface in one file without the command bodies interleaved.
+
+Handlers are bound here via ``set_defaults(handler=...)``; nothing else couples the two halves.
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
-from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
 
-from kata.promotion import bootstrap_lane_king, find_evaluator_pack_entry
-from kata.state.lanes import (
-    LANE_METADATA_SCHEMA_VERSION,
-    EvaluatorLaneMetadata,
-    lane_metadata_path,
-    load_lane_metadata,
-    load_pack_registry,
-    sync_pack_registry,
-    write_lane_metadata,
+from kata.cli.commands.challenge import handle_challenge
+from kata.cli.commands.king import handle_king_bootstrap, handle_king_promote
+from kata.cli.commands.lane import (
+    handle_lane_init,
+    handle_lane_list,
+    handle_lane_sync_registry,
+)
+from kata.cli.commands.plugin import (
+    handle_plugin_capacity_estimate,
+    handle_plugin_preflight,
+)
+from kata.cli.commands.submission import (
+    handle_submission_init,
+    handle_submission_inspect,
+    handle_submission_validate,
 )
 from kata.submissions.constants import SUPPORTED_SUBMISSION_MODES
-from kata.submissions.layout import read_changed_paths_file
-from kata.submissions.rendering import (
-    render_pull_request_inspection,
-    render_submission_json,
-    render_submission_validation,
-)
-from kata.submissions.workflow import (
-    init_submission,
-    inspect_pull_request,
-    promote_submission_result,
-    validate_submission,
-)
 
 try:
     _KATA_VERSION = version("kata")
@@ -342,51 +340,6 @@ def _add_plugin_parser(subparsers) -> None:
     preflight.set_defaults(handler=handle_plugin_preflight)
 
 
-def handle_plugin_preflight(args: argparse.Namespace) -> int:
-    from kata.plugins.discovery import plugin_for_evaluator
-
-    plugin = plugin_for_evaluator(args.evaluator)
-    if plugin is None:
-        raise SystemExit(f"No subnet plugin is registered for evaluator '{args.evaluator}'.")
-    issues: list[dict[str, str]] = []
-    for issue in plugin.preflight() or []:
-        if not isinstance(issue, dict):
-            raise SystemExit(f"plugin returned a non-usable preflight issue: {issue!r}")
-        level = str(issue.get("level") or "error")
-        if level not in {"error", "warning"}:
-            # An unknown level must not be silently downgraded to a warning: that would let a
-            # blocking problem through preflight and into a round.
-            raise SystemExit(f"plugin returned an unknown preflight level: {level!r}")
-        issues.append({"level": level, "message": str(issue.get("message") or "")})
-    print(json.dumps({"evaluator": args.evaluator, "issues": issues}))
-    return 0
-
-
-def handle_plugin_capacity_estimate(args: argparse.Namespace) -> int:
-    from kata.plugins.discovery import plugin_for_evaluator
-
-    plugin = plugin_for_evaluator(args.evaluator)
-    if plugin is None:
-        raise SystemExit(f"No subnet plugin is registered for evaluator '{args.evaluator}'.")
-    try:
-        config = json.loads(args.config_json) if args.config_json else {}
-    except ValueError as exc:
-        raise SystemExit(f"--config-json is not valid JSON: {exc}") from exc
-    if not isinstance(config, dict):
-        raise SystemExit("--config-json must be a JSON object.")
-    bounds = plugin.capacity_estimate(config=config)
-    # Emit only finite, non-negative numbers: a caller reserves against these, so a NaN/inf or a
-    # negative "bound" must fail here rather than silently weaken a hard cap downstream.
-    cleaned: dict[str, float] = {}
-    for dimension, value in (bounds or {}).items():
-        number = float(value)
-        if number != number or number in (float("inf"), float("-inf")) or number < 0:
-            raise SystemExit(f"plugin returned a non-usable bound for {dimension!r}: {value!r}")
-        cleaned[str(dimension)] = number
-    print(json.dumps({"evaluator": args.evaluator, "bounds": cleaned}))
-    return 0
-
-
 def _add_challenge_parser(subparsers) -> None:
     challenge_cmd = subparsers.add_parser(
         "challenge",
@@ -446,230 +399,3 @@ def _add_challenge_parser(subparsers) -> None:
     for plugin in all_plugins():
         plugin.add_challenge_arguments(challenge_cmd)
     challenge_cmd.set_defaults(handler=handle_challenge)
-
-
-def handle_king_promote(args: argparse.Namespace) -> int:
-    if not args.submission_path:
-        raise SystemExit(
-            "--submission-path is required: pass the candidate submission directory to promote."
-        )
-    # Default to None (not cwd) so promotion resolves the public root the same way
-    # `verify`/`decide` do — honoring KATA_ROOT — instead of silently writing kings/ +
-    # lane state into whatever directory it's run in.
-    public_root = str(Path(args.public_root).expanduser().resolve()) if args.public_root else None
-    result = promote_submission_result(
-        args.submission_path,
-        args.challenge_run,
-        public_root=public_root,
-    )
-    if args.json:
-        print_json(
-            {
-                "lane_id": result.lane_id,
-                "king_root": result.king_root,
-                "current_king_submission_id": result.king.current_king_submission_id,
-                "current_king_artifact_hash": result.king.current_king_artifact_hash,
-                "promotion_timestamp": result.king.promotion_timestamp,
-            }
-        )
-    else:
-        print(
-            f"Promoted `{result.king.current_king_submission_id}` "
-            f"as king of lane `{result.lane_id}`."
-        )
-    return 0
-
-
-def handle_king_bootstrap(args: argparse.Namespace) -> int:
-    public_root = str(Path(args.public_root).expanduser().resolve()) if args.public_root else None
-    entry = find_evaluator_pack_entry(
-        args.subnet_pack,
-        args.mode,
-        public_root=public_root,
-    )
-    if entry is None:
-        raise SystemExit(
-            f"No evaluator-backed lane is registered for `{args.subnet_pack}/{args.mode}`."
-        )
-    result = bootstrap_lane_king(
-        entry=entry,
-        baseline_path=args.baseline_path,
-        baseline_id=args.baseline_id,
-        public_root=public_root,
-        replace_existing=args.replace,
-    )
-    if args.json:
-        print_json(
-            {
-                "lane_id": result.lane_id,
-                "baseline_id": result.baseline_id,
-                "king_root": result.king_root,
-                "current_king_artifact_hash": result.king.current_king_artifact_hash,
-            }
-        )
-    else:
-        print(f"Seeded `{result.baseline_id}` as the baseline king of lane `{result.lane_id}`.")
-    return 0
-
-
-def handle_submission_init(args: argparse.Namespace) -> int:
-    submission_dir = init_submission(
-        subnet_pack=args.subnet_pack,
-        mode=args.mode,
-        submission_id=args.submission_id,
-        output_root=args.output_root,
-        author=args.author,
-        title=args.title,
-        notes=args.notes,
-    )
-    print(f"Created submission: {submission_dir}")
-    return 0
-
-
-def handle_submission_validate(args: argparse.Namespace) -> int:
-    changed_paths = collect_changed_paths(args.changed_path, args.changed_path_file)
-    result = validate_submission(
-        args.path,
-        changed_paths=changed_paths,
-        repo_root=args.repo_root,
-    )
-    print(render_submission_json(result) if args.json else render_submission_validation(result))
-    return 0 if result.is_valid else 2
-
-
-def handle_submission_inspect(args: argparse.Namespace) -> int:
-    result = inspect_pull_request(
-        repo_root=args.repo_root,
-        changed_paths=collect_changed_paths(args.changed_path, args.changed_path_file),
-    )
-    print(render_submission_json(result) if args.json else render_pull_request_inspection(result))
-    return 0 if result.action == "evaluate" else 2
-
-
-def parse_challenge_candidate(spec: str) -> tuple[str, str]:
-    submission_id, separator, artifact_path = spec.partition("=")
-    if not separator or not submission_id.strip() or not artifact_path.strip():
-        raise SystemExit(f"--candidate must be '<submission-id>=<path>', got: {spec!r}")
-    return submission_id.strip(), artifact_path.strip()
-
-
-def handle_challenge(args: argparse.Namespace) -> int:
-    from kata.plugins.discovery import plugin_for_evaluator
-
-    candidates = [parse_challenge_candidate(spec) for spec in args.candidate]
-    plugin = plugin_for_evaluator(args.evaluator)
-    if plugin is None:
-        raise SystemExit(f"No subnet plugin is registered for evaluator '{args.evaluator}'.")
-    config = plugin.build_challenge_config(args)
-    if args.challenge_cache_path:
-        config["challenge_cache_path"] = str(Path(args.challenge_cache_path).expanduser().resolve())
-    if args.challenge_config_json:
-        try:
-            overrides = json.loads(args.challenge_config_json)
-        except json.JSONDecodeError as exc:
-            raise SystemExit(f"--challenge-config-json must be valid JSON: {exc}") from exc
-        if not isinstance(overrides, dict):
-            raise SystemExit("--challenge-config-json must be a JSON object")
-        config.update(overrides)
-    result = plugin.run_challenge(
-        king_agent_path=args.king_path,
-        candidates=candidates,
-        config=config,
-        output_root=args.output_root or "runs",
-        progress_path=args.challenge_progress_path,
-    )
-    if args.json:
-        print_json(plugin.challenge_result_json(result))
-    else:
-        print(plugin.render_challenge_text(result))
-    return 0
-
-
-def handle_lane_init(args: argparse.Namespace) -> int:
-    from datetime import UTC, datetime
-
-    now = datetime.now(UTC).isoformat()
-    created_at = now
-    if lane_metadata_path(args.lane_id, public_root=args.public_root).exists():
-        created_at = load_lane_metadata(args.lane_id, public_root=args.public_root).created_at
-    metadata = EvaluatorLaneMetadata(
-        schema_version=LANE_METADATA_SCHEMA_VERSION,
-        lane_id=args.lane_id,
-        subnet_pack=args.subnet_pack or args.lane_id,
-        mode=args.mode,
-        evaluator_id=args.evaluator_id,
-        evaluator_policy_version=args.policy_version,
-        active=not args.inactive,
-        created_at=created_at,
-        updated_at=now,
-    )
-    path = write_lane_metadata(metadata, public_root=args.public_root)
-    if args.json:
-        print_json({"lane_metadata_path": str(path), "lane_id": metadata.lane_id})
-    else:
-        print(f"Registered lane `{metadata.lane_id}` at {path}")
-    return 0
-
-
-def handle_lane_list(args: argparse.Namespace) -> int:
-    registry = load_pack_registry(public_root=args.public_root)
-    packs = [pack for pack in registry.packs if pack.active or not args.active_only]
-    if args.json:
-        print_json(
-            {
-                "schema_version": registry.schema_version,
-                "updated_at": registry.updated_at,
-                "packs": [
-                    {
-                        "lane_id": pack.lane_id,
-                        "subnet_pack": pack.subnet_pack,
-                        "mode": pack.mode,
-                        "evaluator_id": pack.evaluator_id,
-                        "active": pack.active,
-                    }
-                    for pack in packs
-                ],
-            }
-        )
-        return 0
-    if not packs:
-        print("No subnet packs registered.")
-        return 0
-    for pack in packs:
-        status = "active" if pack.active else "inactive"
-        print(f"{pack.lane_id}  mode={pack.mode}  evaluator={pack.evaluator_id}  {status}")
-    return 0
-
-
-def handle_lane_sync_registry(args: argparse.Namespace) -> int:
-    registry = sync_pack_registry(public_root=args.public_root)
-    if args.json:
-        print_json(
-            {
-                "packs": [pack.lane_id for pack in registry.packs],
-                "updated_at": registry.updated_at,
-            }
-        )
-    else:
-        print(f"Synced pack registry with {len(registry.packs)} lane(s).")
-    return 0
-
-
-def collect_changed_paths(
-    inline_paths: list[str] | None,
-    file_path: str | None,
-) -> list[str]:
-    changed_paths = list(inline_paths or [])
-    if file_path:
-        changed_paths.extend(read_changed_paths_file(file_path))
-    return changed_paths
-
-
-def print_json(payload: dict[str, object]) -> None:
-    print(json.dumps(payload, indent=2))
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return args.handler(args)

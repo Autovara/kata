@@ -126,7 +126,16 @@ def test_the_published_policy_matches_each_subnets_declaration() -> None:
         settings = REPOSITORY_ROOT.parent / f"kata-{subnet}" / "deploy" / "settings.json"
         if not settings.is_file():
             pytest.skip(f"kata-{subnet} is not checked out beside this repository")
-        declared = json.loads(settings.read_text(encoding="utf-8"))["submission_policy"]
+        # Named rather than indexed. This published a policy whose SOURCE was never committed:
+        # `policies.json` was generated from a working-tree edit to the subnet's settings, so this
+        # test passed locally and raised KeyError on any fresh clone -- a stack trace where the
+        # answer is "kata-sn22 declares no submission_policy; commit it".
+        declared = json.loads(settings.read_text(encoding="utf-8")).get("submission_policy")
+        assert declared is not None, (
+            f"{pack} is published in submissions/policies.json but kata-{subnet} declares no "
+            f"submission_policy in deploy/settings.json. The published document is generated from "
+            f"that declaration, so it cannot be committed without it"
+        )
         assert list(policy.banned_source_markers) == declared["banned_source_markers"], pack
         assert bool(policy.banned_source_markers) != declared["direct_network_allowed"], pack
 

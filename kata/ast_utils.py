@@ -78,7 +78,7 @@ def function_supports_no_arg_invocation(function_node: ast.FunctionDef) -> bool:
 # object it is about to call is a plain synchronous function defined in agent.py, at the screened
 # source location, with the approved signature. That half is not implemented here because SN60's
 # agent is invoked inside the upstream Bitsec sandbox container, which this project vendors and
-# does not modify. See docs/entrypoint-binding.md.
+# does not modify. The full rationale is the comment block below.
 #--------------------------------------------------------
 #
 # `count_module_function_defs` above answers "how many top-level `def`s bind this name?". That is

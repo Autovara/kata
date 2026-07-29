@@ -46,15 +46,15 @@ flowchart TD
     subgraph SCORE["3 · Scoring — one engine drives every subnet in parallel"]
         direction LR
         ENG["kata engine"]
-        SN60["SN60 · Bitsec"]
-        SN22["SN22 · Desearch"]
+        P1["subnet plugin"]
+        P2["subnet plugin"]
         MORE["+ more targets"]
         TEE["kata-tee-runner<br/>sealed room · miner-paid"]
-        ENG e7@--> SN60
-        ENG e8@--> SN22
+        ENG e7@--> P1
+        ENG e8@--> P2
         ENG e9@--> MORE
-        SN60 e10@--> TEE
-        SN22 e11@--> TEE
+        P1 e10@--> TEE
+        P2 e11@--> TEE
         MORE e12@--> TEE
     end
 
@@ -93,10 +93,16 @@ The king is **re-scored fresh every challenge** (never a cached score) on the ex
 
 ## Targets
 
-A "target" is a subnet Kata builds an agent for. Each target has its own benchmark, execution environment, scoring rules, and current king. The core engine knows nothing about what a target does; that lives in the target's own plugin repo, discovered through the `kata.subnets` entry-point group.
+A "target" is a subnet Kata builds an agent for. Each target has its own task, benchmark, execution environment, scoring rules, submission policy, and current king. **This repository knows none of it.** The engine resolves a plugin through the `kata.subnets` entry-point group and calls one interface; everything else is the target's own.
 
-- **SN60 · Bitsec** (`sn60__bitsec`) — the live target. Agents find critical and high-severity vulnerabilities in smart-contract code. Task, screening, and scoring: [kata-sn60](https://github.com/Autovara/kata-sn60).
-- **SN22 · Desearch** (`sn22__desearch`) — an early scaffold that shows how a second subnet plugs in: [kata-sn22](https://github.com/Autovara/kata-sn22).
+So this README does not describe any subnet. What an agent must do, what it may use, how it is scored, and what gets it rejected are documented in the plugin repository for that target — which is the only place they can be kept correct.
+
+| Target | Pack | Everything about it |
+| --- | --- | --- |
+| SN60 · Bitsec | `sn60__bitsec` | [kata-sn60](https://github.com/Autovara/kata-sn60) |
+| SN22 · Desearch | `sn22__desearch` | [kata-sn22](https://github.com/Autovara/kata-sn22) |
+
+The registered targets on a given deployment are listed in `lanes/registry.json`, and each one's submission policy is published to `submissions/policies.json`.
 
 ## Architecture
 
@@ -106,7 +112,7 @@ Kata is a small set of repos, each with one job.
 | --- | --- |
 | **kata** | The engine (this repo). Submission format, validation, screening, the challenge loop that scores the king and candidates, ranking, and promotion. Knows nothing about any specific subnet. |
 | **kata-bot** | GitHub automation. Screens PRs at intake, runs the challenges, applies the labels, and merges and promotes a challenge winner. |
-| **[kata-sn60](https://github.com/Autovara/kata-sn60)** | The SN60 subnet plugin. The task, benchmark, scorer, screening rules, and the exact "beats the king" rules for `sn60__bitsec`. |
+| **subnet plugin repos** | One per target, listed above. Each owns its task, benchmark, scorer, screening rules, submission policy, and the exact "beats the king" rule. |
 | **[kata-tee-runner](https://github.com/Autovara/kata-tee-runner)** | Sealed-room execution. Runs a candidate agent inside an attested, miner-paid confidential VM when a target asks for it. |
 | **[kata-board](https://github.com/Autovara/kata-board)** | Dashboard. Shows the current king, the live challenge, and past winners. |
 

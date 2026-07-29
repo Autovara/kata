@@ -79,7 +79,7 @@ def test_no_contributor_document_names_a_subnet_that_is_not_published() -> None:
     mentioned = set()
     for document in CONTRIBUTOR_DOCS:
         mentioned |= set(re.findall(r"\bsn\d+__[a-z0-9_]+", document.read_text(encoding="utf-8")))
-    unknown = mentioned - published - {"sn60__bitsec"}  # the README's worked example
+    unknown = mentioned - published
     assert not unknown, f"contributor docs name unpublished packs: {sorted(unknown)}"
 
 
@@ -91,3 +91,24 @@ def test_the_contributor_path_points_only_at_files_that_exist() -> None:
         for target in link.findall(document.read_text(encoding="utf-8")):
             resolved = (document.parent / target).resolve()
             assert resolved.exists(), f"{document.name} links to missing {target}"
+
+
+def test_the_readme_points_at_subnets_rather_than_explaining_them() -> None:
+    """This repository is the engine. What a subnet's agents do, how they are scored and what they
+    may use belongs in that subnet's plugin repository, which is the only place it can be kept
+    correct -- a description here is a second copy that drifts silently.
+
+    So a pack name may appear in the README only as a POINTER: a row in the targets table. Prose
+    mentioning one is an explanation creeping back in.
+    """
+    offenders = []
+    for number, line in enumerate(README.read_text(encoding="utf-8").splitlines(), start=1):
+        if not re.search(r"\bsn\d+__[a-z0-9_]+", line):
+            continue
+        # A table row is a pointer; anything else is prose about a specific subnet.
+        if not line.lstrip().startswith("|"):
+            offenders.append((number, line.strip()))
+    assert not offenders, (
+        "the README explains specific subnets instead of pointing at them: "
+        + "; ".join(f"line {n}: {text[:80]}" for n, text in offenders)
+    )

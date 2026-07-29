@@ -1,0 +1,24 @@
+{
+  "do_not_edit": "Generated. Edit submission_policy in the subnet's deploy/settings.json and regenerate; a hand edit here makes the competition repository disagree with the subnet whose contract it is describing.",
+  "generated_by": "kata-subnets-deploy/installer/generate_submission_policies.py",
+  "policies": {
+    "sn22__desearch": {
+      "banned_source_markers": [
+        "import socket",
+        "import requests",
+        "import httpx",
+        "urllib.request",
+        "http.client",
+        "import subprocess"
+      ],
+      "banned_source_reason": "sn22__desearch submissions reach providers through the broker capability, never directly, so this module reaches nothing",
+      "direct_network_allowed": false
+    },
+    "sn60__bitsec": {
+      "banned_source_markers": [],
+      "banned_source_reason": "",
+      "direct_network_allowed": true
+    }
+  },
+  "schema_version": 1
+}

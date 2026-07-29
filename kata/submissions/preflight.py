@@ -37,38 +37,156 @@ from kata.submissions.constants import (
 SUBMISSION_MODE = "miner"
 MAX_AGENT_BYTES = 1_000_000
 SUBMISSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}-\d{8}-\d{2}$")
+#: ``sn60__bitsec``. Checked so a policy key cannot be a path fragment or a stray JSON key.
+PACK_NAME_RE = re.compile(r"^[a-z0-9]+__[a-z0-9_]+$")
 
-# SN22's static screen repeats this dependency-free list. Its relay-only agent contract has no
-# legitimate direct-network path; SN60, by contrast, must reach its in-room inference gateway.
-SN22_DIRECT_NETWORK_MARKERS = (
-    "import socket",
-    "import requests",
-    "import httpx",
-    "urllib.request",
-    "http.client",
-    "import subprocess",
-)
+#: Where each pack's policy is published, relative to the competition root.
+#:
+#: This gate used to carry a literal table of subnet names. That made a general framework know two
+#: specific subnets, and getting the table wrong rejected every correct SN60 agent (issue #209).
+#:
+#: Whether a submission may reach the network is a property of the SUBNET's agent contract, so the
+#: subnet declares it in its own ``deploy/settings.json`` and kata-subnets-deploy publishes it here
+#: as data. The gate reads; it does not know.
+#:
+#: Data rather than an import because this gate is dependency-free on purpose:
+#: ``validate-submission.yml`` runs it on a bare Python with no ``pip install``, and CI checks out
+#: only the competition repository, so no plugin is importable at the moment the question is asked.
+POLICIES_RELATIVE_PATH = Path("submissions") / "policies.json"
+POLICIES_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
 class PackPreflightPolicy:
-    """The small amount of pack policy the dependency-free repository gate must know."""
+    """One pack's answer to "may a submission reach the network itself?"."""
 
     banned_source_markers: tuple[str, ...] = ()
     banned_source_reason: str = ""
 
 
-PACK_POLICIES = {
-    "sn60__bitsec": PackPreflightPolicy(),
-    "sn22__desearch": PackPreflightPolicy(
-        banned_source_markers=SN22_DIRECT_NETWORK_MARKERS,
-        banned_source_reason=(
-            "sn22__desearch submissions reach providers through the broker capability, never "
-            "directly, so this module reaches nothing"
-        ),
-    ),
-}
-SUPPORTED_PACKS = tuple(PACK_POLICIES)
+#: The policy applied to a pack the published document does not describe.
+#:
+#: FAILS CLOSED, and the two ways of being wrong are not symmetric. Applying a ban a pack does not
+#: want rejects honest submissions loudly, and the contributor says so within the hour. Skipping a
+#: ban a pack does need removes a guarantee silently, and nobody finds out until someone exploits
+#: it. So an undeclared pack gets the strictest rule anyone declared.
+UNDECLARED_PACK_REASON = (
+    "this pack publishes no submission policy, so the strictest known rule is applied. Declare "
+    "submission_policy in the subnet's deploy/settings.json and republish "
+    "submissions/policies.json"
+)
+
+
+class PolicyDocumentError(Exception):
+    """The published policy document cannot be trusted.
+
+    Raised rather than degraded-to-a-default on purpose. The earlier version skipped entries it
+    could not parse and dropped markers of the wrong type, which turned a corrupt *security rule*
+    into a quietly permissive one: ``banned_source_markers: [42]`` became ``()``, and the string
+    ``"urllib"`` became the six single-character bans ``('u','r','l','l','i','b')``. Both read as a
+    successful load. A rule nobody can parse is not a weaker rule; it is an unknown one.
+    """
+
+
+def _require(condition: object, message: str) -> None:
+    if not condition:
+        raise PolicyDocumentError(message)
+
+
+def load_pack_policies(repository_root: Path) -> dict[str, PackPreflightPolicy]:
+    """Every pack's policy, as published into the competition repository.
+
+    Validated as a COMPLETE UNIT: any invalid shape anywhere fails the whole document. Partial
+    acceptance would mean the gate enforcing some rules while believing it enforced all of them,
+    and the packs whose entries were dropped are exactly the ones nobody would notice.
+
+    Raises ``PolicyDocumentError`` if the document is missing, unreadable or invalid in any way.
+    Callers must treat that as a refusal to check, never as "nothing to check".
+    """
+    path = repository_root / POLICIES_RELATIVE_PATH
+    republish = "Republish with kata-subnets-deploy/installer/generate_submission_policies.py"
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PolicyDocumentError(
+            f"cannot read {POLICIES_RELATIVE_PATH}: {exc}. {republish}"
+        ) from exc
+    try:
+        document = json.loads(raw_text)
+    except ValueError as exc:
+        raise PolicyDocumentError(
+            f"{POLICIES_RELATIVE_PATH} is not valid JSON: {exc}"
+        ) from exc
+
+    _require(isinstance(document, dict), f"{POLICIES_RELATIVE_PATH}: top level must be an object")
+    _require(
+        document.get("schema_version") == POLICIES_SCHEMA_VERSION,
+        f"{POLICIES_RELATIVE_PATH}: schema_version must be {POLICIES_SCHEMA_VERSION}, got "
+        f"{document.get('schema_version')!r}. {republish}",
+    )
+    entries = document.get("policies")
+    _require(isinstance(entries, dict), f"{POLICIES_RELATIVE_PATH}: policies must be an object")
+    _require(
+        entries,
+        f"{POLICIES_RELATIVE_PATH}: declares no policies. An empty document cannot be "
+        f"distinguished from a document that failed to generate. {republish}",
+    )
+
+    policies: dict[str, PackPreflightPolicy] = {}
+    for pack, entry in entries.items():
+        where = f"{POLICIES_RELATIVE_PATH}: policy {pack!r}"
+        _require(PACK_NAME_RE.fullmatch(pack), f"{where}: not a valid subnet pack name")
+        _require(isinstance(entry, dict), f"{where}: must be an object")
+
+        allowed = entry.get("direct_network_allowed")
+        _require(
+            isinstance(allowed, bool),
+            f"{where}: direct_network_allowed must be true or false, got {allowed!r}",
+        )
+
+        markers = entry.get("banned_source_markers")
+        # A bare string is the dangerous shape: it is iterable, so a laxer check would accept it
+        # and ban individual letters.
+        _require(
+            isinstance(markers, list),
+            f"{where}: banned_source_markers must be a list, got {type(markers).__name__}",
+        )
+        for marker in markers:
+            _require(
+                isinstance(marker, str) and marker,
+                f"{where}: every banned_source_marker must be a non-empty string, got {marker!r}",
+            )
+
+        # The two fields must agree, or the document says one thing and enforces another.
+        _require(
+            not (allowed and markers),
+            f"{where}: direct_network_allowed is true but bans {len(markers)} source marker(s)",
+        )
+        _require(
+            allowed or markers,
+            f"{where}: direct_network_allowed is false but bans nothing, so the rule does nothing",
+        )
+
+        reason = entry.get("banned_source_reason")
+        _require(isinstance(reason, str), f"{where}: banned_source_reason must be a string")
+        _require(
+            reason or not markers,
+            f"{where}: bans source markers but gives no reason. The reason is what a contributor "
+            f"reads when their submission is refused",
+        )
+        policies[pack] = PackPreflightPolicy(
+            banned_source_markers=tuple(markers), banned_source_reason=reason
+        )
+    return policies
+
+
+def strictest_policy(policies: dict[str, PackPreflightPolicy]) -> PackPreflightPolicy:
+    """The union of every declared ban -- what an undeclared pack is held to."""
+    markers: tuple[str, ...] = ()
+    for policy in policies.values():
+        markers += tuple(m for m in policy.banned_source_markers if m not in markers)
+    return PackPreflightPolicy(banned_source_markers=markers,
+                               banned_source_reason=UNDECLARED_PACK_REASON)
 
 # Shapes that mean someone committed a credential. Broad on purpose: a false positive costs one
 # edit, while a false negative publishes a live key.
@@ -124,9 +242,15 @@ def check_submission(
         ]
 
     _, pack, mode, submission_id = parts
-    if pack not in PACK_POLICIES:
+    try:
+        known_packs = tuple(sorted(load_pack_policies(repo_root)))
+    except PolicyDocumentError as exc:
+        # Every source rule in this gate is read from that document. Reporting anything other than
+        # a failure would be reporting on rules that were never applied.
+        return [str(exc)]
+    if pack not in known_packs:
         problems.append(
-            f"subnet pack must be one of {', '.join(SUPPORTED_PACKS)}, got {pack!r}"
+            f"subnet pack must be one of {', '.join(known_packs)}, got {pack!r}"
         )
     if mode != SUBMISSION_MODE:
         problems.append(f"mode must be {SUBMISSION_MODE!r}, got {mode!r}")
@@ -245,7 +369,9 @@ def _check_metadata(path: Path, *, pack: str, submission_id: str) -> list[str]:
 
 def _check_python_sources(root: Path, repository_root: Path, *, pack: str) -> list[str]:
     problems: list[str] = []
-    policy = PACK_POLICIES.get(pack, PackPreflightPolicy())
+    # Reached only after check_submission has loaded the document successfully.
+    policies = load_pack_policies(repository_root)
+    policy = policies.get(pack) or strictest_policy(policies)
     for path in sorted(root.rglob("*.py")):
         if path.is_symlink() or not path.is_file():
             continue
@@ -290,13 +416,24 @@ def _check_secrets(root: Path, repository_root: Path) -> list[str]:
 
 
 def discover_submissions(repository_root: Path) -> list[Path]:
-    """Return all submission directories handled by this repository gate."""
+    """Every submission directory present in the tree.
 
+    Deliberately independent of the policy document. An earlier version iterated the policy KEYS,
+    which meant a missing or undeclared pack made real submissions invisible: ``--all`` -- the form
+    branch protection runs -- printed "no submissions found" and exited 0 with an unchecked agent
+    sitting in the tree. Discovery must answer "what was submitted", a question about the
+    repository; only the CHECKING of a submission depends on policy.
+
+    So a submission under an unknown pack is still found here, and rejected downstream by name.
+    """
+    base = repository_root / SUBMISSIONS_DIRNAME
+    if not base.is_dir():
+        return []
     found: list[Path] = []
-    for pack in SUPPORTED_PACKS:
-        base = repository_root / SUBMISSIONS_DIRNAME / pack / SUBMISSION_MODE
-        if base.is_dir():
-            found.extend(sorted(path for path in base.iterdir() if path.is_dir()))
+    for pack in sorted(path for path in base.iterdir() if path.is_dir()):
+        mode = pack / SUBMISSION_MODE
+        if mode.is_dir():
+            found.extend(sorted(path for path in mode.iterdir() if path.is_dir()))
     return found
 
 
@@ -319,6 +456,17 @@ def main(
     targets = [Path(path) for path in args.paths]
     if args.all or not targets:
         targets = discover_submissions(repo_root)
+
+    # Validated up front, and fatal, even when the tree is empty. An empty repository is a
+    # legitimate state; a repository whose security rules will not load is not, and the two used to
+    # produce the same silent success. This runs on every pull request, so the document is proven
+    # loadable on each one rather than on the first round that happens to have a submission.
+    try:
+        load_pack_policies(repo_root)
+    except PolicyDocumentError as exc:
+        print(f"cannot check submissions: {exc}")
+        return 2
+
     if not targets:
         print("no submissions found")
         return 0

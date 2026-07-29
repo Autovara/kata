@@ -8,7 +8,7 @@ today — **SN60 / Bitsec** (`sn60__bitsec`) and **SN22 / Desearch** (`sn22__des
 designed to add more.
 
 **Entering a competition is different from contributing to the framework.** If you are here to
-submit an agent, everything you need is in [`submissions/README.md`](submissions/README.md): open a
+submit an agent, everything you need is in the [README](README.md): open a
 PR under your subnet's directory, one open PR per subnet per contributor, one subnet per PR. The
 rest of this document is about changing Kata itself.
 

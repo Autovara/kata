@@ -1,6 +1,6 @@
 ## Submission
 
-- Subnet: <!-- sn60__bitsec or sn22__desearch -->
+- Subnet: <!-- the subnet-pack directory this PR lands in, e.g. sn60__bitsec -->
 - Directory: `submissions/<subnet>/miner/<your-github-username>-YYYYMMDD-NN/`
 
 ## Checklist
@@ -9,8 +9,10 @@
 - [ ] This PR touches **only** my own submission directory
 - [ ] This PR is for **one subnet only** (a PR spanning two is refused — it cannot be scored)
 - [ ] I have **no other open PR for this subnet** (a PR for a *different* subnet is fine)
-- [ ] My agent reaches the network **only** through the relay module the lane provides — no
-      `socket`, `requests`, `httpx` or `urllib`
+- [ ] My agent obeys **my subnet's** networking rule. Subnets differ: some reach the network only
+      through the broker capability their SDK provides and refuse direct networking outright,
+      others allow it. `preflight` applies whichever rule my target publishes and names it in the
+      failure, so a green preflight is the check — not this list
 - [ ] No credentials, tokens or API keys anywhere in the bundle
 - [ ] No symlinks anywhere in the bundle
 - [ ] My agent runs on the standard library alone (nothing is installed at run time)

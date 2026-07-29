@@ -125,7 +125,24 @@ kata/
 
 ## How to submit an agent
 
-You only ever edit `submissions/`. Each contributor may have one open PR at a time. Pick a target pack from [Targets](#targets) above and use it as `<subnet-pack>` below.
+You only ever edit `submissions/`. Pick a target pack from [Targets](#targets) above and use it as `<subnet-pack>` below.
+
+### The rules, in full
+
+1. **One submission directory per pull request.** Exactly one. A PR that edits anything outside its own directory is closed as invalid — the bot cannot tell which agent you meant to enter.
+2. **One subnet per pull request.** A PR touching two `submissions/<subnet-pack>/` directories is refused: each subnet is a separate competition with its own king, so there is no answer to which one it entered.
+3. **One open PR per contributor, per subnet.** A second open submission from the same account *in the same subnet* is refused, not queued — push to your existing PR instead. A PR for a **different** subnet is fine, and expected: you can compete in every subnet at once.
+4. **No secrets in plaintext, ever.** A plaintext credential anywhere in your bundle is a rejection, and you should assume anything committed to a public repository is compromised whether or not it is later removed. Where a target runs miner-paid inference you commit *ciphertext* instead — see step 3 below.
+5. **Everything must be committed.** The lane runs your bundle as it appears in the PR. There is no install step and no dependency resolution — the standard library plus your subnet's SDK is what you have, and the image ships no package manager to change that.
+6. **No symlinks.** Anywhere in the bundle.
+7. **What your agent may do is the subnet's rule, not Kata's.** Some subnets reach the network only through a broker capability their SDK provides and refuse direct networking outright; others allow it. Kata does not invent either rule. `preflight` applies whichever one your target publishes, so run it rather than guessing — see step 4.
+
+**Your PR's subnet is decided by where it lands**, not by anything you declare. The bot reads the changed paths. A PR that touches no `submissions/` directory is not an entry at all — that is how ordinary engine and documentation PRs pass through untouched.
+
+### Where to start
+
+Copy the reigning king from `kings/<subnet-pack>/miner/agent.py`. It is a complete working agent, deliberately **valid rather than good** — the starting point to beat, not a template to ship unchanged. There is no separate example submission: a shipped example is a second thing to keep correct, and it drifts. `submissions/` holds miners' entries and nothing else.
+
 
 **1. Scaffold the bundle.**
 
@@ -169,7 +186,30 @@ uv run kata submission validate \
   --path submissions/<subnet-pack>/miner/<submission-id>
 ```
 
+Then run the offline gate CI runs on every PR — no dependencies, and it checks every layout and source rule the bot would close your PR for:
+
+```bash
+python -m kata.submissions.preflight submissions/<subnet-pack>/miner/<submission-id>
+python -m kata.submissions.preflight --all
+```
+
+It cannot tell you whether your agent is any *good* — only that the layout will not be the reason it is rejected.
+
 Commit only that submission directory, push a branch, and open one PR against the default branch. The CLI finds the competition tree by searching upward from where you run it, so run it anywhere inside your checkout; set `KATA_ROOT` only to point it at a tree somewhere else.
+
+### What happens after you open it
+
+1. The bot labels the PR `kata:lane:<subnet-pack>` + `kata:pending`.
+2. Deterministic screening runs. It is free and offline; a failure closes the PR as `kata:invalid` with the reason in a comment.
+3. When your PR reaches the head of that subnet's queue, the lane runs your agent and the reigning king on the same challenge, in randomized order, with identical quotas.
+4. The result is published with every ranked signal and the reason the comparison was decided where it was.
+5. You win (`kata:winner`, merged), you lose (`kata:losing`, closed), or the challenge returns to pending because the shared infrastructure was incomplete for one of you.
+
+A `kata:stale` label means the king changed while you were queued. You need do nothing; the lane re-runs your PR against the new incumbent.
+
+### Getting a decision reviewed
+
+Open an issue. Do not re-open a closed PR or open a second one in the same subnet — that trips the one-open-PR rule and delays you further. The published result carries the challenge's benchmark identity, which is what a reviewer needs to reproduce the comparison.
 
 ## PR labels
 

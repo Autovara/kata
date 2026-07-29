@@ -10,6 +10,7 @@ is a checkable claim. Regenerate deliberately with GOLDEN_UPDATE=1 and read the 
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -17,8 +18,32 @@ from kata.cli import build_parser
 
 GOLDEN = Path(__file__).resolve().parent / "golden" / "cli-help.txt"
 
+#: argparse wraps usage lines to the terminal width, which it reads from ``COLUMNS`` (falling back
+#: to a probe of the real terminal). Without pinning it, this golden records the width of whichever
+#: machine ran it: the first version passed locally and failed CI with a diff made entirely of
+#: re-wrapped usage lines, while every option list was identical. The surface had not changed.
+_GOLDEN_WIDTH = "80"
+
+
+@contextlib.contextmanager
+def _fixed_terminal_width():
+    previous = os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = _GOLDEN_WIDTH
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = previous
+
 
 def _render() -> str:
+    with _fixed_terminal_width():
+        return _render_at_current_width()
+
+
+def _render_at_current_width() -> str:
     parser = build_parser()
     subs = next(a for a in parser._actions if hasattr(a, "choices") and a.choices)
     lines = ["### kata --help\n" + parser.format_help()]
@@ -81,3 +106,28 @@ def test_the_deprecated_repo_pack_alias_is_retained():
     assert aliases, "the deprecated --repo-pack alias is gone"
     # It must still land on the same destination, or it is an alias in name only.
     assert all(dest == "subnet_pack" for _, dest in aliases), aliases
+
+
+def test_the_render_does_not_depend_on_terminal_width():
+    """The golden must record the CLI surface, not the machine that ran it.
+
+    argparse wraps usage lines to the terminal width. The first version of this test did not pin it,
+    so the golden captured one machine's width: it passed locally and failed CI with a diff made
+    entirely of re-wrapped usage lines while every option list was identical -- a red build for a
+    surface that had not changed, which is the fastest way to teach people to regenerate goldens
+    without reading them.
+    """
+    previous = os.environ.get("COLUMNS")
+    renders = set()
+    try:
+        for width in ("40", "80", "120", "300"):
+            os.environ["COLUMNS"] = width
+            renders.add(_render())
+        os.environ.pop("COLUMNS", None)
+        renders.add(_render())
+    finally:
+        if previous is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = previous
+    assert len(renders) == 1, "the rendered CLI surface changed with the terminal width"

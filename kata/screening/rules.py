@@ -8,9 +8,12 @@ from pathlib import Path
 
 from kata.ast_utils import (
     count_module_function_defs,
+    count_module_scope_name_bindings,
+    declares_global_name,
     find_module_async_function_def,
     find_module_function_def,
     function_supports_no_arg_invocation,
+    has_module_scope_star_import,
 )
 from kata.provenance import sha256_directory
 from kata.screening.models import ScreeningFinding
@@ -266,6 +269,40 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
             )
         ]
 
+    # The duplicate check above only sees a second ``def`` in the module body, but the
+    # binding screening validated is just as easily replaced by an assignment, an
+    # ``import ... as``, or a ``def`` nested in module-level control flow -- all of which
+    # run at import time and leave the runner calling a function anti-cheat never saw.
+    # Require the inspected definition to be the ONLY module-scope binding of the name.
+    rebindings = count_module_scope_name_bindings(agent_tree, "agent_main")
+    if has_module_scope_star_import(agent_tree) and _sibling_module_binds_entrypoint(parsed_trees):
+        # A star import cannot be resolved statically, so it only counts as a rebinding
+        # when another module in this bundle actually exports the entrypoint name.
+        rebindings += 1
+    if declares_global_name(agent_tree, "agent_main"):
+        rebindings += 1
+    if rebindings > 1:
+        return [
+            reject_finding(
+                "bundle.agent_main_rebound",
+                "Submission rebinds agent_main after defining it; bind it exactly once. "
+                "Python executes the final binding, which screening cannot validate.",
+                path=AGENT_ENTRY_FILENAME,
+                line=agent_main_fn.lineno,
+            )
+        ]
+
+    if agent_main_fn.decorator_list:
+        return [
+            reject_finding(
+                "bundle.agent_main_decorated",
+                "Submission agent_main must not be decorated; a decorator replaces it "
+                "with its own return value, which screening cannot validate.",
+                path=AGENT_ENTRY_FILENAME,
+                line=agent_main_fn.lineno,
+            )
+        ]
+
     if not function_supports_no_arg_invocation(agent_main_fn):
         return [
             reject_finding(
@@ -289,6 +326,15 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
                 )
             ]
     return []
+
+
+def _sibling_module_binds_entrypoint(parsed_trees: dict[str, ast.AST]) -> bool:
+    """Whether a bundle module other than ``agent.py`` binds the entrypoint name."""
+    return any(
+        relative_path != AGENT_ENTRY_FILENAME
+        and count_module_scope_name_bindings(tree, "agent_main") > 0
+        for relative_path, tree in parsed_trees.items()
+    )
 
 
 def reject_finding(

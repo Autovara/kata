@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "kurosawareiji7007-hub-20260729-01",
+  "created_at": "2026-07-29T08:15:00+00:00",
+  "author": "kurosawareiji7007-hub",
+  "title": "Parallel depth-first recall miner with corroboration guard",
+  "notes": "Per-file concurrent deep reviews on top of triage map + wide pass + structural probes; sealed to this bundle."
+}

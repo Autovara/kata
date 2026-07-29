@@ -27,4 +27,4 @@ jobs:
       # No pip install: a submission runs against the standard library alone, so the check that
       # gates it must not need anything either.
       - name: Check every submission layout
-        run: python tools/check_submission.py --all
+        run: python -m kata.submissions.preflight --all

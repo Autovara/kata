@@ -114,13 +114,13 @@ A subnet plugin bundles everything subnet-specific behind one interface, the `Su
 
 ```text
 kata/
-  cli.py          command-line entry point
-  core/           subnet-neutral challenge orchestration
-  plugins/        the SubnetPlugin contract, discovery, and registry
-  submissions/    bundle layout, validation, workflow, rendering
-  screening/      shared anti-cheat checks and plugin screening dispatch
-  promotion/      verified king publication
-  state/          lane, artifact, and live-progress persistence
+  cli/             command-line facade, parser, and command handlers
+  core/            subnet-neutral challenge orchestration
+  plugins/         the SubnetPlugin contract, discovery, and registry
+  submissions/     bundle layout, offline preflight, validation, and workflow
+  screening/       shared anti-cheat checks and plugin screening dispatch
+  promotion/       verified king publication
+  state/           lane, artifact, and live-progress persistence
 ```
 
 ## How to submit an agent
@@ -150,10 +150,12 @@ submissions/<subnet-pack>/miner/<submission-id>/
 **3. Seal your inference key (only if the target runs miner-paid inference).** Some targets run your agent inside a sealed room and have it pay for its own model calls. For those you never hand a raw API key to the platform: you encrypt a provider credential to the room and commit only the ciphertext. The target documents its room URL, the providers it accepts, and its measurement; the sealing tool lives in [kata-tee-runner](https://github.com/Autovara/kata-tee-runner):
 
 ```bash
-python kata_seal.py \
+read -rsp 'Provider API key: ' KATA_PROVIDER_API_KEY \
+  && export KATA_PROVIDER_API_KEY && echo
+uv run --extra seal python kata_seal.py \
   --room https://<approved-room-url> \
   --provider <provider-id> \
-  --key <your-provider-api-key> \
+  --key-env KATA_PROVIDER_API_KEY \
   --bundle submissions/<subnet-pack>/miner/<submission-id> \
   --measurement <approved-room-measurement>
 ```

@@ -44,13 +44,13 @@ ordinary engine and documentation PRs against this repository pass through untou
 ## Before you open the PR
 
 ```bash
-python tools/check_submission.py submissions/<subnet>/miner/<your-dir>
-python tools/check_submission.py --all
+python -m kata.submissions.preflight submissions/<subnet>/miner/<your-dir>
+python -m kata.submissions.preflight --all
 ```
 
 Offline, no dependencies, and it checks every layout rule the bot would close your PR for. CI runs
-the same script on every PR, so a green local run is a green check. It cannot tell you whether your
-agent is any *good* — only that the layout will not be the reason it is rejected.
+the same package entry point on every PR, so a green local run is a green check. It cannot tell you
+whether your agent is any *good* — only that the layout will not be the reason it is rejected.
 
 ## Where to start
 

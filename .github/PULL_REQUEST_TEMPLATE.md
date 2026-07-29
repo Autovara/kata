@@ -5,7 +5,7 @@
 
 ## Checklist
 
-- [ ] `python tools/check_submission.py <my directory>` passes locally
+- [ ] `python -m kata.submissions.preflight <my directory>` passes locally
 - [ ] This PR touches **only** my own submission directory
 - [ ] This PR is for **one subnet only** (a PR spanning two is refused — it cannot be scored)
 - [ ] I have **no other open PR for this subnet** (a PR for a *different* subnet is fine)

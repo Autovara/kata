@@ -41,15 +41,16 @@ uv run --extra dev python -m ruff check kata tests
 
 If you change plugin, screening, promotion, or submission logic, add or update tests.
 
-For the full miner PR lifecycle, evaluation stages, promotion flow, and engine
-contribution workflow, see `docs/workflow.md`.
+For the miner PR lifecycle, evaluation stages, and promotion flow, see
+[How Kata works](README.md#how-kata-works). Before changing an interface consumed by another
+repository, read [the recorded public surfaces](docs/public-surfaces.md).
 
 ## What belongs where
 
-- Command line: `kata/cli.py`
+- Command line facade and handlers: `kata/cli/`
 - Generic challenge evaluation and ranking: `kata/core/challenge.py`
 - Plugin contract, discovery, and registry: `kata/plugins/`
-- Submission bundle and PR workflow: `kata/submissions/`
+- Submission bundle, repository preflight, and PR workflow: `kata/submissions/`
 - Shared screening and anti-cheat dispatch: `kata/screening/`
 - Promotion and public king publication: `kata/promotion/`
 - Lane, artifact, and live-progress persistence: `kata/state/`

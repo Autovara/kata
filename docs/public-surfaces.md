@@ -12,6 +12,14 @@ than a hope. Derived from the reviewed revision; regenerate by re-reading the so
 | --- | --- |
 | `kata` | `kata.cli:main` |
 
+## Repository submission preflight
+
+Branch protection and contributor documentation invoke:
+
+```text
+python -m kata.submissions.preflight
+```
+
 ## CLI subcommands
 
 `bootstrap`, `capacity-estimate`, `challenge`, `init`, `inspect-pr`, `king`, `lane`, `list`,

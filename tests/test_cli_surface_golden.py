@@ -40,7 +40,8 @@ def test_the_cli_surface_is_unchanged():
         GOLDEN.write_text(actual)
         return
     assert actual == GOLDEN.read_text(), (
-        "the kata CLI surface changed. kata-bot invokes this parser as a subprocess and is deployed "
+        "the kata CLI surface changed. kata-bot invokes this parser as a subprocess and is "
+        "deployed "
         "separately, so a change here reaches a running consumer before any coordinated release. "
         "If deliberate, rerun with GOLDEN_UPDATE=1 and review the diff."
     )

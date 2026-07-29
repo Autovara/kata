@@ -8,9 +8,14 @@ from pathlib import Path
 
 from kata.ast_utils import (
     count_module_function_defs,
+    count_module_scope_name_bindings,
+    declares_global_binding,
     find_module_async_function_def,
     find_module_function_def,
     function_supports_no_arg_invocation,
+    has_module_scope_star_import,
+    rebinds_name_dynamically,
+    unbinds_module_scope_name,
 )
 from kata.provenance import sha256_directory
 from kata.screening.models import ScreeningFinding
@@ -246,6 +251,60 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
                 path=AGENT_ENTRY_FILENAME,
             )
         ]
+    # The duplicate-`def` rule above answers only "how many top-level defs?". Screening validates
+    # ONE ast node while the runner calls whatever the module global holds after import, so those
+    # agree only if the inspected `def` is the only thing that ever binds the name. Every other
+    # binding form -- assignment, `import ... as`, a loop/`with`/`except` target, a `def` nested in
+    # module-level control flow, a walrus, a `class` of the same name -- was invisible here, and a
+    # decoy-plus-rebind submission passed every check tied to the inspected function.
+    if count_module_scope_name_bindings(agent_tree, "agent_main") > 1:
+        return [
+            reject_finding(
+                "bundle.agent_main_rebound",
+                "Submission binds agent_main more than once in module scope. Define it exactly "
+                "once, with a plain `def`: screening validates that definition, and Python "
+                "executes whatever the name is bound to last.",
+                path=AGENT_ENTRY_FILENAME,
+            )
+        ]
+    if unbinds_module_scope_name(agent_tree, "agent_main"):
+        return [
+            reject_finding(
+                "bundle.agent_main_deleted",
+                "Submission deletes agent_main after defining it. Whatever answers for the name "
+                "afterwards -- a module __getattr__, for instance -- is not the definition "
+                "screening validated.",
+                path=AGENT_ENTRY_FILENAME,
+            )
+        ]
+    if has_module_scope_star_import(agent_tree):
+        return [
+            reject_finding(
+                "bundle.agent_main_star_import",
+                "Submission uses `from ... import *` at module scope, which can rebind agent_main "
+                "invisibly. Import the names you need explicitly.",
+                path=AGENT_ENTRY_FILENAME,
+            )
+        ]
+    if declares_global_binding(agent_tree, "agent_main"):
+        return [
+            reject_finding(
+                "bundle.agent_main_rebound",
+                "Submission assigns agent_main through a `global` declaration, which replaces the "
+                "entrypoint at import time with a function screening never inspected.",
+                path=AGENT_ENTRY_FILENAME,
+            )
+        ]
+    if rebinds_name_dynamically(agent_tree, "agent_main"):
+        return [
+            reject_finding(
+                "bundle.agent_main_namespace_mutation",
+                "Submission writes the module namespace in a way that could replace agent_main "
+                "(globals()/vars()/setattr/exec). Bind the entrypoint with a plain `def`.",
+                path=AGENT_ENTRY_FILENAME,
+            )
+        ]
+
     agent_main_fn = find_module_function_def(agent_tree, "agent_main")
     if agent_main_fn is None:
         if find_module_async_function_def(agent_tree, "agent_main") is not None:
@@ -263,6 +322,20 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
                 "bundle.entrypoint",
                 required_submission_entrypoint_reason(),
                 path=AGENT_ENTRY_FILENAME,
+            )
+        ]
+
+    if agent_main_fn.decorator_list:
+        # A decorator's return value is by definition not the body screening just read. Static
+        # analysis cannot tell an identity-preserving wrapper from a replacement, so this fails
+        # closed: an honest submission inlines the wrapper.
+        return [
+            reject_finding(
+                "bundle.agent_main_decorated",
+                "Submission decorates agent_main. A decorator returns a different object from the "
+                "function screening validated, so the entrypoint must be undecorated.",
+                path=AGENT_ENTRY_FILENAME,
+                line=agent_main_fn.lineno,
             )
         ]
 

@@ -1,7 +1,8 @@
 """The contract every subnet plugin must satisfy, asserted against the real installed plugins.
 
-The engine dispatches to plugins through a broad ABC with optional methods, which grew by accretion:
-a plugin that forgot one gets a default, and the default is usually "do nothing". That fails silently
+The engine dispatches to plugins through a broad ABC with optional methods, which grew by
+accretion: a plugin that forgot one gets a default, and the default is usually "do nothing".
+That fails silently
 -- a lane scoring zero for a reason unrelated to its answers looks exactly like bad submissions.
 
 This is the groundwork the capability-protocol work rests on: before methods can be regrouped into

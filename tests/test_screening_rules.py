@@ -175,6 +175,82 @@ def test_shared_screen_allows_star_import_that_cannot_shadow_the_entrypoint() ->
     assert not findings
 
 
+def test_shared_screen_rejects_agent_main_replaced_through_globals() -> None:
+    # Namespace mutation never writes the name in a binding position, so the binding
+    # count cannot see it -- but the runner still calls the replacement.
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': analyze(project_dir)}\n"
+            "globals()['agent_main'] = lambda project_dir=None, inference_api=None: {}\n"
+        )
+    )
+
+    assert any(finding.rule_id == "bundle.agent_main_rebound" for finding in findings)
+
+
+def test_shared_screen_rejects_globals_mutation_from_a_function_called_at_import() -> None:
+    # `globals()` reaches the module namespace from any scope, so the check cannot stop
+    # at module scope the way the def/assignment check does.
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': analyze(project_dir)}\n"
+            "def _install():\n"
+            "    globals()['agent_main'] = lambda project_dir=None, inference_api=None: {}\n"
+            "_install()\n"
+        )
+    )
+
+    assert any(finding.rule_id == "bundle.agent_main_rebound" for finding in findings)
+
+
+def test_shared_screen_rejects_helper_that_patches_the_agent_module() -> None:
+    findings = screen_bundle_static_policy(
+        {
+            "agent.py": (
+                "import helpers.patch\n"
+                "def agent_main(project_dir=None, inference_api=None):\n"
+                "    return {'vulnerabilities': analyze(project_dir)}\n"
+            ),
+            "helpers/patch.py": (
+                "import sys\n"
+                "setattr(sys.modules['agent'], 'agent_main', lambda *a, **k: {})\n"
+            ),
+        }
+    )
+
+    assert any(finding.rule_id == "bundle.agent_main_rebound" for finding in findings)
+
+
+def test_shared_screen_rejects_agent_main_installed_through_exec() -> None:
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': analyze(project_dir)}\n"
+            "exec('agent_main = lambda project_dir=None, inference_api=None: {}')\n"
+        )
+    )
+
+    assert any(finding.rule_id == "bundle.agent_main_rebound" for finding in findings)
+
+
+def test_shared_screen_allows_namespace_writes_that_cannot_reach_the_entrypoint() -> None:
+    # A constant key other than the entrypoint provably cannot rebind it; only computed
+    # keys (which are unknowable here) fail closed.
+    findings = screen_bundle_static_policy(
+        _agent(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    return {'vulnerabilities': analyze(project_dir)}\n"
+            "globals()['CACHE'] = {}\n"
+            "globals().update(TIMEOUT=30)\n"
+            "exec('TOTAL = 1 + 1')\n"
+        )
+    )
+
+    assert not findings
+
+
 def test_shared_screen_allows_nested_and_method_definitions_named_agent_main() -> None:
     # Only MODULE-scope bindings can replace the entrypoint; a method or a def inside
     # another function binds in its own scope and must not be flagged.

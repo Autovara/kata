@@ -14,6 +14,7 @@ from kata.ast_utils import (
     find_module_function_def,
     function_supports_no_arg_invocation,
     has_module_scope_star_import,
+    rebinds_name_dynamically,
 )
 from kata.provenance import sha256_directory
 from kata.screening.models import ScreeningFinding
@@ -291,6 +292,21 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
                 line=agent_main_fn.lineno,
             )
         ]
+
+    # Namespace mutation reaches the module global from any scope -- including a helper
+    # called at import time -- so it is checked across the whole bundle rather than in
+    # module scope only.
+    for relative_path, tree in sorted(parsed_trees.items()):
+        if rebinds_name_dynamically(tree, "agent_main"):
+            return [
+                reject_finding(
+                    "bundle.agent_main_rebound",
+                    "Submission replaces agent_main through namespace mutation "
+                    "(globals()/vars()/setattr/exec); define it once and leave it bound. "
+                    "Python executes the replacement, which screening cannot validate.",
+                    path=relative_path,
+                )
+            ]
 
     if agent_main_fn.decorator_list:
         return [

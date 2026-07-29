@@ -120,6 +120,75 @@ def declares_global_name(module_tree: ast.AST, name: str) -> bool:
     )
 
 
+def rebinds_name_dynamically(module_tree: ast.AST, name: str) -> bool:
+    """Whether the module mutates a namespace mapping to replace ``name`` at runtime.
+
+    ``globals()["agent_main"] = ...``, ``globals().update(...)``, ``setattr(module,
+    "agent_main", ...)`` and ``exec("agent_main = ...")`` rebind the global without ever
+    writing the name in a binding position, so the scope-aware binding count cannot see
+    them. Unlike a nested ``def``, these reach the module namespace from ANY scope -- a
+    helper called at import time works just as well -- so this walks the whole tree.
+    """
+    for node in ast.walk(module_tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(
+                isinstance(target, ast.Subscript)
+                and _is_namespace_call(target.value)
+                and _may_write_key(target.slice, name)
+                for target in targets
+            ):
+                return True
+        elif isinstance(node, ast.Call):
+            function = node.func
+            if (
+                isinstance(function, ast.Attribute)
+                and function.attr == "update"
+                and _is_namespace_call(function.value)
+            ):
+                # ``globals().update(CACHE=1)`` provably cannot touch the entrypoint;
+                # anything whose keys are not visible here might, so it fails closed.
+                if node.args or any(
+                    keyword.arg is None or keyword.arg == name for keyword in node.keywords
+                ):
+                    return True
+            if isinstance(function, ast.Name) and function.id == "setattr":
+                if len(node.args) >= 2 and _is_constant_text(node.args[1], name):
+                    return True
+            if isinstance(function, ast.Name) and function.id in {"exec", "eval"}:
+                if any(_constant_text_mentions(argument, name) for argument in node.args):
+                    return True
+    return False
+
+
+def _is_namespace_call(node: ast.AST) -> bool:
+    """Whether ``node`` is a ``globals()`` / ``vars()`` call -- the module's own namespace."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"globals", "vars"}
+    )
+
+
+def _may_write_key(key: ast.AST, name: str) -> bool:
+    """Whether a namespace subscript write could land on ``name``.
+
+    A constant key other than the entrypoint (``globals()["CACHE"] = ...``) provably
+    cannot; a computed key is not knowable here, so it fails closed.
+    """
+    if isinstance(key, ast.Constant):
+        return key.value == name
+    return True
+
+
+def _is_constant_text(node: ast.AST, value: str) -> bool:
+    return isinstance(node, ast.Constant) and node.value == value
+
+
+def _constant_text_mentions(node: ast.AST, value: str) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and value in node.value
+
+
 def _count_target_bindings(target: ast.AST, name: str) -> int:
     if isinstance(target, ast.Name):
         return int(target.id == name)

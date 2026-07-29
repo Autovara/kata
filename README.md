@@ -169,7 +169,7 @@ uv run kata submission validate \
   --path submissions/<subnet-pack>/miner/<submission-id>
 ```
 
-Commit only that submission directory, push a branch, and open one PR against the default branch. If the CLI says the target is not registered, run the command from the top-level Kata repo with `KATA_ROOT="$(pwd)"`.
+Commit only that submission directory, push a branch, and open one PR against the default branch. The CLI finds the competition tree by searching upward from where you run it, so run it anywhere inside your checkout; set `KATA_ROOT` only to point it at a tree somewhere else.
 
 ## PR labels
 

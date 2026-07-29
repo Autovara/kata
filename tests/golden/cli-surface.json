@@ -1,0 +1,1115 @@
+{
+  "actions": [
+    {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "==SUPPRESS==",
+      "dest": "help",
+      "help": "show this help message and exit",
+      "metavar": null,
+      "nargs": 0,
+      "option_strings": [
+        "-h",
+        "--help"
+      ],
+      "required": false,
+      "type": null
+    },
+    {
+      "choices": null,
+      "class": "_VersionAction",
+      "default": "==SUPPRESS==",
+      "dest": "version",
+      "help": "show program's version number and exit",
+      "metavar": null,
+      "nargs": 0,
+      "option_strings": [
+        "--version"
+      ],
+      "required": false,
+      "type": null
+    }
+  ],
+  "description": "Initialize and evaluate subnet-pack coding-agent competition lanes.",
+  "prog": "kata",
+  "subcommands": {
+    "challenge": {
+      "actions": [
+        {
+          "choices": null,
+          "class": "_AppendAction",
+          "default": null,
+          "dest": "candidate",
+          "help": "A competing candidate as '<submission-id>=<artifact-path>'. Repeat per entrant.",
+          "metavar": "ID=PATH",
+          "nargs": null,
+          "option_strings": [
+            "--candidate"
+          ],
+          "required": true,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_StoreAction",
+          "default": null,
+          "dest": "challenge_cache_path",
+          "help": "Optional evaluator-owned cache path for this challenge.",
+          "metavar": null,
+          "nargs": null,
+          "option_strings": [
+            "--challenge-cache-path"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_StoreAction",
+          "default": null,
+          "dest": "challenge_config_json",
+          "help": "Optional JSON object merged into the selected evaluator's challenge configuration. Used by multi-lane operators to keep plugin settings lane-scoped.",
+          "metavar": null,
+          "nargs": null,
+          "option_strings": [
+            "--challenge-config-json"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_StoreAction",
+          "default": null,
+          "dest": "challenge_progress_path",
+          "help": "Optional path to publish a live per-candidate progress snapshot for the dashboard.",
+          "metavar": null,
+          "nargs": null,
+          "option_strings": [
+            "--challenge-progress-path"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_StoreAction",
+          "default": null,
+          "dest": "evaluator",
+          "help": "Subnet evaluator id whose plugin runs the challenge.",
+          "metavar": null,
+          "nargs": null,
+          "option_strings": [
+            "--evaluator"
+          ],
+          "required": true,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_HelpAction",
+          "default": "==SUPPRESS==",
+          "dest": "help",
+          "help": "show this help message and exit",
+          "metavar": null,
+          "nargs": 0,
+          "option_strings": [
+            "-h",
+            "--help"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_StoreTrueAction",
+          "default": false,
+          "dest": "json",
+          "help": "Emit machine-readable JSON instead of text.",
+          "metavar": null,
+          "nargs": 0,
+          "option_strings": [
+            "--json"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_StoreAction",
+          "default": null,
+          "dest": "king_path",
+          "help": "Path to the current lane king artifact.",
+          "metavar": null,
+          "nargs": null,
+          "option_strings": [
+            "--king-path"
+          ],
+          "required": true,
+          "type": null
+        },
+        {
+          "choices": null,
+          "class": "_StoreAction",
+          "default": null,
+          "dest": "output_root",
+          "help": "Optional base directory for challenge artifacts. Defaults to ./runs.",
+          "metavar": null,
+          "nargs": null,
+          "option_strings": [
+            "--output-root"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "description": null,
+      "prog": "kata challenge",
+      "subcommands": {}
+    },
+    "king": {
+      "actions": [
+        {
+          "choices": null,
+          "class": "_HelpAction",
+          "default": "==SUPPRESS==",
+          "dest": "help",
+          "help": "show this help message and exit",
+          "metavar": null,
+          "nargs": 0,
+          "option_strings": [
+            "-h",
+            "--help"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "description": null,
+      "prog": "kata king",
+      "subcommands": {
+        "bootstrap": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "baseline_id",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--baseline-id"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "baseline_path",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--baseline-path"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "json",
+              "help": null,
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": "miner",
+              "dest": "mode",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--mode"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "public_root",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--public-root"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "replace",
+              "help": "Replace an existing king after screening. Intended only for controlled resets.",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--replace"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "subnet_pack",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--subnet-pack"
+              ],
+              "required": true,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata king bootstrap",
+          "subcommands": {}
+        },
+        "promote": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "challenge_run",
+              "help": "Path to a challenge_summary.json file produced by `kata challenge`.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--challenge-run"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "json",
+              "help": null,
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "public_root",
+              "help": "Optional public Kata repo root used to publish the visible king mirror under `kings/<subnet-pack>/<mode>/`. Defaults to the current working directory.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--public-root"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "submission_path",
+              "help": "Optional path to submissions/<subnet-pack>/<mode>/<submission-id>. Defaults to the candidate artifact recorded in the challenge summary.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--submission-path"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata king promote",
+          "subcommands": {}
+        }
+      }
+    },
+    "lane": {
+      "actions": [
+        {
+          "choices": null,
+          "class": "_HelpAction",
+          "default": "==SUPPRESS==",
+          "dest": "help",
+          "help": "show this help message and exit",
+          "metavar": null,
+          "nargs": 0,
+          "option_strings": [
+            "-h",
+            "--help"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "description": null,
+      "prog": "kata lane",
+      "subcommands": {
+        "init": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "evaluator_id",
+              "help": "Evaluator adapter id for the lane, e.g. sn60_bitsec.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--evaluator-id"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "inactive",
+              "help": "Register the lane without activating it.",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--inactive"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "json",
+              "help": null,
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "lane_id",
+              "help": "Lane id, e.g. sn60__bitsec.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--lane-id"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": "miner",
+              "dest": "mode",
+              "help": "Submission mode for the lane.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--mode"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": "v1",
+              "dest": "policy_version",
+              "help": "Evaluator policy version recorded in lane metadata.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--policy-version"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "public_root",
+              "help": "Optional Kata root that owns the lanes directory.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--public-root"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "subnet_pack",
+              "help": "Deprecated alias for --subnet-pack.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repo-pack"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "subnet_pack",
+              "help": "Subnet pack id. Defaults to lane id.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--subnet-pack"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata lane init",
+          "subcommands": {}
+        },
+        "list": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "active_only",
+              "help": "Only list packs marked active in the registry.",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--active-only"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "json",
+              "help": null,
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "public_root",
+              "help": "Optional Kata root that owns the lanes directory.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--public-root"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata lane list",
+          "subcommands": {}
+        },
+        "sync-registry": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "json",
+              "help": null,
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "public_root",
+              "help": "Optional Kata root that owns the lanes directory.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--public-root"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata lane sync-registry",
+          "subcommands": {}
+        }
+      }
+    },
+    "plugin": {
+      "actions": [
+        {
+          "choices": null,
+          "class": "_HelpAction",
+          "default": "==SUPPRESS==",
+          "dest": "help",
+          "help": "show this help message and exit",
+          "metavar": null,
+          "nargs": 0,
+          "option_strings": [
+            "-h",
+            "--help"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "description": null,
+      "prog": "kata plugin",
+      "subcommands": {
+        "capacity-estimate": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "config_json",
+              "help": "The evaluator-owned challenge config, as a JSON object -- the SAME config the challenge will run with, so the bound cannot diverge from the real execution.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--config-json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "evaluator",
+              "help": "Subnet evaluator id whose plugin is asked for its bounds.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--evaluator"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata plugin capacity-estimate",
+          "subcommands": {}
+        },
+        "preflight": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "evaluator",
+              "help": "Subnet evaluator id whose plugin checks its own deployment.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--evaluator"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata plugin preflight",
+          "subcommands": {}
+        }
+      }
+    },
+    "submission": {
+      "actions": [
+        {
+          "choices": null,
+          "class": "_HelpAction",
+          "default": "==SUPPRESS==",
+          "dest": "help",
+          "help": "show this help message and exit",
+          "metavar": null,
+          "nargs": 0,
+          "option_strings": [
+            "-h",
+            "--help"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "description": null,
+      "prog": "kata submission",
+      "subcommands": {
+        "init": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "author",
+              "help": "Optional GitHub username for leaderboard identity and avatar lookup.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--author"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": [
+                "miner"
+              ],
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "mode",
+              "help": "Competition mode for the challenger submission.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--mode"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "notes",
+              "help": "Optional short notes.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--notes"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "output_root",
+              "help": "Optional submissions root. Defaults to ./submissions.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--output-root"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "submission_id",
+              "help": "Stable submission id. Recommended format: `<github-username>-YYYYMMDD-NN`.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--submission-id"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "subnet_pack",
+              "help": "Deprecated alias for --subnet-pack.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repo-pack"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "subnet_pack",
+              "help": "Target subnet pack id.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--subnet-pack"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "title",
+              "help": "Optional submission title.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--title"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata submission init",
+          "subcommands": {}
+        },
+        "inspect-pr": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_AppendAction",
+              "default": null,
+              "dest": "changed_path",
+              "help": "Changed path from the PR diff. Repeat for each changed file.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--changed-path"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "changed_path_file",
+              "help": "Optional newline-delimited file of changed paths from the PR diff.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--changed-path-file"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "json",
+              "help": "Emit machine-readable JSON instead of text.",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "repo_root",
+              "help": "Kata repo root used to resolve the inferred submission path.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repo-root"
+              ],
+              "required": true,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata submission inspect-pr",
+          "subcommands": {}
+        },
+        "validate": {
+          "actions": [
+            {
+              "choices": null,
+              "class": "_AppendAction",
+              "default": null,
+              "dest": "changed_path",
+              "help": "Changed path from the PR diff. Repeat for each changed file.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--changed-path"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "changed_path_file",
+              "help": "Optional newline-delimited file of changed paths from the PR diff.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--changed-path-file"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_HelpAction",
+              "default": "==SUPPRESS==",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "-h",
+                "--help"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreTrueAction",
+              "default": false,
+              "dest": "json",
+              "help": "Emit machine-readable JSON instead of text.",
+              "metavar": null,
+              "nargs": 0,
+              "option_strings": [
+                "--json"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "path",
+              "help": "Path to submissions/<subnet-pack>/<mode>/<submission-id>.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--path"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "choices": null,
+              "class": "_StoreAction",
+              "default": null,
+              "dest": "repo_root",
+              "help": "Optional Kata repo root used to resolve changed paths.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repo-root"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "description": null,
+          "prog": "kata submission validate",
+          "subcommands": {}
+        }
+      }
+    }
+  }
+}

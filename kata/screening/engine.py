@@ -20,6 +20,27 @@ STRICT_REPLAY_ENV = "KATA_SCREENING_STRICT_REPLAY"
 REVIEW_MODE_ENV = "KATA_SCREENING_REVIEW_MODE"
 
 
+#: Rule id for "the lane's own gate could not run". Not a miner-facing defect: it means this
+#: deployment could not resolve the subnet's plugin, so only the generic anti-cheat ran.
+UNRESOLVED_PLUGIN_RULE = "screening.subnet_plugin_unresolved"
+
+
+def subnet_gate_unavailable_finding(subnet_pack: str) -> ScreeningFinding:
+    return ScreeningFinding(
+        rule_id=UNRESOLVED_PLUGIN_RULE,
+        severity="review",
+        path=None,
+        line=None,
+        reason=(
+            f"the {subnet_pack} plugin could not be resolved, so that subnet's own screening did "
+            f"not run. Only the generic anti-cheat checks were applied, which is not enough to "
+            f"admit a submission to this lane. This is a deployment fault, not a defect in the "
+            f"submission: install the lane's plugin and re-screen"
+        ),
+        evidence=f"plugin_for_pack({subnet_pack!r}) returned None",
+    )
+
+
 def _plugin_static_screen_findings(
     *,
     submission_root: Path,
@@ -102,6 +123,24 @@ def screen_submission(
     """
     if mode != "miner":
         return ScreeningDecision(status="pass")
+
+    # FAIL CLOSED on a pack whose plugin this process cannot resolve.
+    #
+    # The three helpers below each return empty when `plugin_for_pack` yields None, so a lane whose
+    # plugin is missing used to be screened by the GENERIC anti-cheat alone and then reported
+    # `pass` -- with no finding and no note. A submission that a subnet's own rules would reject
+    # (SN60's canned-report rule, say) came back clean and was labelled `kata:pending`.
+    #
+    # "I could not check" must not be spelled the same way as "I checked and it is fine". It is
+    # raised as REVIEW rather than REJECT deliberately: the fault is in the deployment, not in the
+    # submission, so a human is asked rather than a contributor's PR closed.
+    from kata.plugins.discovery import plugin_for_pack
+
+    if subnet_pack and plugin_for_pack(subnet_pack, mode) is None:
+        return ScreeningDecision(
+            status="review",
+            review_reasons=[subnet_gate_unavailable_finding(subnet_pack)],
+        )
 
     bundle_files = load_bundle_files(submission_root)
     reject_findings = []

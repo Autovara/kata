@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "kurosawareiji7007-hub-20260730-02",
+  "created_at": "2026-07-30T14:15:00+00:00",
+  "author": "kurosawareiji7007-hub",
+  "title": "Scout-focus-sweep with catalog fix and pattern recall",
+  "notes": "OpenRouter model id, fixed source catalog ranking, deterministic pattern scans for common high/critical footguns. Freshly sealed."
+}

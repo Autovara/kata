@@ -5,6 +5,6 @@
   "submission_id": "kurosawareiji7007-hub-20260729-01",
   "created_at": "2026-07-29T08:15:00+00:00",
   "author": "kurosawareiji7007-hub",
-  "title": "Parallel depth-first recall miner with corroboration guard",
-  "notes": "Per-file concurrent deep reviews on top of triage map + wide pass + structural probes; sealed to this bundle."
+  "title": "Concurrent unit-audit miner with exploit verification",
+  "notes": "Independent design: risk-ranked single-unit concurrent audits, verification pass, and a small static safety net. Freshly sealed to the approved SN60 room."
 }

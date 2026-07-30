@@ -12,17 +12,15 @@ This agent therefore:
    prompt instead of sharing one overloaded context window.
 3. Runs a short verification pass over the strongest candidates to drop weak
    hallucinations before they dilute precision.
-4. Adds a small set of language-agnostic static detectors as a safety net when
-   the model is slow or fails, so the process still returns a useful report.
 
-Only the injected inference gateway is contacted. Pure standard library.
+Findings come only from model analysis of the project source — no static report
+bank. Only the injected inference gateway is contacted. Pure standard library.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import queue
 import re
 import socket
 import threading
@@ -546,11 +544,10 @@ def _normalize(raw, by_rel, by_base):
     if not title:
         title = (contract or rec["stem"]) + (("." + fn) if fn else "") + " - issue"
     if len(desc) < MIN_DESC:
-        desc = (
-            desc + " The issue is reachable through the public surface of "
-            + (fn or "this unit") + " in " + rec["rel"]
-            + " and can corrupt balances, authority, or protocol solvency."
-        )
+        # Keep short; do not invent a canned vulnerability story.
+        desc = (desc + " Located in " + rec["rel"] + " (" + (fn or "unit") + ").").strip()
+        if len(desc) < MIN_DESC:
+            desc = desc + " Needs maintainer/model confirmation of exploitability against live state."
     return {
         "title": title[:180],
         "severity": _sev(raw.get("severity")),
@@ -627,79 +624,6 @@ def _merge(items):
             "contract": e.get("contract") or "",
         })
     return out
-
-
-def _static_net(records):
-    """Generic structural detectors — language patterns only, no project names."""
-    findings = []
-    for rec in records[:40]:
-        text = rec["text"]
-        low = text.lower()
-        types = rec["types"] or [rec["stem"]]
-        unit = types[0]
-        # external value transfer without an obvious reentrancy guard nearby
-        if rec["suf"] == ".sol" and (".call{" in low or "call.value" in low):
-            if "nonreentrant" not in low and "reentrancyguard" not in low:
-                for fn in rec["fns"][:8]:
-                    if fn.lower() in ("withdraw", "redeem", "claim", "execute", "settle", "liquidate"):
-                        findings.append({
-                            "title": unit + "." + fn + " - external call without reentrancy guard",
-                            "severity": "high",
-                            "file": rec["rel"],
-                            "function": fn,
-                            "contract": unit,
-                            "description": (
-                                "Function " + fn + " in " + rec["rel"]
-                                + " performs a low-level external call while no NonReentrant "
-                                "or ReentrancyGuard pattern is visible in the file. An "
-                                "attacker-controlled callee can reenter and drain funds or "
-                                "corrupt accounting before state updates settle."
-                            ),
-                            "confidence": 0.45,
-                        })
-                        break
-        # public initialize / upgrade hooks without an obvious initializer lock
-        if rec["suf"] == ".sol":
-            for fn in rec["fns"]:
-                fl = fn.lower()
-                if fl in ("initialize", "init", "upgradeto", "upgradetoandcall"):
-                    if "initializer" not in low and "reinitializer" not in low and "onlyowner" not in low:
-                        findings.append({
-                            "title": unit + "." + fn + " - privileged setup surface",
-                            "severity": "critical",
-                            "file": rec["rel"],
-                            "function": fn,
-                            "contract": unit,
-                            "description": (
-                                "Function " + fn + " in " + rec["rel"]
-                                + " looks like an initialization or upgrade entry without a "
-                                "clear initializer lock or owner restriction in-file. If "
-                                "callable after deployment, an attacker can seize upgrade "
-                                "authority or rewrite critical parameters."
-                            ),
-                            "confidence": 0.42,
-                        })
-        # Solana-ish: transfer / invoke without is_signer mention in file
-        if rec["suf"] == ".rs" and ("invoke" in low or "lamports" in low):
-            if "is_signer" not in low and "signer" not in " ".join(rec["fns"]).lower():
-                fn = rec["fns"][0] if rec["fns"] else "process"
-                findings.append({
-                    "title": unit + "." + fn + " - missing signer check on fund path",
-                    "severity": "high",
-                    "file": rec["rel"],
-                    "function": fn,
-                    "contract": unit,
-                    "description": (
-                        "Rust unit " + rec["rel"] + " touches lamports or CPI invoke "
-                        "without an obvious is_signer check in the same file. Missing "
-                        "signer validation commonly lets an attacker move accounts they "
-                        "do not control."
-                    ),
-                    "confidence": 0.4,
-                })
-        if len(findings) >= 8:
-            break
-    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -867,12 +791,6 @@ def agent_main(project_dir=None, inference_api=None):
                         cleaned.append(norm)
             except Exception:
                 pass
-
-        if not cleaned:
-            for item in _static_net(records):
-                norm = _normalize(item, by_rel, by_base)
-                if norm is not None:
-                    cleaned.append(norm)
 
         report = _merge(cleaned)
     except Exception:

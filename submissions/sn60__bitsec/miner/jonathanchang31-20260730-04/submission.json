@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "jonathanchang31-20260730-04",
+  "created_at": "2026-07-30T16:17:53.938468+00:00",
+  "author": "jonathanchang31",
+  "title": null,
+  "notes": "Recommended conventions:\n- author: your GitHub username\n- submission_id: <github-username>-YYYYMMDD-NN\n- implement a real agent in agent.py before opening the PR\n- optional Python helpers may live under helpers/\n"
+}

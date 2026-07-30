@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "kurosawareiji7007-hub-20260730-05",
+  "created_at": "2026-07-30T16:00:00+00:00",
+  "author": "kurosawareiji7007-hub",
+  "title": "Static-first free-tier hunter (always-on inference)",
+  "notes": "Always calls /inference plus deterministic scanners. UTF-8 no BOM. Resealed to approved room."
+}

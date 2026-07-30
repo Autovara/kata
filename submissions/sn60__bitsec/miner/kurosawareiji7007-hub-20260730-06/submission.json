@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "subnet_pack": "sn60__bitsec",
+  "mode": "miner",
+  "submission_id": "kurosawareiji7007-hub-20260730-06",
+  "created_at": "2026-07-30T16:10:00+00:00",
+  "author": "kurosawareiji7007-hub",
+  "title": "Static-first hunter that writes REPORT_FILE",
+  "notes": "Writes REPORT_FILE in harness shape so TEE screening always gets report.json. Always calls /inference once. UTF-8 no BOM."
+}
